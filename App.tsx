@@ -49,10 +49,10 @@ const InvitePage: React.FC = () => {
         if (!invite) throw new Error("הזמנה לא בתוקף");
         if (invite.expiresAt < Date.now()) throw new Error("פג תוקף ההזמנה");
 
-        transaction.update(listDocRef, {
-          sharedWith: arrayUnion(user.uid),
-        [`pendingInvites.${token}`]: deleteField()
-        });
+       transaction.update(listDocRef, {
+  sharedWith: arrayUnion(user.uid),
+  [`pendingInvites.${token}`]: deleteField()
+});
       });
       navigate('/');
     } catch (e: any) {
