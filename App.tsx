@@ -20,7 +20,13 @@ import {
   Loader2,
 } from "lucide-react";
 
-import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from "firebase/auth";
+import {
+  onAuthStateChanged,
+  signInWithPopup,
+  signInWithRedirect,
+  signOut,
+  User as FirebaseUser,
+} from "firebase/auth";
 import {
   arrayUnion,
   collection,
@@ -44,22 +50,33 @@ import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 // Helpers
 // ---------------------------
 function buildInviteLink(listId: string, token: string) {
-  // Vite נותן BASE_URL נכון לפי vite.config.ts
-  // בפרוד אצלך זה אמור להיות "/Shopping-List/"
   const basePath = import.meta.env.BASE_URL || "/";
   const origin = window.location.origin;
   return `${origin}${basePath}#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
 }
 
 async function copyToClipboard(text: string) {
-  // Clipboard API יכול להיכשל בגלל הרשאות/מדיניות דפדפן
   try {
     await navigator.clipboard.writeText(text);
     return true;
   } catch {
-    // fallback: פרומפט שמאפשר העתקה ידנית
     window.prompt("העתק את הקישור:", text);
     return false;
+  }
+}
+
+async function signInSmart() {
+  try {
+    await signInWithPopup(auth, googleProvider);
+  } catch (e: any) {
+    // אם פופאפ נחסם או נכשל, נופלים ל-redirect
+    const code = e?.code as string | undefined;
+    if (code === "auth/popup-blocked" || code === "auth/cancelled-popup-request" || code === "auth/popup-closed-by-user") {
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    }
+    // fallback כללי - נסה redirect
+    await signInWithRedirect(auth, googleProvider);
   }
 }
 
@@ -89,9 +106,8 @@ const InvitePage: React.FC = () => {
   const handleLogin = async () => {
     setError(null);
     try {
-      await signInWithPopup(auth, googleProvider);
+      await signInSmart();
     } catch (e: any) {
-      // כאן לרוב תראה unauthorized-domain אם לא הגדרת דומיין בפיירבייס
       setError(e?.message || "שגיאת התחברות");
     }
   };
@@ -155,7 +171,6 @@ const InvitePage: React.FC = () => {
         <h1 className="text-2xl font-black text-slate-800">הוזמנת לרשימה</h1>
 
         {!listId || !token ? <p className="text-rose-500 font-bold">קישור ההזמנה לא תקין</p> : null}
-
         {error ? <p className="text-rose-500 font-bold break-words">{error}</p> : null}
 
         {!user ? (
@@ -195,8 +210,8 @@ const MainList: React.FC = () => {
 
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
 
-  // Auth + choose list
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -207,6 +222,8 @@ const MainList: React.FC = () => {
         setItems([]);
         return;
       }
+
+      setListLoading(true);
 
       const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
       const snap = await getDocs(q);
@@ -232,10 +249,11 @@ const MainList: React.FC = () => {
         setList({ ...data, id: docToUse.id });
         localStorage.setItem("activeListId", docToUse.id);
       }
+
+      setListLoading(false);
     });
   }, []);
 
-  // Realtime sync
   useEffect(() => {
     if (!list?.id) return;
 
@@ -259,6 +277,13 @@ const MainList: React.FC = () => {
 
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
+
+    // אם לא מחובר - נוביל להתחברות במקום "לא קורה כלום"
+    if (!user) {
+      await signInSmart();
+      return;
+    }
+
     if (!inputValue.trim() || !list?.id) return;
 
     const itemId = crypto.randomUUID();
@@ -343,14 +368,13 @@ const MainList: React.FC = () => {
   };
 
   const generateInviteLink = async () => {
-    if (!user || !list?.id) {
-      await signInWithPopup(auth, googleProvider);
+    if (!user) {
+      await signInSmart();
       return;
     }
+    if (!list?.id) return;
 
-    const token = [...Array(32)]
-      .map(() => Math.floor(Math.random() * 16).toString(16))
-      .join("");
+    const token = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join("");
     const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
 
     await updateDoc(doc(db, "lists", list.id), {
@@ -358,7 +382,6 @@ const MainList: React.FC = () => {
     });
 
     const inviteLink = buildInviteLink(list.id, token);
-    console.log("INVITE_LINK_BUILT:", inviteLink);
 
     await copyToClipboard(inviteLink);
     setIsCopied(true);
@@ -392,6 +415,36 @@ const MainList: React.FC = () => {
     );
   }
 
+  // אם לא מחובר - מסך התחברות ברור (זה מה שחסר לך עכשיו, ולכן "לא נכנסים פריטים")
+  if (!user) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
+        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
+          <h1 className="text-2xl font-black text-slate-800">רשימת קניות חכמה</h1>
+          <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
+          <button
+            onClick={async () => {
+              await signInSmart();
+            }}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
+          >
+            <LogIn className="w-5 h-5" />
+            התחבר עם גוגל
+          </button>
+        </div>
+      </div>
+    );
+  }
+
+  // בזמן טעינת הרשימה הראשונית
+  if (listLoading || !list?.id) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
+      </div>
+    );
+  }
+
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
       {/* Header */}
@@ -407,33 +460,36 @@ const MainList: React.FC = () => {
             <Sparkles className="w-5 h-5" />
           </button>
 
-          <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
+          <button
+            onClick={() => setShowClearConfirm(true)}
+            className="p-2 text-slate-400 hover:text-rose-500"
+            title="נקה רשימה"
+          >
             <Trash2 className="w-5 h-5" />
           </button>
 
-          {/* UPDATED: single invite button (text) */}
+          {/* כפתור יחיד להזמנת חבר */}
           <button
             onClick={generateInviteLink}
-            className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded-xl font-black"
+            className="p-2 text-slate-400 hover:text-indigo-600"
             title="הזמן חבר"
           >
-            הזמן חבר
+            {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
           </button>
         </div>
 
-        {/* UPDATED: build marker */}
+        {/* סימון BUILD בכותרת */}
         <h1 className="text-xl font-extrabold text-slate-800">
           {list?.title || "הרשימה שלי"} | BUILD-INVITE-1
         </h1>
 
-      <button
-  onClick={generateInviteLink}
-  className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded-xl font-black"
-  title="הזמן חבר"
->
-  הזמן חבר
-</button>
-
+        <button
+          onClick={() => signOut(auth)}
+          className="p-2 rounded-full shadow-lg active:scale-90 transition-transform bg-slate-100 text-slate-600"
+          title="התנתק"
+        >
+          <LogOut className="w-5 h-5" />
+        </button>
       </header>
 
       {/* Content */}
@@ -450,6 +506,7 @@ const MainList: React.FC = () => {
               <button
                 type="submit"
                 className="absolute left-2.5 top-2.5 bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all"
+                title="הוסף"
               >
                 <Plus className="w-6 h-6" />
               </button>
@@ -508,10 +565,7 @@ const MainList: React.FC = () => {
                       נקנו ({purchasedItems.length})
                     </h3>
                     {purchasedItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
-                      >
+                      <div key={item.id} className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all">
                         <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -546,10 +600,7 @@ const MainList: React.FC = () => {
             ) : (
               <div className="grid grid-cols-1 gap-3">
                 {favorites.map((item) => (
-                  <div
-                    key={item.id}
-                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
-                  >
+                  <div key={item.id} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
                     <button
                       onClick={async () => {
                         if (!list?.id) return;
@@ -584,18 +635,14 @@ const MainList: React.FC = () => {
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-slate-100 h-24 flex justify-around items-center z-50 pb-8 px-10">
         <button
           onClick={() => setActiveTab("list")}
-          className={`flex flex-col items-center gap-1 transition-all ${
-            activeTab === "list" ? "text-indigo-600 scale-110" : "text-slate-300"
-          }`}
+          className={`flex flex-col items-center gap-1 transition-all ${activeTab === "list" ? "text-indigo-600 scale-110" : "text-slate-300"}`}
         >
           <ListChecks className="w-7 h-7" />
           <span className="text-[10px] font-black uppercase tracking-widest">רשימה</span>
         </button>
         <button
           onClick={() => setActiveTab("favorites")}
-          className={`flex flex-col items-center gap-1 transition-all ${
-            activeTab === "favorites" ? "text-indigo-600 scale-110" : "text-slate-300"
-          }`}
+          className={`flex flex-col items-center gap-1 transition-all ${activeTab === "favorites" ? "text-indigo-600 scale-110" : "text-slate-300"}`}
         >
           <Star className="w-7 h-7" />
           <span className="text-[10px] font-black uppercase tracking-widest">מועדפים</span>
