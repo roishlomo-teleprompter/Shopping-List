@@ -263,11 +263,10 @@ const MainList: React.FC = () => {
       [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
     });
 
-   const url = new URL(window.location.href);
-url.hash = `/invite?listId=${list.id}&token=${token}`;
-const inviteLink = url.toString();
-
-await navigator.clipboard.writeText(inviteLink);
+    // ✅ שינוי אחרון: בניית לינק קשיח ונקי ל-GitHub Pages + HashRouter
+    const base = `${window.location.origin}/Shopping-List/`;
+    const inviteLink = `${base}#/invite?listId=${list.id}&token=${token}`;
+    await navigator.clipboard.writeText(inviteLink);
 
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
