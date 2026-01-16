@@ -263,8 +263,12 @@ const MainList: React.FC = () => {
       [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
     });
 
-    const inviteLink = `${window.location.origin}/Shopping-List/#/invite?listId=${list.id}&token=${token}`;
-    navigator.clipboard.writeText(inviteLink);
+   const url = new URL(window.location.href);
+url.hash = `/invite?listId=${list.id}&token=${token}`;
+const inviteLink = url.toString();
+
+await navigator.clipboard.writeText(inviteLink);
+
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
