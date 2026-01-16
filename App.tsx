@@ -250,27 +250,42 @@ const MainList: React.FC = () => {
     }
   };
 
-  const generateInviteLink = async () => {
-    if (!user || !list?.id) {
-      await signInWithPopup(auth, googleProvider);
-      return;
-    }
+ const generateInviteLink = async () => {
+  if (!user) {
+    await signInWithPopup(auth, googleProvider);
+    return;
+  }
 
-    const token = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
-    const expiresAt = Date.now() + (48 * 60 * 60 * 1000);
+  if (!list?.id) {
+    alert("הרשימה עדיין נטענת. נסה שוב בעוד רגע.");
+    return;
+  }
 
-    await updateDoc(doc(db, "lists", list.id), {
-      [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
-    });
+  const token = [...Array(32)]
+    .map(() => Math.floor(Math.random() * 16).toString(16))
+    .join('');
 
-    // ✅ שינוי אחרון: בניית לינק קשיח ונקי ל-GitHub Pages + HashRouter
-    const base = `${window.location.origin}/Shopping-List/`;
-    const inviteLink = `${base}#/invite?listId=${list.id}&token=${token}`;
+  const expiresAt = Date.now() + (48 * 60 * 60 * 1000); // 48h
+
+  await updateDoc(doc(db, "lists", list.id), {
+    [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
+  });
+
+  // הכי יציב ל-GitHub Pages עם HashRouter
+  const inviteLink =
+    `${window.location.origin}/Shopping-List/#/invite?listId=${list.id}&token=${token}`;
+
+  try {
     await navigator.clipboard.writeText(inviteLink);
+  } catch {
+    // fallback אם clipboard נחסם בדפדפן
+    window.prompt("העתק את הלינק:", inviteLink);
+  }
 
-    setIsCopied(true);
-    setTimeout(() => setIsCopied(false), 2000);
-  };
+  setIsCopied(true);
+  setTimeout(() => setIsCopied(false), 2000);
+};
+
 
   const shareWhatsApp = () => {
     const active = items.filter(i => !i.isPurchased);
