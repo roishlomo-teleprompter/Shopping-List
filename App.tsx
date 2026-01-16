@@ -1,18 +1,16 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { HashRouter, Routes, Route, useNavigate, useSearchParams } from 'react-router-dom';
 import {
-  ShoppingBag, Share2, Star, Trash2,
+  Share2, Star, Trash2,
   ShoppingCart, Plus, Minus, MessageCircle,
-  CheckCircle2, Circle, ListChecks, Check, X, AlertCircle,
-  FileText, Sparkles, LogOut, User, LogIn, Loader2
+  CheckCircle2, Circle, ListChecks, Check, AlertCircle,
+  Sparkles, LogOut, User, LogIn, Loader2
 } from 'lucide-react';
-import {
-  onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser
-} from 'firebase/auth';
+import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
 import {
   doc, setDoc, updateDoc, onSnapshot, collection,
   query, where, getDocs, arrayUnion, runTransaction,
-  Timestamp, deleteDoc, getDoc, serverTimestamp, deleteField
+  deleteDoc, deleteField
 } from 'firebase/firestore';
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from './firebase.ts';
@@ -36,6 +34,7 @@ const InvitePage: React.FC = () => {
     if (!user || !listId || !token) return;
     setLoading(true);
     setError(null);
+
     try {
       await runTransaction(db, async (transaction) => {
         const listDocRef = doc(db, "lists", listId);
@@ -54,12 +53,11 @@ const InvitePage: React.FC = () => {
         });
       });
 
-      // ✅ חשוב: לשמור איזו רשימה הופעלה כדי שלא "ניפול" על רשימה אחרת
+      // לשמור את הרשימה הפעילה
       localStorage.setItem("activeListId", listId);
-
       navigate('/');
     } catch (e: any) {
-      setError(e.message);
+      setError(e?.message || "שגיאה לא ידועה");
     } finally {
       setLoading(false);
     }
@@ -108,49 +106,50 @@ const MainList: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
-  // Auth State
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
 
-      if (u) {
-        // ✅ חשוב: מחזירים את כל הרשימות שבהן המשתמש חבר (כולל רשימה משותפת)
-        const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
-        const snap = await getDocs(q);
+      if (!u) {
+        setList(null);
+        setItems([]);
+        return;
+      }
 
-        if (snap.empty) {
-          // אם אין אף רשימה - יוצרים רשימת ברירת מחדל
-          const newListRef = doc(collection(db, "lists"));
-          const newList: ShoppingList = {
-            id: newListRef.id,
-            title: "הרשימה שלי",
-            ownerUid: u.uid,
-            sharedWith: [u.uid],
-            createdAt: Date.now(),
-            updatedAt: Date.now()
-          };
+      const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
+      const snap = await getDocs(q);
 
-          await setDoc(newListRef, newList);
-          setList(newList);
-        } else {
-          // ✅ שינוי מרכזי: אם שמור activeListId, נבחר את הרשימה הזו קודם
-          const savedId = localStorage.getItem("activeListId");
+      if (snap.empty) {
+        const newListRef = doc(collection(db, "lists"));
+        const newList: ShoppingList = {
+          id: newListRef.id,
+          title: "הרשימה שלי",
+          ownerUid: u.uid,
+          sharedWith: [u.uid],
+          createdAt: Date.now(),
+          updatedAt: Date.now()
+        };
 
-          const docToUse = savedId
-            ? (snap.docs.find(d => d.id === savedId) ?? snap.docs[0])
-            : snap.docs[0];
+        await setDoc(newListRef, newList);
+        setList(newList);
+        localStorage.setItem("activeListId", newListRef.id);
+      } else {
+        const savedId = localStorage.getItem("activeListId");
+        const docToUse = savedId
+          ? (snap.docs.find(d => d.id === savedId) ?? snap.docs[0])
+          : snap.docs[0];
 
-          const data = docToUse.data() as ShoppingList;
-          setList({ ...data, id: docToUse.id });
-        }
+        const data = docToUse.data() as ShoppingList;
+        setList({ ...data, id: docToUse.id });
+        localStorage.setItem("activeListId", docToUse.id);
       }
     });
   }, []);
 
-  // Real-time Sync for current list
   useEffect(() => {
     if (!list?.id) return;
+
     const listRef = doc(db, "lists", list.id);
     const itemsCol = collection(listRef, "items");
 
@@ -179,6 +178,7 @@ const MainList: React.FC = () => {
       isFavorite: false,
       createdAt: Date.now()
     };
+
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
     setInputValue('');
   };
@@ -187,6 +187,7 @@ const MainList: React.FC = () => {
     if (!list?.id) return;
     const item = items.find(i => i.id === id);
     if (!item) return;
+
     const isNowPurchased = !item.isPurchased;
     await updateDoc(doc(db, "lists", list.id, "items", id), {
       isPurchased: isNowPurchased,
@@ -198,6 +199,7 @@ const MainList: React.FC = () => {
     if (!list?.id) return;
     const item = items.find(i => i.id === id);
     if (!item) return;
+
     await updateDoc(doc(db, "lists", list.id, "items", id), {
       quantity: Math.max(1, item.quantity + delta)
     });
@@ -212,6 +214,7 @@ const MainList: React.FC = () => {
     if (!list?.id) return;
     const item = items.find(i => i.id === id);
     if (!item) return;
+
     await updateDoc(doc(db, "lists", list.id, "items", id), {
       isFavorite: !item.isFavorite
     });
@@ -225,15 +228,19 @@ const MainList: React.FC = () => {
   };
 
   const getAiSuggestions = async () => {
-    if (!process.env.API_KEY) return;
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+    if (!apiKey) return;
+
     setIsAiLoading(true);
-    const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
+    const ai = new GoogleGenAI({ apiKey });
+
     try {
       const currentList = items.map(i => i.name).join(', ');
       const response = await ai.models.generateContent({
         model: 'gemini-3-flash-preview',
         contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
       });
+
       const suggestions = response.text?.split(',').map(s => s.trim()) || [];
       if (suggestions.length > 0) setInputValue(suggestions[0]);
     } catch (e) {
@@ -248,14 +255,14 @@ const MainList: React.FC = () => {
       await signInWithPopup(auth, googleProvider);
       return;
     }
+
     const token = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join('');
-    const expiresAt = Date.now() + (48 * 60 * 60 * 1000); // 48 hours
+    const expiresAt = Date.now() + (48 * 60 * 60 * 1000);
 
     await updateDoc(doc(db, "lists", list.id), {
       [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
     });
 
-    // GitHub Pages: /Shopping-List/ + HashRouter
     const inviteLink = `${window.location.origin}/Shopping-List/#/invite?listId=${list.id}&token=${token}`;
     navigator.clipboard.writeText(inviteLink);
     setIsCopied(true);
@@ -265,6 +272,7 @@ const MainList: React.FC = () => {
   const shareWhatsApp = () => {
     const active = items.filter(i => !i.isPurchased);
     if (active.length === 0) return;
+
     const listText = active.map(i => `${i.name} x${i.quantity}`).join('\n');
     const message = encodeURIComponent(`*רשימת קניות*\n\n${listText}\n\nנשלח מהרשימה החכמה 🛒`);
     window.open(`https://wa.me/?text=${message}`, '_blank');
@@ -274,10 +282,12 @@ const MainList: React.FC = () => {
     () => items.filter(i => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
+
   const purchasedItems = useMemo(
     () => items.filter(i => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
+
   const favorites = useMemo(
     () => items.filter(i => i.isFavorite),
     [items]
@@ -293,8 +303,6 @@ const MainList: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
-
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
           <button
@@ -321,7 +329,6 @@ const MainList: React.FC = () => {
         </button>
       </header>
 
-      {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === 'list' ? (
           <>
@@ -438,7 +445,6 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {/* WhatsApp Button */}
       {activeTab === 'list' && activeItems.length > 0 && (
         <button
           onClick={shareWhatsApp}
@@ -449,7 +455,6 @@ const MainList: React.FC = () => {
         </button>
       )}
 
-      {/* Tabs */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-slate-100 h-24 flex justify-around items-center z-50 pb-8 px-10">
         <button
           onClick={() => setActiveTab('list')}
@@ -467,7 +472,6 @@ const MainList: React.FC = () => {
         </button>
       </nav>
 
-      {/* Clear Confirm Modal */}
       {showClearConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-xs p-8 shadow-2xl text-center space-y-6">
