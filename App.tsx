@@ -516,12 +516,12 @@ const MainList: React.FC = () => {
 };
 
 const App: React.FC = () => (
-  <HashRouter>
-    <Routes>
-      <Route path="/" element={<MainList />} />
-      <Route path="/invite" element={<InvitePage />} />
-    </Routes>
-  </HashRouter>
+ <HashRouter>
+  <Routes>
+    <Route path="/invite" element={<InvitePage />} />
+    <Route path="/*" element={<MainList />} />
+  </Routes>
+</HashRouter>
 );
 
 export default App;
