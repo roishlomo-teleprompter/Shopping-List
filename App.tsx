@@ -426,15 +426,14 @@ const MainList: React.FC = () => {
           {list?.title || "הרשימה שלי"} | BUILD-INVITE-1
         </h1>
 
-        <button
-          onClick={() => (!user ? signInWithPopup(auth, googleProvider) : signOut(auth))}
-          className={`p-2 rounded-full shadow-lg active:scale-90 transition-transform ${
-            user ? "bg-slate-100 text-slate-600" : "bg-indigo-600 text-white shadow-indigo-200"
-          }`}
-          title={user ? "התנתק" : "התחבר"}
-        >
-          {user ? <LogOut className="w-5 h-5" /> : <User className="w-5 h-5" />}
-        </button>
+      <button
+  onClick={generateInviteLink}
+  className="px-3 py-2 text-indigo-600 border border-indigo-600 rounded-xl font-black"
+  title="הזמן חבר"
+>
+  הזמן חבר
+</button>
+
       </header>
 
       {/* Content */}
