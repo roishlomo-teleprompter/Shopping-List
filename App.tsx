@@ -1,50 +1,110 @@
-import React, { useState, useEffect, useMemo } from 'react';
-import { HashRouter, Routes, Route, useNavigate, useSearchParams } from 'react-router-dom';
+import React, { useEffect, useMemo, useState } from "react";
+import { HashRouter, Routes, Route, useNavigate, useSearchParams } from "react-router-dom";
 import {
-  Share2, Star, Trash2,
-  ShoppingCart, Plus, Minus, MessageCircle,
-  CheckCircle2, Circle, ListChecks, Check, AlertCircle,
-  Sparkles, LogOut, User, LogIn, Loader2
-} from 'lucide-react';
-import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from 'firebase/auth';
-import {
-  doc, setDoc, updateDoc, onSnapshot, collection,
-  query, where, getDocs, arrayUnion, runTransaction,
-  deleteDoc, deleteField
-} from 'firebase/firestore';
-import { GoogleGenAI } from "@google/genai";
-import { auth, db, googleProvider } from './firebase.ts';
-import { ShoppingItem, ShoppingList, Tab } from './types.ts';
+  Share2,
+  Star,
+  Trash2,
+  ShoppingCart,
+  Plus,
+  Minus,
+  MessageCircle,
+  CheckCircle2,
+  Circle,
+  ListChecks,
+  Check,
+  AlertCircle,
+  Sparkles,
+  LogOut,
+  User,
+  LogIn,
+  Loader2,
+} from "lucide-react";
 
-// --- Invite Page Component ---
+import { onAuthStateChanged, signInWithPopup, signOut, User as FirebaseUser } from "firebase/auth";
+import {
+  arrayUnion,
+  collection,
+  deleteDoc,
+  deleteField,
+  doc,
+  getDocs,
+  onSnapshot,
+  query,
+  runTransaction,
+  setDoc,
+  updateDoc,
+  where,
+} from "firebase/firestore";
+
+import { GoogleGenAI } from "@google/genai";
+import { auth, db, googleProvider } from "./firebase.ts";
+import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
+
+// ---------------------------
+// Helpers
+// ---------------------------
+function buildInviteLink(listId: string, token: string) {
+  // Vite נותן BASE_URL נכון לפי vite.config.ts
+  // בפרוד אצלך זה אמור להיות "/Shopping-List/"
+  const basePath = import.meta.env.BASE_URL || "/";
+  const origin = window.location.origin;
+  return `${origin}${basePath}#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+}
+
+async function copyToClipboard(text: string) {
+  // Clipboard API יכול להיכשל בגלל הרשאות/מדיניות דפדפן
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // fallback: פרומפט שמאפשר העתקה ידנית
+    window.prompt("העתק את הקישור:", text);
+    return false;
+  }
+}
+
+// ---------------------------
+// Invite Page
+// ---------------------------
 const InvitePage: React.FC = () => {
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
-useEffect(() => {
-  const hash = window.location.hash || "";
-  if (!hash.startsWith("#/invite")) {
-    window.location.hash = `#/invite?listId=${listId ?? ""}&token=${token ?? ""}`;
-  }
-}, [listId, token]);
-
+  const listId = searchParams.get("listId");
+  const token = searchParams.get("token");
 
   const [user, setUser] = useState<FirebaseUser | null>(auth.currentUser);
-  const [authChecked, setAuthChecked] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
-    const unsub = onAuthStateChanged(auth, (u) => {
+    return onAuthStateChanged(auth, (u) => {
       setUser(u);
-      setAuthChecked(true);
+      setAuthLoading(false);
     });
-    return () => unsub();
   }, []);
 
+  const handleLogin = async () => {
+    setError(null);
+    try {
+      await signInWithPopup(auth, googleProvider);
+    } catch (e: any) {
+      // כאן לרוב תראה unauthorized-domain אם לא הגדרת דומיין בפיירבייס
+      setError(e?.message || "שגיאת התחברות");
+    }
+  };
+
   const handleJoin = async () => {
-    if (!user || !listId || !token) return;
+    if (!listId || !token) {
+      setError("קישור ההזמנה חסר נתונים (listId או token)");
+      return;
+    }
+    if (!user) {
+      await handleLogin();
+      return;
+    }
 
     setLoading(true);
     setError(null);
@@ -69,7 +129,7 @@ useEffect(() => {
       });
 
       localStorage.setItem("activeListId", listId);
-      navigate('/', { replace: true });
+      navigate("/");
     } catch (e: any) {
       setError(e?.message || "שגיאה לא ידועה");
     } finally {
@@ -77,23 +137,10 @@ useEffect(() => {
     }
   };
 
-  // אם חסר listId/token - לא להיעלם, להציג שגיאה ברורה
-  if (!listId || !token) {
+  if (authLoading) {
     return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6 dir-rtl" dir="rtl">
-        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-4 text-center">
-          <h1 className="text-xl font-black text-slate-800">לינק הזמנה לא תקין</h1>
-          <p className="text-slate-500 font-bold">חסר listId או token</p>
-        </div>
-      </div>
-    );
-  }
-
-  // עד שוידאנו auth - מסך טעינה (מונע "קפיצה")
-  if (!authChecked) {
-    return (
-      <div className="min-h-screen bg-slate-50 flex items-center justify-center">
-        <Loader2 className="w-8 h-8 animate-spin text-indigo-600" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
       </div>
     );
   }
@@ -107,11 +154,15 @@ useEffect(() => {
 
         <h1 className="text-2xl font-black text-slate-800">הוזמנת לרשימה</h1>
 
-        {error && <p className="text-rose-500 font-bold">{error}</p>}
+        {!listId || !token ? (
+          <p className="text-rose-500 font-bold">קישור ההזמנה לא תקין</p>
+        ) : null}
+
+        {error ? <p className="text-rose-500 font-bold break-words">{error}</p> : null}
 
         {!user ? (
           <button
-            onClick={() => signInWithPopup(auth, googleProvider)}
+            onClick={handleLogin}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
             <LogIn className="w-5 h-5" />
@@ -131,19 +182,23 @@ useEffect(() => {
   );
 };
 
-
-// --- Main List Component ---
+// ---------------------------
+// Main List
+// ---------------------------
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
-  const [activeTab, setActiveTab] = useState<Tab>('list');
-  const [inputValue, setInputValue] = useState('');
+  const [activeTab, setActiveTab] = useState<Tab>("list");
+
+  const [inputValue, setInputValue] = useState("");
   const [isCopied, setIsCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
 
+  // Auth + choose list
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
@@ -166,7 +221,7 @@ const MainList: React.FC = () => {
           ownerUid: u.uid,
           sharedWith: [u.uid],
           createdAt: Date.now(),
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
         };
 
         await setDoc(newListRef, newList);
@@ -174,10 +229,7 @@ const MainList: React.FC = () => {
         localStorage.setItem("activeListId", newListRef.id);
       } else {
         const savedId = localStorage.getItem("activeListId");
-        const docToUse = savedId
-          ? (snap.docs.find(d => d.id === savedId) ?? snap.docs[0])
-          : snap.docs[0];
-
+        const docToUse = savedId ? snap.docs.find((d) => d.id === savedId) ?? snap.docs[0] : snap.docs[0];
         const data = docToUse.data() as ShoppingList;
         setList({ ...data, id: docToUse.id });
         localStorage.setItem("activeListId", docToUse.id);
@@ -185,6 +237,7 @@ const MainList: React.FC = () => {
     });
   }, []);
 
+  // Realtime sync
   useEffect(() => {
     if (!list?.id) return;
 
@@ -196,11 +249,14 @@ const MainList: React.FC = () => {
     });
 
     const unsubItems = onSnapshot(itemsCol, (snap) => {
-      const docs = snap.docs.map(d => d.data() as ShoppingItem);
+      const docs = snap.docs.map((d) => d.data() as ShoppingItem);
       setItems(docs);
     });
 
-    return () => { unsubList(); unsubItems(); };
+    return () => {
+      unsubList();
+      unsubItems();
+    };
   }, [list?.id]);
 
   const addItem = async (e?: React.FormEvent) => {
@@ -214,32 +270,32 @@ const MainList: React.FC = () => {
       quantity: 1,
       isPurchased: false,
       isFavorite: false,
-      createdAt: Date.now()
+      createdAt: Date.now(),
     };
 
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
-    setInputValue('');
+    setInputValue("");
   };
 
   const togglePurchased = async (id: string) => {
     if (!list?.id) return;
-    const item = items.find(i => i.id === id);
+    const item = items.find((i) => i.id === id);
     if (!item) return;
 
     const isNowPurchased = !item.isPurchased;
     await updateDoc(doc(db, "lists", list.id, "items", id), {
       isPurchased: isNowPurchased,
-      purchasedAt: isNowPurchased ? Date.now() : null
+      purchasedAt: isNowPurchased ? Date.now() : null,
     });
   };
 
   const updateQty = async (id: string, delta: number) => {
     if (!list?.id) return;
-    const item = items.find(i => i.id === id);
+    const item = items.find((i) => i.id === id);
     if (!item) return;
 
     await updateDoc(doc(db, "lists", list.id, "items", id), {
-      quantity: Math.max(1, item.quantity + delta)
+      quantity: Math.max(1, item.quantity + delta),
     });
   };
 
@@ -250,17 +306,17 @@ const MainList: React.FC = () => {
 
   const toggleFavorite = async (id: string) => {
     if (!list?.id) return;
-    const item = items.find(i => i.id === id);
+    const item = items.find((i) => i.id === id);
     if (!item) return;
 
     await updateDoc(doc(db, "lists", list.id, "items", id), {
-      isFavorite: !item.isFavorite
+      isFavorite: !item.isFavorite,
     });
   };
 
   const clearList = async () => {
     if (!list?.id) return;
-    const batch = items.map(i => deleteDoc(doc(db, "lists", list.id, "items", i.id)));
+    const batch = items.map((i) => deleteDoc(doc(db, "lists", list.id, "items", i.id)));
     await Promise.all(batch);
     setShowClearConfirm(false);
   };
@@ -273,13 +329,13 @@ const MainList: React.FC = () => {
     const ai = new GoogleGenAI({ apiKey });
 
     try {
-      const currentList = items.map(i => i.name).join(', ');
+      const currentList = items.map((i) => i.name).join(", ");
       const response = await ai.models.generateContent({
-        model: 'gemini-3-flash-preview',
+        model: "gemini-3-flash-preview",
         contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
       });
 
-      const suggestions = response.text?.split(',').map(s => s.trim()) || [];
+      const suggestions = response.text?.split(",").map((s) => s.trim()) || [];
       if (suggestions.length > 0) setInputValue(suggestions[0]);
     } catch (e) {
       console.error(e);
@@ -288,70 +344,50 @@ const MainList: React.FC = () => {
     }
   };
 
- const generateInviteLink = async () => {
-  if (!user) {
-    await signInWithPopup(auth, googleProvider);
-    return;
-  }
+  const generateInviteLink = async () => {
+    if (!user || !list?.id) {
+      await signInWithPopup(auth, googleProvider);
+      return;
+    }
 
-  if (!list?.id) {
-    alert("הרשימה עדיין נטענת. נסה שוב בעוד רגע.");
-    return;
-  }
+    const token = [...Array(32)]
+      .map(() => Math.floor(Math.random() * 16).toString(16))
+      .join("");
+    const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
 
-  const token = [...Array(32)]
-    .map(() => Math.floor(Math.random() * 16).toString(16))
-    .join('');
+    await updateDoc(doc(db, "lists", list.id), {
+      [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt },
+    });
 
-  const expiresAt = Date.now() + (48 * 60 * 60 * 1000); // 48h
+    const inviteLink = buildInviteLink(list.id, token);
 
-  await updateDoc(doc(db, "lists", list.id), {
-    [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt }
-  });
-
-  // הכי יציב ל-GitHub Pages עם HashRouter
-  const inviteLink =
-    `${window.location.origin}/Shopping-List/#/invite?listId=${list.id}&token=${token}`;
-
-  try {
-    await navigator.clipboard.writeText(inviteLink);
-  } catch {
-    // fallback אם clipboard נחסם בדפדפן
-    window.prompt("העתק את הלינק:", inviteLink);
-  }
-
-  setIsCopied(true);
-  setTimeout(() => setIsCopied(false), 2000);
-};
-
+    await copyToClipboard(inviteLink);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
 
   const shareWhatsApp = () => {
-    const active = items.filter(i => !i.isPurchased);
+    const active = items.filter((i) => !i.isPurchased);
     if (active.length === 0) return;
 
-    const listText = active.map(i => `${i.name} x${i.quantity}`).join('\n');
+    const listText = active.map((i) => `${i.name} x${i.quantity}`).join("\n");
     const message = encodeURIComponent(`*רשימת קניות*\n\n${listText}\n\nנשלח מהרשימה החכמה 🛒`);
-    window.open(`https://wa.me/?text=${message}`, '_blank');
+    window.open(`https://wa.me/?text=${message}`, "_blank");
   };
 
   const activeItems = useMemo(
-    () => items.filter(i => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
+    () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
-
   const purchasedItems = useMemo(
-    () => items.filter(i => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
+    () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
-
-  const favorites = useMemo(
-    () => items.filter(i => i.isFavorite),
-    [items]
-  );
+  const favorites = useMemo(() => items.filter((i) => i.isFavorite), [items]);
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50">
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
         <Loader2 className="animate-spin text-indigo-600" />
       </div>
     );
@@ -359,39 +395,49 @@ const MainList: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
+      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
           <button
             onClick={getAiSuggestions}
-            className={`p-2 rounded-full ${isAiLoading ? 'bg-indigo-100 animate-pulse' : 'bg-slate-100 hover:bg-indigo-50 text-indigo-600'}`}
+            className={`p-2 rounded-full ${
+              isAiLoading ? "bg-indigo-100 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
+            }`}
+            title="הצעות AI"
           >
             <Sparkles className="w-5 h-5" />
           </button>
-          <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500">
+
+          <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
             <Trash2 className="w-5 h-5" />
           </button>
-          <button onClick={generateInviteLink} className="p-2 text-slate-400">
+
+          <button onClick={generateInviteLink} className="p-2 text-slate-400" title="הזמן חבר">
             {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
           </button>
         </div>
 
-        <h1 className="text-xl font-extrabold text-slate-800">הרשימה שלי</h1>
+        <h1 className="text-xl font-extrabold text-slate-800">{list?.title || "הרשימה שלי"}</h1>
 
         <button
-          onClick={() => !user ? signInWithPopup(auth, googleProvider) : signOut(auth)}
-          className={`p-2 rounded-full shadow-lg active:scale-90 transition-transform ${user ? 'bg-slate-100 text-slate-600' : 'bg-indigo-600 text-white shadow-indigo-200'}`}
+          onClick={() => (!user ? signInWithPopup(auth, googleProvider) : signOut(auth))}
+          className={`p-2 rounded-full shadow-lg active:scale-90 transition-transform ${
+            user ? "bg-slate-100 text-slate-600" : "bg-indigo-600 text-white shadow-indigo-200"
+          }`}
+          title={user ? "התנתק" : "התחבר"}
         >
           {user ? <LogOut className="w-5 h-5" /> : <User className="w-5 h-5" />}
         </button>
       </header>
 
+      {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
-        {activeTab === 'list' ? (
+        {activeTab === "list" ? (
           <>
             <form onSubmit={addItem} className="relative">
               <input
                 value={inputValue}
-                onChange={e => setInputValue(e.target.value)}
+                onChange={(e) => setInputValue(e.target.value)}
                 placeholder="מה להוסיף לרשימה?"
                 className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
               />
@@ -408,18 +454,23 @@ const MainList: React.FC = () => {
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3">
-                  {activeItems.map(item => (
-                    <div key={item.id} className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm transition-all hover:border-indigo-100">
+                  {activeItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm transition-all hover:border-indigo-100"
+                    >
                       <div className="flex items-center gap-1">
                         <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500">
                           <Trash2 className="w-4 h-4" />
                         </button>
+
                         <button
                           onClick={() => toggleFavorite(item.id)}
-                          className={`p-2 transition-colors ${item.isFavorite ? 'text-amber-500' : 'text-slate-300'}`}
+                          className={`p-2 transition-colors ${item.isFavorite ? "text-amber-500" : "text-slate-300"}`}
                         >
-                          <Star className={`w-4 h-4 ${item.isFavorite ? 'fill-amber-500' : ''}`} />
+                          <Star className={`w-4 h-4 ${item.isFavorite ? "fill-amber-500" : ""}`} />
                         </button>
+
                         <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100 mr-2">
                           <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400">
                             <Minus className="w-3 h-3" />
@@ -430,10 +481,8 @@ const MainList: React.FC = () => {
                           </button>
                         </div>
                       </div>
-                      <div
-                        className="flex items-center gap-3 overflow-hidden flex-1 justify-end cursor-pointer"
-                        onClick={() => togglePurchased(item.id)}
-                      >
+
+                      <div className="flex items-center gap-3 overflow-hidden flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
                         <span className="text-base font-bold text-slate-700 truncate">{item.name}</span>
                         <Circle className="w-6 h-6 text-slate-300 flex-shrink-0" />
                       </div>
@@ -446,15 +495,12 @@ const MainList: React.FC = () => {
                     <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right mb-2">
                       נקנו ({purchasedItems.length})
                     </h3>
-                    {purchasedItems.map(item => (
+                    {purchasedItems.map((item) => (
                       <div key={item.id} className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all">
                         <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300">
                           <Trash2 className="w-4 h-4" />
                         </button>
-                        <div
-                          className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
-                          onClick={() => togglePurchased(item.id)}
-                        >
+                        <div className="flex items-center gap-3 flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
                           <span className="text-base font-bold text-slate-500 line-through truncate">
                             {item.name} x{item.quantity}
                           </span>
@@ -473,6 +519,7 @@ const MainList: React.FC = () => {
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">מועדפים</h2>
               <p className="text-sm text-slate-400 font-bold">פריטים שחוזרים לסל</p>
             </div>
+
             {favorites.length === 0 ? (
               <div className="text-center py-20 opacity-20">
                 <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
@@ -480,13 +527,13 @@ const MainList: React.FC = () => {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {favorites.map(item => (
+                {favorites.map((item) => (
                   <div key={item.id} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
                     <button
                       onClick={async () => {
                         if (!list?.id) return;
                         await updateDoc(doc(db, "lists", list.id, "items", item.id), { isPurchased: false });
-                        setActiveTab('list');
+                        setActiveTab("list");
                       }}
                       className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all"
                     >
@@ -501,7 +548,8 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {activeTab === 'list' && activeItems.length > 0 && (
+      {/* WhatsApp Button */}
+      {activeTab === "list" && activeItems.length > 0 && (
         <button
           onClick={shareWhatsApp}
           className="fixed bottom-28 left-6 right-6 bg-emerald-500 text-white py-4 rounded-2xl shadow-xl shadow-emerald-100 flex items-center justify-center gap-2 font-black z-30 active:scale-95 transition-all border-2 border-white"
@@ -511,23 +559,25 @@ const MainList: React.FC = () => {
         </button>
       )}
 
+      {/* Tabs */}
       <nav className="fixed bottom-0 left-0 right-0 max-w-md mx-auto bg-white/90 backdrop-blur-xl border-t border-slate-100 h-24 flex justify-around items-center z-50 pb-8 px-10">
         <button
-          onClick={() => setActiveTab('list')}
-          className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'list' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}
+          onClick={() => setActiveTab("list")}
+          className={`flex flex-col items-center gap-1 transition-all ${activeTab === "list" ? "text-indigo-600 scale-110" : "text-slate-300"}`}
         >
           <ListChecks className="w-7 h-7" />
           <span className="text-[10px] font-black uppercase tracking-widest">רשימה</span>
         </button>
         <button
-          onClick={() => setActiveTab('favorites')}
-          className={`flex flex-col items-center gap-1 transition-all ${activeTab === 'favorites' ? 'text-indigo-600 scale-110' : 'text-slate-300'}`}
+          onClick={() => setActiveTab("favorites")}
+          className={`flex flex-col items-center gap-1 transition-all ${activeTab === "favorites" ? "text-indigo-600 scale-110" : "text-slate-300"}`}
         >
           <Star className="w-7 h-7" />
           <span className="text-[10px] font-black uppercase tracking-widest">מועדפים</span>
         </button>
       </nav>
 
+      {/* Clear Confirm Modal */}
       {showClearConfirm && (
         <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-slate-900/40 backdrop-blur-sm">
           <div className="bg-white rounded-3xl w-full max-w-xs p-8 shadow-2xl text-center space-y-6">
@@ -553,14 +603,16 @@ const MainList: React.FC = () => {
   );
 };
 
+// ---------------------------
+// App Router
+// ---------------------------
 const App: React.FC = () => (
   <HashRouter>
     <Routes>
+      <Route path="/" element={<MainList />} />
       <Route path="/invite" element={<InvitePage />} />
-      <Route path="/*" element={<MainList />} />
     </Routes>
   </HashRouter>
 );
 
 export default App;
-
