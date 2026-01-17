@@ -411,8 +411,7 @@ const MainList: React.FC = () => {
         contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
       });
 
-      const suggestions =
-        response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
+      const suggestions = response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
       if (suggestions.length > 0) {
         setInputValue(suggestions[0]);
       }
@@ -442,15 +441,6 @@ const MainList: React.FC = () => {
     await copyToClipboard(inviteLink);
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
-  };
-
-  const shareWhatsApp = () => {
-    const active = items.filter((i) => !i.isPurchased);
-    if (active.length === 0) return;
-
-    const listText = active.map((i) => `${i.name} x${i.quantity}`).join("\n");
-    const message = encodeURIComponent(`*רשימת קניות*\n\n${listText}\n\nנשלח מהרשימה החכמה 🛒`);
-    window.open(`https://wa.me/?text=${message}`, "_blank");
   };
 
   if (authLoading) {
@@ -490,10 +480,7 @@ const MainList: React.FC = () => {
   }
 
   return (
-    <div
-      className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl"
-      dir="rtl"
-    >
+    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-40 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
@@ -533,16 +520,6 @@ const MainList: React.FC = () => {
 
       {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
-        {/* Share button like the screenshot */}
-        <button
-          onClick={generateInviteLink}
-          className="w-full flex items-center justify-center gap-2 bg-emerald-500 text-white py-4 rounded-full font-black shadow-lg shadow-emerald-200"
-          title="שתף רשימה"
-        >
-          <MessageCircle className="w-5 h-5" />
-          שתף רשימה
-        </button>
-
         {activeTab === "list" ? (
           <div className="space-y-6">
             <form onSubmit={addItem} className="relative">
@@ -576,7 +553,6 @@ const MainList: React.FC = () => {
                       className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
                       dir="rtl"
                     >
-                      {/* צד שמאל: פח + מועדף */}
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => deleteItem(item.id)}
@@ -595,7 +571,6 @@ const MainList: React.FC = () => {
                         </button>
                       </div>
 
-                      {/* אמצע: שם הפריט */}
                       <div
                         className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
                         style={{ direction: "rtl", unicodeBidi: "plaintext" }}
@@ -604,7 +579,6 @@ const MainList: React.FC = () => {
                         {item.name}
                       </div>
 
-                      {/* צד ימין: כמות */}
                       <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
                         <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
                           <Minus className="w-3 h-3" />
@@ -635,10 +609,7 @@ const MainList: React.FC = () => {
                             <Trash2 className="w-4 h-4" />
                           </button>
 
-                          <div
-                            className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
-                            onClick={() => togglePurchased(item.id)}
-                          >
+                          <div className="flex items-center gap-3 flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
                             <span
                               className="text-base font-bold text-slate-500 line-through truncate text-right"
                               style={{ direction: "rtl", unicodeBidi: "plaintext" }}
@@ -699,10 +670,10 @@ const MainList: React.FC = () => {
 
                           setActiveTab("list");
                         }}
-                        className="p-2 rounded-xl bg-emerald-500 text-white shadow-md active:scale-90 transition-transform"
+                        className="px-4 py-2 rounded-xl bg-emerald-500 text-white shadow-md active:scale-90 transition-transform font-black"
                         title="הוסף לרשימה"
                       >
-                        <Plus className="w-4 h-4" />
+                        הוסף לרשימה
                       </button>
 
                       <button
@@ -730,36 +701,55 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom Nav like the screenshot */}
-      <footer className="fixed bottom-0 left-0 right-0 z-50 bg-white border-t border-slate-200">
-        <div className="max-w-md mx-auto flex items-center justify-around py-3">
-          <button
-            onClick={() => setActiveTab("favorites")}
-            className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-              activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
-            }`}
-            title="מועדפים"
-          >
-            <Star
-              className={`w-7 h-7 ${
-                activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
-              }`}
-            />
-            מועדפים
-          </button>
+      {/* Bottom Bar: share button above + swapped positions (favorites left, list right) */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="max-w-md mx-auto px-4 pb-3">
+          {/* Share button aligned left above bottom nav */}
+          <div className="flex justify-start mb-2">
+            <button
+              onClick={generateInviteLink}
+              className="flex items-center justify-center gap-2 bg-emerald-500 text-white py-3 px-6 rounded-full font-black shadow-lg shadow-emerald-200"
+              title="שתף רשימה"
+            >
+              <MessageCircle className="w-5 h-5" />
+              שתף רשימה
+            </button>
+          </div>
 
-          <button
-            onClick={() => setActiveTab("list")}
-            className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-              activeTab === "list" ? "text-indigo-600" : "text-slate-300"
-            }`}
-            title="רשימה"
-          >
-            <ListChecks className="w-7 h-7" />
-            רשימה
-          </button>
+          {/* Bottom nav */}
+          <footer className="bg-white border-t border-slate-200 rounded-2xl">
+            <div className="flex items-center justify-between px-10 py-3">
+              {/* Favorites on the left */}
+              <button
+                onClick={() => setActiveTab("favorites")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="מועדפים"
+              >
+                <Star
+                  className={`w-7 h-7 ${
+                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
+                  }`}
+                />
+                מועדפים
+              </button>
+
+              {/* List on the right */}
+              <button
+                onClick={() => setActiveTab("list")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="רשימה"
+              >
+                <ListChecks className="w-7 h-7" />
+                רשימה
+              </button>
+            </div>
+          </footer>
         </div>
-      </footer>
+      </div>
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
