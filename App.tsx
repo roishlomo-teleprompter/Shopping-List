@@ -7,16 +7,14 @@ import {
   ShoppingCart,
   Plus,
   Minus,
-  MessageCircle,
   CheckCircle2,
-  Circle,
   ListChecks,
   Check,
-  AlertCircle,
   Sparkles,
   LogOut,
   LogIn,
   Loader2,
+  AlertCircle,
 } from "lucide-react";
 
 import {
@@ -309,6 +307,16 @@ const MainList: React.FC = () => {
     return s;
   }, [favorites]);
 
+  const activeItems = useMemo(
+    () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
+    [items]
+  );
+
+  const purchasedItems = useMemo(
+    () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
+    [items]
+  );
+
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
@@ -320,15 +328,14 @@ const MainList: React.FC = () => {
     if (!inputValue.trim() || !list?.id) return;
 
     const itemId = crypto.randomUUID();
-const newItem: ShoppingItem = {
-  id: itemId,
-  name: fav.name,
-  quantity: 1,
-  isPurchased: false,
-  isFavorite: false,
-  createdAt: Date.now(),
-};
-
+    const newItem: ShoppingItem = {
+      id: itemId,
+      name: inputValue.trim(),
+      quantity: 1,
+      isPurchased: false,
+      isFavorite: false,
+      createdAt: Date.now(),
+    };
 
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
     setInputValue("");
@@ -397,14 +404,16 @@ const newItem: ShoppingItem = {
     const ai = new GoogleGenAI({ apiKey });
 
     try {
-      const currentList = items.map((i) => i.name).join(", ");
+      const currentList = activeItems.map((i) => i.name).join(", ");
       const response = await ai.models.generateContent({
         model: "gemini-3-flash-preview",
         contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
       });
 
-      const suggestions = response.text?.split(",").map((s) => s.trim()) || [];
-      if (suggestions.length > 0) setInputValue(suggestions[0]);
+      const suggestions = response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
+      if (suggestions.length > 0) {
+        setInputValue(suggestions[0]);
+      }
     } catch (e) {
       console.error(e);
     } finally {
@@ -441,16 +450,6 @@ const newItem: ShoppingItem = {
     const message = encodeURIComponent(`*רשימת קניות*\n\n${listText}\n\nנשלח מהרשימה החכמה 🛒`);
     window.open(`https://wa.me/?text=${message}`, "_blank");
   };
-
-  const activeItems = useMemo(
-    () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
-    [items]
-  );
-
-  const purchasedItems = useMemo(
-    () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
-    [items]
-  );
 
   if (authLoading) {
     return (
@@ -489,7 +488,10 @@ const newItem: ShoppingItem = {
   }
 
   return (
-    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
+    <div
+      className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-32 shadow-2xl overflow-hidden dir-rtl"
+      dir="rtl"
+    >
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
@@ -530,7 +532,7 @@ const newItem: ShoppingItem = {
       {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === "list" ? (
-          <>
+          <div className="space-y-6">
             <form onSubmit={addItem} className="relative">
               <input
                 value={inputValue}
@@ -556,92 +558,91 @@ const newItem: ShoppingItem = {
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3">
-                 {activeItems.map((item) => (
-  <div
-    key={item.id}
-    className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
-    dir="rtl"
-  >
-    {/* צד שמאל: פח + מועדף */}
-    <div className="flex items-center gap-2">
-      <button
-        onClick={() => deleteItem(item.id)}
-        className="p-2 text-slate-300 hover:text-rose-500"
-        title="מחק"
-      >
-        <Trash2 className="w-4 h-4" />
-      </button>
-
-      <button
-        onClick={() => toggleFavorite(item.id)}
-        className={`p-2 ${favoritesById.has(item.id) ? "text-amber-500" : "text-slate-300"}`}
-        title="מועדף"
-      >
-        <Star className={`w-4 h-4 ${favoritesById.has(item.id) ? "fill-amber-500" : ""}`} />
-      </button>
-    </div>
-
-    {/* אמצע: שם הפריט */}
-    <div
-      className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
-      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-      onClick={() => togglePurchased(item.id)}
-    >
-      {item.name}
-    </div>
-
-    {/* צד ימין: כמות */}
-    <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
-      <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
-        <Minus className="w-3 h-3" />
-      </button>
-
-      <span className="min-w-[1.5rem] text-center font-black text-slate-700">
-        {item.quantity}
-      </span>
-
-      <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400" title="הוסף">
-        <Plus className="w-3 h-3" />
-      </button>
-    </div>
-  </div>
-))}
-
-
-                {purchasedItems.length > 0 && (
-                  <div className="space-y-2 pt-4 border-t border-slate-200">
-                    <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right mb-2">
-                      נקנו ({purchasedItems.length})
-                    </h3>
-                    {purchasedItems.map((item) => (
-                      <div
-                        key={item.id}
-                        className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
-                      >
-                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
+                  {activeItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                      dir="rtl"
+                    >
+                      {/* צד שמאל: פח + מועדף */}
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => deleteItem(item.id)}
+                          className="p-2 text-slate-300 hover:text-rose-500"
+                          title="מחק"
+                        >
                           <Trash2 className="w-4 h-4" />
                         </button>
 
+                        <button
+                          onClick={() => toggleFavorite(item.id)}
+                          className={`p-2 ${favoritesById.has(item.id) ? "text-amber-500" : "text-slate-300"}`}
+                          title="מועדף"
+                        >
+                          <Star className={`w-4 h-4 ${favoritesById.has(item.id) ? "fill-amber-500" : ""}`} />
+                        </button>
+                      </div>
+
+                      {/* אמצע: שם הפריט */}
+                      <div
+                        className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
+                        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                        onClick={() => togglePurchased(item.id)}
+                      >
+                        {item.name}
+                      </div>
+
+                      {/* צד ימין: כמות */}
+                      <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
+                        <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
+                          <Minus className="w-3 h-3" />
+                        </button>
+
+                        <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+
+                        <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400" title="הוסף">
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {purchasedItems.length > 0 && (
+                    <div className="space-y-2 pt-4 border-t border-slate-200">
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right mb-2">
+                        נקנו ({purchasedItems.length})
+                      </h3>
+
+                      {purchasedItems.map((item) => (
                         <div
-                          className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
-                          onClick={() => togglePurchased(item.id)}
+                          key={item.id}
+                          className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
                           dir="rtl"
                         >
-                          <span
-                            className="text-base font-bold text-slate-500 line-through truncate text-right"
-                            style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                          <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                          <div
+                            className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
+                            onClick={() => togglePurchased(item.id)}
                           >
-                            {item.name} x{item.quantity}
-                          </span>
-                          <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                            <span
+                              className="text-base font-bold text-slate-500 line-through truncate text-right"
+                              style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                            >
+                              {item.name} x{item.quantity}
+                            </span>
+                            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                          </div>
                         </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             )}
-          </>
+          </div>
         ) : (
           <div className="space-y-6">
             <div className="text-right">
@@ -677,4 +678,130 @@ const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
                               quantity: 1,
-                              isPurchased
+                              isPurchased: false,
+                              isFavorite: false,
+                              createdAt: Date.now(),
+                            };
+                            await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+                          }
+
+                          setActiveTab("list");
+                        }}
+                        className="p-2 rounded-xl bg-emerald-500 text-white shadow-md active:scale-90 transition-transform"
+                        title="הוסף לרשימה"
+                      >
+                        <Plus className="w-4 h-4" />
+                      </button>
+
+                      <button
+                        onClick={() => removeFavorite(fav.id)}
+                        className="p-2 text-slate-300 hover:text-rose-500"
+                        title="הסר ממועדפים"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div
+                      className="flex-1 text-right font-black text-slate-700 truncate px-3"
+                      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                    >
+                      {fav.name}
+                    </div>
+
+                    <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </main>
+
+      {/* Bottom Bar */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="max-w-md mx-auto bg-white/90 backdrop-blur-md border-t border-slate-100 px-4 py-3">
+          <div className="flex items-center justify-between">
+            <button
+              onClick={() => setActiveTab("list")}
+              className={`flex items-center gap-2 px-3 py-2 rounded-2xl font-black ${
+                activeTab === "list" ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+              title="רשימה"
+            >
+              <ListChecks className="w-5 h-5" />
+              רשימה
+            </button>
+
+            <button
+              onClick={shareWhatsApp}
+              className="px-4 py-2 rounded-2xl font-black bg-emerald-500 text-white shadow-lg shadow-emerald-100"
+              title="שתף בווטסאפ"
+            >
+              שתף
+            </button>
+
+            <button
+              onClick={() => setActiveTab("favorites")}
+              className={`flex items-center gap-2 px-3 py-2 rounded-2xl font-black ${
+                activeTab === "favorites" ? "bg-amber-500 text-white" : "bg-slate-100 text-slate-600"
+              }`}
+              title="מועדפים"
+            >
+              <Star className={`w-5 h-5 ${activeTab === "favorites" ? "fill-white" : ""}`} />
+              מועדפים
+            </button>
+          </div>
+        </div>
+      </div>
+
+      {/* Clear Confirm Modal */}
+      {showClearConfirm ? (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-black text-slate-800">לנקות את כל הרשימה?</div>
+                <div className="text-sm font-bold text-slate-400">הפעולה תמחק את כל הפריטים מהרשימה.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+              >
+                ביטול
+              </button>
+              <button
+                onClick={clearList}
+                className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white"
+              >
+                מחק הכל
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+    </div>
+  );
+};
+
+// ---------------------------
+// App Router
+// ---------------------------
+const App: React.FC = () => {
+  return (
+    <HashRouter>
+      <Routes>
+        <Route path="/" element={<MainList />} />
+        <Route path="/invite" element={<InvitePage />} />
+      </Routes>
+    </HashRouter>
+  );
+};
+
+export default App;
