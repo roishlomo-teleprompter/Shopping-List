@@ -570,8 +570,14 @@ const MainList: React.FC = () => {
       return;
     }
 
+    // Add prompt only: "הוסף" / "תוסיף" / "הוספה" (optionally with "פריט")
+    if (text === "הוסף" || text === "תוסיף" || text === "הוספה" || text === "הוסף פריט" || text === "תוסיף פריט" || text === "הוספה פריט") {
+      speak("איזה פריט להוסיף?");
+      return;
+    }
+
     // Add with quantity: "הוסף 3 עגבניות"
-    const addMatch = text.match(/^(הוסף|תוסיף|תוסיפי)\s+(\d+)\s+(.+)$/);
+    const addMatch = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(\d+)\s+(.+)$/);
     if (addMatch) {
       const qty = Math.max(1, Number(addMatch[2]));
       const name = addMatch[3].trim();
@@ -599,7 +605,7 @@ const MainList: React.FC = () => {
     }
 
     // Add simple: "הוסף חלב"
-    const addSimple = text.match(/^(הוסף|תוסיף|תוסיפי)\s+(.+)$/);
+    const addSimple = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     if (addSimple) {
       const name = addSimple[2].trim();
       if (!name) return;
@@ -749,11 +755,17 @@ const MainList: React.FC = () => {
     };
 
     rec.onresult = async (event: any) => {
-      const transcript = event?.results?.[0]?.[0]?.transcript || "";
-      setLastHeard(transcript);
+      const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
+      const best = event?.results?.[ri]?.[0];
+      const transcript = (best?.transcript || "").trim();
+      const finalTranscript =
+        transcript ||
+        String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
+
+      setLastHeard(finalTranscript);
 
       try {
-        await executeVoiceCommand(transcript);
+        await executeVoiceCommand(finalTranscript);
       } catch (e) {
         console.error(e);
         speak("הייתה שגיאה בביצוע הפקודה");
