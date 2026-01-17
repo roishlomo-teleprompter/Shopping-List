@@ -168,10 +168,7 @@ const InvitePage: React.FC = () => {
   }
 
   return (
-    <div
-      className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center dir-rtl"
-      dir="rtl"
-    >
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center dir-rtl" dir="rtl">
       <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6">
         <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
           <Share2 className="w-10 h-10" />
@@ -330,7 +327,6 @@ const MainList: React.FC = () => {
       await signInSmart();
       return;
     }
-
     if (!list?.id) return;
 
     const name = inputValue.trim();
@@ -386,10 +382,7 @@ const MainList: React.FC = () => {
     if (favoritesById.has(itemId)) {
       await deleteDoc(favRef);
     } else {
-      await setDoc(favRef, {
-        name: item.name,
-        createdAt: Date.now(),
-      });
+      await setDoc(favRef, { name: item.name, createdAt: Date.now() });
     }
   };
 
@@ -420,9 +413,7 @@ const MainList: React.FC = () => {
       });
 
       const suggestions = response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
-      if (suggestions.length > 0) {
-        setInputValue(suggestions[0]);
-      }
+      if (suggestions.length > 0) setInputValue(suggestions[0]);
     } catch (e) {
       console.error(e);
     } finally {
@@ -430,6 +421,7 @@ const MainList: React.FC = () => {
     }
   };
 
+  // רק עבור אייקון ההזמנה בכותרת (העתקת קישור)
   const generateInviteTokenAndLink = async () => {
     if (!user) {
       await signInSmart();
@@ -437,9 +429,7 @@ const MainList: React.FC = () => {
     }
     if (!list?.id) return null;
 
-    const token = [...Array(32)]
-      .map(() => Math.floor(Math.random() * 16).toString(16))
-      .join("");
+    const token = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join("");
     const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
 
     await updateDoc(doc(db, "lists", list.id), {
@@ -449,7 +439,6 @@ const MainList: React.FC = () => {
     return buildInviteLink(list.id, token);
   };
 
-  // Header icon: copy invite link
   const generateInviteLinkCopy = async () => {
     const link = await generateInviteTokenAndLink();
     if (!link) return;
@@ -458,21 +447,18 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // Bottom button: WhatsApp share with list + invite link
-  const shareListWhatsApp = async () => {
-    if (!list?.id) return;
-
+  // כפתור "שתף רשימה" בוואטסאפ: בלי קישור הצטרפות, פורמט <כמות>X <פריט>
+  const shareListWhatsApp = () => {
+    const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
-    const lines = active.map((i) => `- ${i.name} x${i.quantity}`).join("\n");
 
-    const inviteLink = await generateInviteTokenAndLink();
+    const lines =
+      active.length > 0
+        ? active.map((i) => `${i.quantity}X ${i.name}`).join("\n")
+        : "(הרשימה כרגע ריקה)";
 
-    const title = `*${list?.title || "הרשימה שלי"}*`;
-    const body = active.length > 0 ? `\n\n${lines}` : `\n\n(הרשימה כרגע ריקה)`;
-    const invite = inviteLink ? `\n\nקישור הצטרפות:\n${inviteLink}` : "";
-    const footer = `\n\nנשלח מהרשימה החכמה 🛒`;
-
-    openWhatsApp(`${title}${body}${invite}${footer}`);
+    const text = `${title}\n\n${lines}\n\nנשלח מהרשימה החכמה`;
+    openWhatsApp(text);
   };
 
   if (authLoading) {
@@ -589,7 +575,6 @@ const MainList: React.FC = () => {
                       className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
                       dir="rtl"
                     >
-                      {/* צד שמאל: פח + מועדף */}
                       <div className="flex items-center gap-2">
                         <button
                           onClick={() => deleteItem(item.id)}
@@ -608,7 +593,6 @@ const MainList: React.FC = () => {
                         </button>
                       </div>
 
-                      {/* אמצע: שם הפריט */}
                       <div
                         className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
                         style={{ direction: "rtl", unicodeBidi: "plaintext" }}
@@ -617,7 +601,6 @@ const MainList: React.FC = () => {
                         {item.name}
                       </div>
 
-                      {/* צד ימין: כמות */}
                       <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
                         <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
                           <Minus className="w-3 h-3" />
@@ -743,7 +726,7 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom area: Share button on LEFT + bottom nav (List LEFT, Favorites RIGHT) */}
+      {/* Bottom area: Share button + bottom nav (swap requested) */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           {/* Share button on LEFT (screen-left) */}
@@ -758,22 +741,10 @@ const MainList: React.FC = () => {
             </button>
           </div>
 
-          {/* Bottom nav: force LTR so left/right match the screen */}
+          {/* Bottom nav: LTR so left/right are screen based */}
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
             <div className="flex items-center justify-between px-10 py-3">
-              {/* LEFT: List */}
-              <button
-                onClick={() => setActiveTab("list")}
-                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
-                }`}
-                title="רשימה"
-              >
-                <ListChecks className="w-7 h-7" />
-                רשימה
-              </button>
-
-              {/* RIGHT: Favorites */}
+              {/* LEFT: Favorites (swapped) */}
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -787,6 +758,18 @@ const MainList: React.FC = () => {
                   }`}
                 />
                 מועדפים
+              </button>
+
+              {/* RIGHT: List (swapped) */}
+              <button
+                onClick={() => setActiveTab("list")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="רשימה"
+              >
+                <ListChecks className="w-7 h-7" />
+                רשימה
               </button>
             </div>
           </footer>
