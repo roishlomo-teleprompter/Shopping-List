@@ -236,6 +236,19 @@ const MainList: React.FC = () => {
   const recognitionRef = React.useRef<any>(null);
   const shouldKeepListeningRef = React.useRef<boolean>(false);
   const shouldAnnounceStartRef = React.useRef<boolean>(false);
+  const inactivityTimerRef = React.useRef<any>(null);
+  const latestListIdRef = React.useRef<string | null>(null);
+  const latestItemsRef = React.useRef<ShoppingItem[]>([]);
+
+  // Keep latest listId/items for SpeechRecognition callbacks (avoid stale closures on Android/Chrome)
+  useEffect(() => {
+    latestListIdRef.current = list?.id ?? null;
+  }, [list?.id]);
+
+  useEffect(() => {
+    latestItemsRef.current = items;
+  }, [items]);
+
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -527,15 +540,19 @@ const MainList: React.FC = () => {
   };
 
   const findItemByName = (name: string) => {
+    const src = latestItemsRef.current ?? items;
     const n = normalize(name);
-    const exact = items.find((i) => normalize(i.name) === n);
+    const exact = src.find((i) => normalize(i.name) === n);
     if (exact) return exact;
-    const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
+    const contains = src.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
     return contains || null;
   };
 
   const executeVoiceCommand = async (raw: string) => {
-    if (!list?.id) return;
+    const listId = latestListIdRef.current || list?.id;
+    if (!listId) return;
+
+    const itemsNow = latestItemsRef.current || items;
 
     const text = normalize(raw);
     if (!text) return;
@@ -584,9 +601,9 @@ const MainList: React.FC = () => {
       const name = addMatch[3].trim();
       if (!name) return;
 
-      const existing = items.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
       if (existing) {
-        await updateDoc(doc(db, "lists", list.id, "items", existing.id), { quantity: qty });
+        await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: qty });
         speak(`עדכנתי ${existing.name} לכמות ${qty}`);
         return;
       }
@@ -600,7 +617,7 @@ const MainList: React.FC = () => {
         isFavorite: false,
         createdAt: Date.now(),
       };
-      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+      await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
       speak(`הוספתי ${name} ${qty}`);
       return;
     }
@@ -611,7 +628,7 @@ const MainList: React.FC = () => {
       const name = addSimple[2].trim();
       if (!name) return;
 
-      const existing = items.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
       if (existing) {
         await updateQty(existing.id, 1);
         speak(`הגדלתי ${existing.name}`);
@@ -627,7 +644,7 @@ const MainList: React.FC = () => {
         isFavorite: false,
         createdAt: Date.now(),
       };
-      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+      await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
       speak(`הוספתי ${name}`);
       return;
     }
@@ -709,7 +726,26 @@ const MainList: React.FC = () => {
     return s.trim();
   };
 
+  const clearInactivityTimer = () => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
+    }
+  };
+
+  const armInactivityTimer = () => {
+    clearInactivityTimer();
+    // Stop listening after ~4 seconds of silence (no recognized command)
+    inactivityTimerRef.current = setTimeout(() => {
+      // Only stop if still in listening mode
+      if (shouldKeepListeningRef.current || isListening) {
+        stopListening();
+      }
+    }, 4000);
+  };
+
   const stopListening = () => {
+    clearInactivityTimer();
     shouldKeepListeningRef.current = false;
     shouldAnnounceStartRef.current = false;
     setIsListening(false);
@@ -765,6 +801,7 @@ const MainList: React.FC = () => {
 
     rec.onstart = () => {
       setIsListening(true);
+      armInactivityTimer();
       if (shouldAnnounceStartRef.current) {
         speak(voiceMode === "continuous" ? "האזנה רציפה פעילה" : "מקשיב לפקודה אחת");
         shouldAnnounceStartRef.current = false;
@@ -773,6 +810,7 @@ const MainList: React.FC = () => {
 
     rec.onerror = (e: any) => {
       console.error("Speech error", e);
+      clearInactivityTimer();
       setIsListening(false);
       shouldKeepListeningRef.current = false;
 
@@ -783,6 +821,7 @@ const MainList: React.FC = () => {
     };
 
     rec.onresult = async (event: any) => {
+      clearInactivityTimer();
       const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
       const best = event?.results?.[ri]?.[0];
       const transcript = (best?.transcript || "").trim();
@@ -807,6 +846,7 @@ const MainList: React.FC = () => {
     };
 
     rec.onend = () => {
+      clearInactivityTimer();
       const keep = shouldKeepListeningRef.current && voiceMode === "continuous";
       setIsListening(keep);
 
