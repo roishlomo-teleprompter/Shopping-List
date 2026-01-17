@@ -235,6 +235,7 @@ const MainList: React.FC = () => {
   const [lastHeard, setLastHeard] = useState<string>("");
   const recognitionRef = React.useRef<any>(null);
   const shouldKeepListeningRef = React.useRef<boolean>(false);
+  const shouldAnnounceStartRef = React.useRef<boolean>(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -691,9 +692,32 @@ const MainList: React.FC = () => {
     speak("לא הבנתי. אפשר לומר: הוסף פריט, מחק פריט, סמן פריט נקנה, הגדל, הקטן, נקה רשימה");
   };
 
+
+
+  const normalizeVoiceText = (t: string) => {
+    let s = String(t || "");
+    // remove common punctuation and extra whitespace
+    s = s.replace(/[‏‎]/g, "");
+    s = s.replace(/[\.,!\?;:"'“”‘’]/g, "");
+    s = s.replace(/\s+/g, " ").trim();
+
+    // remove polite / filler words at the beginning
+    s = s.replace(/^(בבקשה|תודה|אפשר|רק|נו|יאללה)\s+/g, "");
+    // remove trailing filler
+    s = s.replace(/\s+(בבקשה|תודה)$/, "");
+
+    return s.trim();
+  };
+
   const stopListening = () => {
     shouldKeepListeningRef.current = false;
+    shouldAnnounceStartRef.current = false;
     setIsListening(false);
+    try {
+      speak("האזנה הופסקה");
+    } catch {
+      // ignore
+    }
     try {
       recognitionRef.current?.stop?.();
     } catch {
@@ -716,6 +740,7 @@ const MainList: React.FC = () => {
     }
 
     shouldKeepListeningRef.current = true;
+    shouldAnnounceStartRef.current = true;
 
     // clean previous instance
     if (recognitionRef.current) {
@@ -740,7 +765,10 @@ const MainList: React.FC = () => {
 
     rec.onstart = () => {
       setIsListening(true);
-      speak(voiceMode === "continuous" ? "האזנה רציפה הופעלה" : "מקשיב לפקודה אחת");
+      if (shouldAnnounceStartRef.current) {
+        speak(voiceMode === "continuous" ? "האזנה רציפה פעילה" : "מקשיב לפקודה אחת");
+        shouldAnnounceStartRef.current = false;
+      }
     };
 
     rec.onerror = (e: any) => {
@@ -762,10 +790,11 @@ const MainList: React.FC = () => {
         transcript ||
         String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
 
-      setLastHeard(finalTranscript);
+      const cleaned = normalizeVoiceText(finalTranscript);
+      setLastHeard(cleaned);
 
       try {
-        await executeVoiceCommand(finalTranscript);
+        await executeVoiceCommand(cleaned);
       } catch (e) {
         console.error(e);
         speak("הייתה שגיאה בביצוע הפקודה");
@@ -782,7 +811,8 @@ const MainList: React.FC = () => {
       setIsListening(keep);
 
       if (keep) {
-        // restart quickly
+        // restart quickly (no re-announcement)
+        shouldAnnounceStartRef.current = false;
         try {
           rec.start();
         } catch {
@@ -858,9 +888,9 @@ const MainList: React.FC = () => {
             className={`p-2 rounded-full ${
               isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
             }`}
-            title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
+            title={isListening ? "האזנה פעילה - לחץ לעצור" : "פקודות קוליות כבויות - לחץ להתחיל"}
           >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </button>
 
           <button
