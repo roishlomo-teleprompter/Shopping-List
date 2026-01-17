@@ -16,6 +16,8 @@ import {
   LogOut,
   LogIn,
   Loader2,
+  Mic,
+  MicOff,
 } from "lucide-react";
 
 import {
@@ -168,7 +170,7 @@ const InvitePage: React.FC = () => {
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center dir-rtl" dir="rtl">
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
       <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6">
         <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
           <Share2 className="w-10 h-10" />
@@ -210,6 +212,8 @@ type FavoriteDoc = {
   createdAt: number;
 };
 
+type VoiceMode = "continuous" | "once";
+
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
@@ -224,6 +228,13 @@ const MainList: React.FC = () => {
   const [isAiLoading, setIsAiLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
+
+  // Voice
+  const [isListening, setIsListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
+  const [lastHeard, setLastHeard] = useState<string>("");
+  const recognitionRef = React.useRef<any>(null);
+  const shouldKeepListeningRef = React.useRef<boolean>(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -421,7 +432,7 @@ const MainList: React.FC = () => {
     }
   };
 
-  // רק עבור אייקון ההזמנה בכותרת (העתקת קישור)
+  // Invite
   const generateInviteTokenAndLink = async () => {
     if (!user) {
       await signInSmart();
@@ -447,15 +458,13 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // כפתור "הזמן חבר" - פתיחת חלון שיתוף מערכת (בסמארטפון), ובדסקטופ נפילה להעתקה
   const shareInviteLinkSystem = async () => {
     const link = await generateInviteTokenAndLink();
     if (!link) return;
 
     try {
-      // Mobile share sheet (and some desktop browsers)
       if (typeof navigator !== "undefined" && "share" in navigator) {
-        // @ts-ignore - navigator.share exists on supported browsers
+        // @ts-ignore
         await navigator.share({
           title: "קישור לרשימה",
           text: "קישור הצטרפות לרשימת קניות",
@@ -464,7 +473,7 @@ const MainList: React.FC = () => {
         return;
       }
     } catch {
-      // אם המשתמש ביטל - לא נחשב שגיאה
+      // user cancelled
     }
 
     await copyToClipboard(link);
@@ -472,13 +481,12 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // כפתור "שתף רשימה" בוואטסאפ: בלי קישור הצטרפות, פורמט <פריט> X <כמות>, מיושר לימין ו-RTL
+  // WhatsApp share (header bold must NOT contain bidi marks on mobile)
   const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
 
-    // Force RTL + correct reading order in WhatsApp: <item name> X <qty>
-    // Wrap the whole line in RTL embedding and isolate the quantity as LTR so digits stay put.
+    // RTL for lines, isolate quantity digits
     const RLE = "\u202B";
     const PDF = "\u202C";
     const LRI = "\u2066";
@@ -489,13 +497,307 @@ const MainList: React.FC = () => {
         ? active.map((i) => `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`).join("\n")
         : `${RLE}(הרשימה כרגע ריקה)${PDF}`;
 
-    // WhatsApp bold uses *text*
- const header = `*${title}:*`;
-const footer = `נשלח מהרשימה החכמה 🛒`;
-
+    const header = `*${title}:*`;
+    const footer = `נשלח מהרשימה החכמה 🛒`;
     const text = `${header}\n\n${lines}\n\n${footer}`;
     openWhatsApp(text);
   };
+
+  // ---------------------------
+  // Voice commands
+  // ---------------------------
+  const normalize = (s: string) =>
+    (s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[״"']/g, "")
+      .replace(/\s+/g, " ");
+
+  const speak = (text: string) => {
+    try {
+      if (!("speechSynthesis" in window)) return;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = "he-IL";
+      window.speechSynthesis.cancel();
+      window.speechSynthesis.speak(u);
+    } catch {
+      // ignore
+    }
+  };
+
+  const findItemByName = (name: string) => {
+    const n = normalize(name);
+    const exact = items.find((i) => normalize(i.name) === n);
+    if (exact) return exact;
+    const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
+    return contains || null;
+  };
+
+  const executeVoiceCommand = async (raw: string) => {
+    if (!list?.id) return;
+
+    const text = normalize(raw);
+    if (!text) return;
+
+    // Change voice mode by voice
+    if (text.includes("מצב רציף") || text === "רציף") {
+      setVoiceMode("continuous");
+      speak("מצב האזנה רציף הופעל");
+      return;
+    }
+    if (text.includes("מצב חד פעמי") || text.includes("חד פעמי") || text === "חד") {
+      setVoiceMode("once");
+      speak("מצב האזנה חד פעמי הופעל");
+      return;
+    }
+
+    // Tab navigation
+    if (text.includes("מועדפים") || text.includes("פייבוריט")) {
+      setActiveTab("favorites");
+      speak("עברתי למועדפים");
+      return;
+    }
+    if (text.includes("רשימה")) {
+      setActiveTab("list");
+      speak("עברתי לרשימה");
+      return;
+    }
+
+    // Clear list
+    if (text.includes("נקה") && text.includes("רשימה")) {
+      setShowClearConfirm(true);
+      speak("פותח אישור לניקוי הרשימה");
+      return;
+    }
+
+    // Add with quantity: "הוסף 3 עגבניות"
+    const addMatch = text.match(/^(הוסף|תוסיף|תוסיפי)\s+(\d+)\s+(.+)$/);
+    if (addMatch) {
+      const qty = Math.max(1, Number(addMatch[2]));
+      const name = addMatch[3].trim();
+      if (!name) return;
+
+      const existing = items.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      if (existing) {
+        await updateDoc(doc(db, "lists", list.id, "items", existing.id), { quantity: qty });
+        speak(`עדכנתי ${existing.name} לכמות ${qty}`);
+        return;
+      }
+
+      const itemId = crypto.randomUUID();
+      const newItem: ShoppingItem = {
+        id: itemId,
+        name,
+        quantity: qty,
+        isPurchased: false,
+        isFavorite: false,
+        createdAt: Date.now(),
+      };
+      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+      speak(`הוספתי ${name} ${qty}`);
+      return;
+    }
+
+    // Add simple: "הוסף חלב"
+    const addSimple = text.match(/^(הוסף|תוסיף|תוסיפי)\s+(.+)$/);
+    if (addSimple) {
+      const name = addSimple[2].trim();
+      if (!name) return;
+
+      const existing = items.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      if (existing) {
+        await updateQty(existing.id, 1);
+        speak(`הגדלתי ${existing.name}`);
+        return;
+      }
+
+      const itemId = crypto.randomUUID();
+      const newItem: ShoppingItem = {
+        id: itemId,
+        name,
+        quantity: 1,
+        isPurchased: false,
+        isFavorite: false,
+        createdAt: Date.now(),
+      };
+      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+      speak(`הוספתי ${name}`);
+      return;
+    }
+
+    // Delete: "מחק חלב"
+    const delMatch = text.match(/^(מחק|תמחק|תמחוק|תמחקי)\s+(.+)$/);
+    if (delMatch) {
+      const name = delMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        speak("לא מצאתי את הפריט למחיקה");
+        return;
+      }
+      await deleteItem(item.id);
+      speak(`מחקתי ${item.name}`);
+      return;
+    }
+
+    // Mark purchased: "סמן חלב נקנה"
+    const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
+    if (buyMatch) {
+      const name = buyMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        speak("לא מצאתי את הפריט לסימון");
+        return;
+      }
+      if (!item.isPurchased) await togglePurchased(item.id);
+      speak(`סימנתי ${item.name} כנקנה`);
+      return;
+    }
+
+    // Increase: "הגדל חלב"
+    const incMatch = text.match(/^(הגדל|תגדיל|תגדילי)\s+(.+)$/);
+    if (incMatch) {
+      const name = incMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        speak("לא מצאתי את הפריט להגדלה");
+        return;
+      }
+      await updateQty(item.id, 1);
+      speak(`הגדלתי ${item.name}`);
+      return;
+    }
+
+    // Decrease: "הקטן חלב"
+    const decMatch = text.match(/^(הקטן|תקטין|תקטיני)\s+(.+)$/);
+    if (decMatch) {
+      const name = decMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        speak("לא מצאתי את הפריט להקטנה");
+        return;
+      }
+      await updateQty(item.id, -1);
+      speak(`הקטנתי ${item.name}`);
+      return;
+    }
+
+    // Help / unknown
+    speak("לא הבנתי. אפשר לומר: הוסף פריט, מחק פריט, סמן פריט נקנה, הגדל, הקטן, נקה רשימה");
+  };
+
+  const stopListening = () => {
+    shouldKeepListeningRef.current = false;
+    setIsListening(false);
+    try {
+      recognitionRef.current?.stop?.();
+    } catch {
+      // ignore
+    }
+  };
+
+  const startListening = () => {
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+
+    if (!SR) {
+      alert("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.");
+      return;
+    }
+
+    // If already active, stop
+    if (isListening) {
+      stopListening();
+      return;
+    }
+
+    shouldKeepListeningRef.current = true;
+
+    // clean previous instance
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
+    }
+
+    const rec = new SR();
+    recognitionRef.current = rec;
+
+    rec.lang = "he-IL";
+    rec.interimResults = false;
+    rec.maxAlternatives = 1;
+
+    // continuous mode: keep restarting after each phrase
+    // some browsers ignore continuous=true, so we also restart onend
+    rec.continuous = voiceMode === "continuous";
+
+    rec.onstart = () => {
+      setIsListening(true);
+      speak(voiceMode === "continuous" ? "האזנה רציפה הופעלה" : "מקשיב לפקודה אחת");
+    };
+
+    rec.onerror = (e: any) => {
+      console.error("Speech error", e);
+      setIsListening(false);
+      shouldKeepListeningRef.current = false;
+
+      const err = String(e?.error || "");
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+      }
+    };
+
+    rec.onresult = async (event: any) => {
+      const transcript = event?.results?.[0]?.[0]?.transcript || "";
+      setLastHeard(transcript);
+
+      try {
+        await executeVoiceCommand(transcript);
+      } catch (e) {
+        console.error(e);
+        speak("הייתה שגיאה בביצוע הפקודה");
+      } finally {
+        // In once mode, stop after one result
+        if (voiceMode === "once") {
+          stopListening();
+        }
+      }
+    };
+
+    rec.onend = () => {
+      const keep = shouldKeepListeningRef.current && voiceMode === "continuous";
+      setIsListening(keep);
+
+      if (keep) {
+        // restart quickly
+        try {
+          rec.start();
+        } catch {
+          // if start throws, fully stop
+          stopListening();
+        }
+      }
+    };
+
+    try {
+      rec.start();
+    } catch (e) {
+      console.error(e);
+      stopListening();
+    }
+  };
+
+  // stop recognition when leaving page/unmount
+  useEffect(() => {
+    return () => {
+      try {
+        recognitionRef.current?.stop?.();
+      } catch {
+        // ignore
+      }
+    };
+  }, []);
 
   if (authLoading) {
     return (
@@ -534,18 +836,19 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
   }
 
   return (
-    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden dir-rtl" dir="rtl">
+    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
+          {/* Voice button (replaces AI) */}
           <button
-            onClick={getAiSuggestions}
+            onClick={startListening}
             className={`p-2 rounded-full ${
-              isAiLoading ? "bg-indigo-100 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
+              isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
             }`}
-            title="הצעות AI"
+            title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
           >
-            <Sparkles className="w-5 h-5" />
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <button
@@ -575,6 +878,21 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
           <LogOut className="w-5 h-5" />
         </button>
       </header>
+
+      {/* Optional small hint for last heard */}
+      {lastHeard ? (
+        <div className="px-5 pt-3">
+          <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
+            <div className="text-[11px] font-black text-slate-400">שמענו:</div>
+            <div className="text-sm font-bold text-slate-700" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
+              {lastHeard}
+            </div>
+            <div className="text-[10px] font-black text-slate-400 mt-1">
+              מצב: {voiceMode === "continuous" ? "רציף" : "חד פעמי"} (אפשר לומר: "מצב רציף" או "מצב חד פעמי")
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
@@ -729,7 +1047,7 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
                             await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
                           }
                         }}
-                        className="px-1.5 py-0.5 text-[11px] rounded-md bg-emerald-500 text-white shadow-md active:scale-90 transition-transform font-black"
+                        className="px-1 py-0.5 text-[10px] rounded-md bg-emerald-500 text-white shadow-md active:scale-90 transition-transform font-black"
                         title="הוסף לרשימה"
                       >
                         הוסף לרשימה
@@ -760,7 +1078,7 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
         )}
       </main>
 
-      {/* Bottom area: Share button + bottom nav (swap requested) */}
+      {/* Bottom area: Share button + bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           {/* Share button on LEFT (screen-left) */}
@@ -778,7 +1096,7 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
           {/* Bottom nav: LTR so left/right are screen based */}
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
             <div className="flex items-center justify-between px-10 py-3">
-              {/* LEFT: Favorites (swapped) */}
+              {/* LEFT: Favorites */}
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -794,7 +1112,7 @@ const footer = `נשלח מהרשימה החכמה 🛒`;
                 מועדפים
               </button>
 
-              {/* RIGHT: List (swapped) */}
+              {/* RIGHT: List */}
               <button
                 onClick={() => setActiveTab("list")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
