@@ -5,23 +5,31 @@ import App from "./App.tsx";
 
 const rootElement = document.getElementById("root");
 if (!rootElement) {
-  throw new Error("Could not find root element to mount to");
+  throw new Error('Could not find root element to mount to (#root)');
 }
 
 // DEBUG: catch silent crashes in production
 window.addEventListener("error", (e) => {
-  console.error("WINDOW_ERROR:", (e as any)?.message, (e as any)?.error);
-  alert("WINDOW_ERROR: " + ((e as any)?.message || "unknown"));
+  const msg = (e as any)?.message || "unknown";
+  const err = (e as any)?.error;
+  console.error("WINDOW_ERROR:", msg, err);
+  alert("WINDOW_ERROR: " + msg);
 });
 
 window.addEventListener("unhandledrejection", (e: PromiseRejectionEvent) => {
-  console.error("UNHANDLED_REJECTION:", e?.reason);
+  const reason: any = (e as any)?.reason;
+  console.error("UNHANDLED_REJECTION:", reason);
+
+  let txt = "";
   try {
-    const txt = typeof e?.reason === "string" ? e.reason : JSON.stringify(e.reason);
-    alert("UNHANDLED_REJECTION: " + txt);
+    if (typeof reason === "string") txt = reason;
+    else if (reason?.message) txt = reason.message;
+    else txt = JSON.stringify(reason);
   } catch {
-    alert("UNHANDLED_REJECTION (non-serializable)");
+    txt = "non-serializable reason";
   }
+
+  alert("UNHANDLED_REJECTION: " + txt);
 });
 
 console.log("BOOT_OK:", new Date().toISOString());

@@ -15,7 +15,6 @@ import {
   AlertCircle,
   Sparkles,
   LogOut,
-  User,
   LogIn,
   Loader2,
 } from "lucide-react";
@@ -27,6 +26,7 @@ import {
   signOut,
   User as FirebaseUser,
 } from "firebase/auth";
+
 import {
   arrayUnion,
   collection,
@@ -69,13 +69,15 @@ async function signInSmart() {
   try {
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
-    // אם פופאפ נחסם או נכשל, נופלים ל-redirect
     const code = e?.code as string | undefined;
-    if (code === "auth/popup-blocked" || code === "auth/cancelled-popup-request" || code === "auth/popup-closed-by-user") {
+    if (
+      code === "auth/popup-blocked" ||
+      code === "auth/cancelled-popup-request" ||
+      code === "auth/popup-closed-by-user"
+    ) {
       await signInWithRedirect(auth, googleProvider);
       return;
     }
-    // fallback כללי - נסה redirect
     await signInWithRedirect(auth, googleProvider);
   }
 }
@@ -198,10 +200,17 @@ const InvitePage: React.FC = () => {
 // ---------------------------
 // Main List
 // ---------------------------
+type FavoriteDoc = {
+  id: string; // itemId (או מזהה פריט שממנו נוצר המועדף)
+  name: string;
+  createdAt: number;
+};
+
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
   const [inputValue, setInputValue] = useState("");
@@ -220,6 +229,7 @@ const MainList: React.FC = () => {
       if (!u) {
         setList(null);
         setItems([]);
+        setFavorites([]);
         return;
       }
 
@@ -259,6 +269,7 @@ const MainList: React.FC = () => {
 
     const listRef = doc(db, "lists", list.id);
     const itemsCol = collection(listRef, "items");
+    const favsCol = collection(listRef, "favorites");
 
     const unsubList = onSnapshot(listRef, (snap) => {
       if (snap.exists()) setList({ ...(snap.data() as ShoppingList), id: snap.id });
@@ -269,16 +280,37 @@ const MainList: React.FC = () => {
       setItems(docs);
     });
 
+    // מועדפים נשמרים בנפרד, כדי שמחיקת פריט מהרשימה לא תמחק מהמועדפים
+    const unsubFavs = onSnapshot(favsCol, (snap) => {
+      const favDocs: FavoriteDoc[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: String(data?.name || ""),
+          createdAt: Number(data?.createdAt || 0),
+        };
+      });
+      // מיון חדש לישן
+      favDocs.sort((a, b) => b.createdAt - a.createdAt);
+      setFavorites(favDocs);
+    });
+
     return () => {
       unsubList();
       unsubItems();
+      unsubFavs();
     };
   }, [list?.id]);
+
+  const favoritesById = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of favorites) s.add(f.id);
+    return s;
+  }, [favorites]);
 
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
-    // אם לא מחובר - נוביל להתחברות במקום "לא קורה כלום"
     if (!user) {
       await signInSmart();
       return;
@@ -322,19 +354,32 @@ const MainList: React.FC = () => {
     });
   };
 
+  // מחיקת פריט מהרשימה לא נוגעת במועדפים (שנמצאים בתת-אוסף favorites)
   const deleteItem = async (id: string) => {
     if (!list?.id) return;
     await deleteDoc(doc(db, "lists", list.id, "items", id));
   };
 
-  const toggleFavorite = async (id: string) => {
+  // מועדפים: שמירה נפרדת, לפי itemId
+  const toggleFavorite = async (itemId: string) => {
     if (!list?.id) return;
-    const item = items.find((i) => i.id === id);
+    const item = items.find((i) => i.id === itemId);
     if (!item) return;
 
-    await updateDoc(doc(db, "lists", list.id, "items", id), {
-      isFavorite: !item.isFavorite,
-    });
+    const favRef = doc(db, "lists", list.id, "favorites", itemId);
+    if (favoritesById.has(itemId)) {
+      await deleteDoc(favRef);
+    } else {
+      await setDoc(favRef, {
+        name: item.name,
+        createdAt: Date.now(),
+      });
+    }
+  };
+
+  const removeFavorite = async (favId: string) => {
+    if (!list?.id) return;
+    await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
   };
 
   const clearList = async () => {
@@ -392,7 +437,10 @@ const MainList: React.FC = () => {
     const active = items.filter((i) => !i.isPurchased);
     if (active.length === 0) return;
 
-    const listText = active.map((i) => `${i.name} x${i.quantity}`).join("\n");
+    const listText = active
+      .map((i) => `${i.name} x${i.quantity}`)
+      .join("\n");
+
     const message = encodeURIComponent(`*רשימת קניות*\n\n${listText}\n\nנשלח מהרשימה החכמה 🛒`);
     window.open(`https://wa.me/?text=${message}`, "_blank");
   };
@@ -401,11 +449,11 @@ const MainList: React.FC = () => {
     () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
+
   const purchasedItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
-  const favorites = useMemo(() => items.filter((i) => i.isFavorite), [items]);
 
   if (authLoading) {
     return (
@@ -415,7 +463,6 @@ const MainList: React.FC = () => {
     );
   }
 
-  // אם לא מחובר - מסך התחברות ברור (זה מה שחסר לך עכשיו, ולכן "לא נכנסים פריטים")
   if (!user) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
@@ -436,7 +483,6 @@ const MainList: React.FC = () => {
     );
   }
 
-  // בזמן טעינת הרשימה הראשונית
   if (listLoading || !list?.id) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
@@ -478,9 +524,9 @@ const MainList: React.FC = () => {
           </button>
         </div>
 
-        {/* סימון BUILD בכותרת */}
-        <h1 className="text-xl font-extrabold text-slate-800">
-          {list?.title || "הרשימה שלי"} | BUILD-INVITE-1
+        {/* 1) הסרת BUILD מהכותרת, 2) כותרת בצבע כחול */}
+        <h1 className="text-xl font-extrabold text-indigo-600">
+          {list?.title || "הרשימה שלי"}
         </h1>
 
         <button
@@ -502,6 +548,7 @@ const MainList: React.FC = () => {
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="מה להוסיף לרשימה?"
                 className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
+                dir="rtl"
               />
               <button
                 type="submit"
@@ -526,33 +573,41 @@ const MainList: React.FC = () => {
                       className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm transition-all hover:border-indigo-100"
                     >
                       <div className="flex items-center gap-1">
-                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500">
+                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500" title="מחק">
                           <Trash2 className="w-4 h-4" />
                         </button>
 
                         <button
                           onClick={() => toggleFavorite(item.id)}
-                          className={`p-2 transition-colors ${item.isFavorite ? "text-amber-500" : "text-slate-300"}`}
+                          className={`p-2 transition-colors ${favoritesById.has(item.id) ? "text-amber-500" : "text-slate-300"}`}
+                          title="מועדף"
                         >
-                          <Star className={`w-4 h-4 ${item.isFavorite ? "fill-amber-500" : ""}`} />
+                          <Star className={`w-4 h-4 ${favoritesById.has(item.id) ? "fill-amber-500" : ""}`} />
                         </button>
 
                         <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100 mr-2">
-                          <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400">
+                          <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
                             <Minus className="w-3 h-3" />
                           </button>
                           <span className="text-sm font-black text-slate-700 min-w-[1rem] text-center">{item.quantity}</span>
-                          <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400">
+                          <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400" title="הוסף">
                             <Plus className="w-3 h-3" />
                           </button>
                         </div>
                       </div>
 
+                      {/* 4) שם הפריט בכיוון RTL יציב */}
                       <div
                         className="flex items-center gap-3 overflow-hidden flex-1 justify-end cursor-pointer"
                         onClick={() => togglePurchased(item.id)}
+                        dir="rtl"
                       >
-                        <span className="text-base font-bold text-slate-700 truncate">{item.name}</span>
+                        <span
+                          className="text-base font-bold text-slate-700 truncate text-right"
+                          style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                        >
+                          {item.name}
+                        </span>
                         <Circle className="w-6 h-6 text-slate-300 flex-shrink-0" />
                       </div>
                     </div>
@@ -565,15 +620,23 @@ const MainList: React.FC = () => {
                       נקנו ({purchasedItems.length})
                     </h3>
                     {purchasedItems.map((item) => (
-                      <div key={item.id} className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all">
-                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300">
+                      <div
+                        key={item.id}
+                        className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
+                      >
+                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
                           <Trash2 className="w-4 h-4" />
                         </button>
+
                         <div
                           className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
                           onClick={() => togglePurchased(item.id)}
+                          dir="rtl"
                         >
-                          <span className="text-base font-bold text-slate-500 line-through truncate">
+                          <span
+                            className="text-base font-bold text-slate-500 line-through truncate text-right"
+                            style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                          >
                             {item.name} x{item.quantity}
                           </span>
                           <CheckCircle2 className="w-6 h-6 text-emerald-500" />
@@ -599,19 +662,59 @@ const MainList: React.FC = () => {
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {favorites.map((item) => (
-                  <div key={item.id} className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm">
-                    <button
-                      onClick={async () => {
-                        if (!list?.id) return;
-                        await updateDoc(doc(db, "lists", list.id, "items", item.id), { isPurchased: false });
-                        setActiveTab("list");
-                      }}
-                      className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all"
+                {favorites.map((fav) => (
+                  <div
+                    key={fav.id}
+                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                    dir="rtl"
+                  >
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!list?.id) return;
+
+                          // אם כבר קיים פריט פעיל באותו שם - הגדל כמות, אחרת צור חדש
+                          const existing = items.find(
+                            (i) => !i.isPurchased && i.name.trim() === fav.name.trim()
+                          );
+
+                          if (existing) {
+                            await updateQty(existing.id, 1);
+                          } else {
+                            const itemId = crypto.randomUUID();
+                            const newItem: ShoppingItem = {
+                              id: itemId,
+                              name: fav.name,
+                              quantity: 1,
+                              isPurchased: false,
+                              isFavorite: false,
+                              createdAt: Date.now(),
+                            };
+                            await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+                          }
+
+                          setActiveTab("list");
+                        }}
+                        className="bg-indigo-600 text-white px-5 py-2 rounded-xl text-xs font-black shadow-lg shadow-indigo-100 active:scale-95 transition-all"
+                      >
+                        הוסף לרשימה
+                      </button>
+
+                      <button
+                        onClick={() => removeFavorite(fav.id)}
+                        className="p-2 text-slate-300 hover:text-rose-500"
+                        title="הסר ממועדפים"
+                      >
+                        <Trash2 className="w-5 h-5" />
+                      </button>
+                    </div>
+
+                    <span
+                      className="font-bold text-slate-700 text-right truncate max-w-[55%]"
+                      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                     >
-                      הוסף לרשימה
-                    </button>
-                    <span className="font-bold text-slate-700">{item.name}</span>
+                      {fav.name}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -658,10 +761,13 @@ const MainList: React.FC = () => {
             </div>
             <div>
               <h3 className="text-xl font-black text-slate-800">למחוק את כל הרשימה?</h3>
-              <p className="text-sm text-slate-400 font-bold">הפעולה תנקה רק את הפריטים שלא במועדפים.</p>
+              <p className="text-sm text-slate-400 font-bold">המועדפים לא יימחקו.</p>
             </div>
             <div className="grid grid-cols-2 gap-3">
-              <button onClick={() => setShowClearConfirm(false)} className="py-4 rounded-2xl bg-slate-100 text-slate-600 font-bold">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="py-4 rounded-2xl bg-slate-100 text-slate-600 font-bold"
+              >
                 ביטול
               </button>
               <button onClick={clearList} className="py-4 rounded-2xl bg-rose-500 text-white font-bold">
