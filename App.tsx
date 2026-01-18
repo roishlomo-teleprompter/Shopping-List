@@ -386,7 +386,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = crypto.randomUUID();
+    const itemId = makeId();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -566,6 +566,18 @@ const MainList: React.FC = () => {
       .replace(/\s+/g, " ")
       .trim();
   };
+  const makeId = () => {
+    try {
+      // crypto.randomUUID may be unavailable on some Android/WebView versions
+      const anyCrypto: any = (globalThis as any).crypto;
+      if (anyCrypto?.randomUUID) return String(anyCrypto.randomUUID());
+    } catch {
+      // ignore
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+  };
+
+
 
 
   const speak = (text: string) => {
@@ -590,7 +602,10 @@ const MainList: React.FC = () => {
 
   const executeVoiceCommand = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
-    if (!listId) return;
+    if (!listId) {
+      speak("אין רשימה פעילה");
+      return;
+    }
 
     const itemsNow = latestItemsRef.current || items;
 
@@ -648,7 +663,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = crypto.randomUUID();
+      const itemId = makeId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -675,7 +690,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = crypto.randomUUID();
+      const itemId = makeId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -848,18 +863,25 @@ const MainList: React.FC = () => {
     };
 
     rec.onresult = async (event: any) => {
+      clearVoiceTimers();
       const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
       const best = event?.results?.[ri]?.[0];
       const transcript = String(best?.transcript || "").trim() || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
       const cleaned = normalizeVoiceText(transcript);
+      console.log('[VOICE] heard:', cleaned);
       setLastHeard(cleaned);
 
       try {
         await executeVoiceCommandsFromText(cleaned);
       } catch (e) {
         console.error(e);
+        const msg = (e as any)?.message || String(e);
+        setToast(`שגיאה בביצוע הפקודה: ${msg}`);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
+        if (voiceMode === "continuous") {
+          armVoiceTimers();
+        }
         // In once mode, stop after one result
         if (voiceMode === "once") {
           stopListening();
@@ -954,7 +976,7 @@ const MainList: React.FC = () => {
             }`}
             title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
           >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </button>
 
           <button
@@ -1141,7 +1163,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = crypto.randomUUID();
+                            const itemId = makeId();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
