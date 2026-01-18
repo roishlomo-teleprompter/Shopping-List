@@ -45,101 +45,196 @@ import {
   where,
 } from "firebase/firestore";
 
+import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from "./firebase.ts";
+import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
-// Ensure Firebase Auth session persists between visits (remember me)
-useEffect(() => {
+// ---------------------------
+// Helpers
+// ---------------------------
+function buildInviteLink(listId: string, token: string) {
+  const basePath = import.meta.env.BASE_URL || "/";
+  const origin = window.location.origin;
+  return `${origin}${basePath}#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+}
+
+async function copyToClipboard(text: string) {
   try {
-    setPersistence(auth, browserLocalPersistence);
-  } catch (e) {
-    console.warn("Failed to set auth persistence", e);
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    window.prompt("העתק את הקישור:", text);
+    return false;
   }
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, []);
+}
 
-/**
- * NOTE:
- * This file is large; kept as a single App.tsx as requested.
- * Voice fixes include:
- * - Avoid repeated "list.id/items" stale closures using refs
- * - Continuous multi-item add/delete mode with intent memory
- * - Silence timeout 12s + max session 60s
- * - Clear UI/voice prompt: "התחל לדבר"
- */
+async function signInSmart() {
+  try {
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch {
+      // ignore
+    }
+    await signInWithPopup(auth, googleProvider);
+  } catch (e: any) {
+    const code = e?.code as string | undefined;
+    if (
+      code === "auth/popup-blocked" ||
+      code === "auth/cancelled-popup-request" ||
+      code === "auth/popup-closed-by-user"
+    ) {
+      await signInWithRedirect(auth, googleProvider);
+      return;
+    }
+    await signInWithRedirect(auth, googleProvider);
+  }
+}
 
-// ---------------- Types ----------------
-type VoiceMode = "once" | "continuous";
+function openWhatsApp(text: string) {
+  const message = encodeURIComponent(text);
+  window.open(`https://wa.me/?text=${message}`, "_blank");
+}
 
-type ShoppingItem = {
-  id: string;
-  name: string;
-  quantity: number;
-  isPurchased: boolean;
-  isFavorite: boolean;
-  createdAt: number;
+// ---------------------------
+// Invite Page
+// ---------------------------
+const InvitePage: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const navigate = useNavigate();
+
+  const listId = searchParams.get("listId");
+  const token = searchParams.get("token");
+
+  const [user, setUser] = useState<FirebaseUser | null>(auth.currentUser);
+  const [authLoading, setAuthLoading] = useState(true);
+
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  // Remember me: persist auth session in browser storage
+  useEffect(() => {
+    try {
+      setPersistence(auth, browserLocalPersistence);
+    } catch (e) {
+      console.warn("Failed to set auth persistence", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => {
+    return onAuthStateChanged(auth, (u) => {
+      setUser(u);
+      setAuthLoading(false);
+    });
+  }, []);
+
+  const handleLogin = async () => {
+    setError(null);
+    try {
+      await signInSmart();
+    } catch (e: any) {
+      setError(e?.message || "שגיאת התחברות");
+    }
+  };
+
+  const handleJoin = async () => {
+    if (!listId || !token) {
+      setError("קישור ההזמנה חסר נתונים (listId או token)");
+      return;
+    }
+    if (!user) {
+      await handleLogin();
+      return;
+    }
+
+    setLoading(true);
+    setError(null);
+
+    try {
+      await runTransaction(db, async (transaction) => {
+        const listDocRef = doc(db, "lists", listId);
+        const listSnap = await transaction.get(listDocRef);
+
+        if (!listSnap.exists()) throw new Error("הרשימה לא קיימת");
+
+        const data = listSnap.data() as ShoppingList;
+        const invite = data.pendingInvites?.[token];
+
+        if (!invite) throw new Error("הזמנה לא בתוקף");
+        if (invite.expiresAt < Date.now()) throw new Error("פג תוקף ההזמנה");
+
+        transaction.update(listDocRef, {
+          sharedWith: arrayUnion(user.uid),
+          [`pendingInvites.${token}`]: deleteField(),
+        });
+      });
+
+      localStorage.setItem("activeListId", listId);
+      navigate("/");
+    } catch (e: any) {
+      setError(e?.message || "שגיאה לא ידועה");
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
+      <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6">
+        <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
+          <Share2 className="w-10 h-10" />
+        </div>
+
+        <h1 className="text-2xl font-black text-slate-800">הוזמנת לרשימה</h1>
+
+        {!listId || !token ? <p className="text-rose-500 font-bold">קישור ההזמנה לא תקין</p> : null}
+        {error ? <p className="text-rose-500 font-bold break-words">{error}</p> : null}
+
+        {!user ? (
+          <button
+            onClick={handleLogin}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
+          >
+            <LogIn className="w-5 h-5" />
+            התחבר עם גוגל להצטרפות
+          </button>
+        ) : (
+          <button
+            onClick={handleJoin}
+            disabled={loading}
+            className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
+          >
+            {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : "הצטרף לרשימה"}
+          </button>
+        )}
+      </div>
+    </div>
+  );
 };
 
-type ShoppingList = {
-  id: string;
-  title: string;
-  ownerUid: string;
-  members: string[];
-  createdAt: number;
-};
-
+// ---------------------------
+// Main List
+// ---------------------------
 type FavoriteDoc = {
-  id: string;
+  id: string; // itemId
   name: string;
   createdAt: number;
 };
 
-// ---------------- Helpers ----------------
-const normalize = (s: string) =>
-  (s || "")
-    .toLowerCase()
-    .replace(/[!"#$%&'()*+,\-./:;<=>?@[\\\]^_`{|}~]/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+type VoiceMode = "continuous" | "once";
 
-const normalizeVoiceText = (s: string) => {
-  const t = (s || "").trim();
-  return t
-    .replace(/[.?!]/g, " ")
-    .replace(/，/g, ",")
-    .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
-    .replace(/\s+/g, " ")
-    .trim();
-};
-
-// ---------------- UI Components ----------------
-const Center = ({ children }: { children: React.ReactNode }) => (
-  <div className="min-h-screen flex items-center justify-center p-6">{children}</div>
-);
-
-// ---------------- App Shell ----------------
-function AppShell() {
+const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
-  const [authLoading, setAuthLoading] = useState<boolean>(true);
-
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
-  const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
-  const [activeTab, setActiveTab] = useState<"list" | "favorites">("list");
-
-  const [toast, setToast] = useState<string | null>(null);
-
-  const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
-  const [isListening, setIsListening] = useState<boolean>(false);
-  const [lastHeard, setLastHeard] = useState<string>("");
-
-  const recognitionRef = React.useRef<any>(null);
-  const shouldKeepListeningRef = React.useRef<boolean>(false);
-  const shouldAnnounceStartRef = React.useRef<boolean>(false);
-  const inactivityTimerRef = React.useRef<any>(null);
-  const sessionTimerRef = React.useRef<any>(null);
-  const voiceIntentRef = React.useRef<null | "add" | "delete">(null);
-  const latestListIdRef = React.useRef<string | null>(null);
-  const latestItemsRef = React.useRef<ShoppingItem[]>([]);
 
   // Keep latest listId/items for SpeechRecognition callbacks (avoid stale closures on Android/Chrome)
   useEffect(() => {
@@ -150,45 +245,332 @@ function AppShell() {
     latestItemsRef.current = items;
   }, [items]);
 
-  // ---------- Auth ----------
+  const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
+  const [activeTab, setActiveTab] = useState<Tab>("list");
+
+  const [inputValue, setInputValue] = useState("");
+  const [isCopied, setIsCopied] = useState(false);
+  const [showClearConfirm, setShowClearConfirm] = useState(false);
+
+  const [isAiLoading, setIsAiLoading] = useState(false);
+  const [authLoading, setAuthLoading] = useState(true);
+  const [listLoading, setListLoading] = useState(false);
+
+  // Voice
+  const [isListening, setIsListening] = useState(false);
+  const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
+  const [lastHeard, setLastHeard] = useState<string>("");
+  const recognitionRef = React.useRef<any>(null);
+  const shouldKeepListeningRef = React.useRef<boolean>(false);
+  const shouldAnnounceStartRef = React.useRef<boolean>(false);
+  const inactivityTimerRef = React.useRef<any>(null);
+  const sessionTimerRef = React.useRef<any>(null);
+  const voiceIntentRef = React.useRef<null | "add" | "delete">(null);
+  const latestListIdRef = React.useRef<string | null>(null);
+  const latestItemsRef = React.useRef<ShoppingItem[]>([]);
+
+  // Remember me: persist auth session in browser storage
+  useEffect(() => {
+    try {
+      setPersistence(auth, browserLocalPersistence);
+    } catch (e) {
+      console.warn("Failed to set auth persistence", e);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
       setUser(u);
       setAuthLoading(false);
+
+      if (!u) {
+        setList(null);
+        setItems([]);
+        setFavorites([]);
+        return;
+      }
+
+      setListLoading(true);
+
+      const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        const newListRef = doc(collection(db, "lists"));
+        const newList: ShoppingList = {
+          id: newListRef.id,
+          title: "הרשימה שלי",
+          ownerUid: u.uid,
+          sharedWith: [u.uid],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+
+        await setDoc(newListRef, newList);
+        setList(newList);
+        localStorage.setItem("activeListId", newListRef.id);
+      } else {
+        const savedId = localStorage.getItem("activeListId");
+        const docToUse = savedId ? snap.docs.find((d) => d.id === savedId) ?? snap.docs[0] : snap.docs[0];
+        const data = docToUse.data() as ShoppingList;
+        setList({ ...data, id: docToUse.id });
+        localStorage.setItem("activeListId", docToUse.id);
+      }
+
+      setListLoading(false);
     });
   }, []);
 
-  const doLogin = async () => {
-    try {
-      await setPersistence(auth, browserLocalPersistence);
-    } catch {
-      // ignore
-    }
-    try {
-      await signInWithPopup(auth, googleProvider);
-    } catch (e) {
-      console.warn("Popup sign-in failed, trying redirect", e);
-      await signInWithRedirect(auth, googleProvider);
-    }
-  };
-
-  const doLogout = async () => {
-    try {
-      await signOut(auth);
-    } catch {
-      // ignore
-    }
-  };
-
-  // ---------- Toast ----------
   useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 2500);
-    return () => clearTimeout(t);
-  }, [toast]);
+    if (!list?.id) return;
+
+    const listRef = doc(db, "lists", list.id);
+    const itemsCol = collection(listRef, "items");
+    const favsCol = collection(listRef, "favorites");
+
+    const unsubList = onSnapshot(listRef, (snap) => {
+      if (snap.exists()) setList({ ...(snap.data() as ShoppingList), id: snap.id });
+    });
+
+    const unsubItems = onSnapshot(itemsCol, (snap) => {
+      const docs = snap.docs.map((d) => d.data() as ShoppingItem);
+      setItems(docs);
+    });
+
+    const unsubFavs = onSnapshot(favsCol, (snap) => {
+      const favDocs: FavoriteDoc[] = snap.docs.map((d) => {
+        const data = d.data() as any;
+        return {
+          id: d.id,
+          name: String(data?.name || ""),
+          createdAt: Number(data?.createdAt || 0),
+        };
+      });
+      favDocs.sort((a, b) => b.createdAt - a.createdAt);
+      setFavorites(favDocs);
+    });
+
+    return () => {
+      unsubList();
+      unsubItems();
+      unsubFavs();
+    };
+  }, [list?.id]);
+
+  const favoritesById = useMemo(() => {
+    const s = new Set<string>();
+    for (const f of favorites) s.add(f.id);
+    return s;
+  }, [favorites]);
+
+  const activeItems = useMemo(
+    () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
+    [items]
+  );
+
+  const purchasedItems = useMemo(
+    () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
+    [items]
+  );
+
+  const addItem = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+
+    if (!user) {
+      await signInSmart();
+      return;
+    }
+    if (!list?.id) return;
+
+    const name = inputValue.trim();
+    if (!name) return;
+
+    const itemId = crypto.randomUUID();
+    const newItem: ShoppingItem = {
+      id: itemId,
+      name,
+      quantity: 1,
+      isPurchased: false,
+      isFavorite: false,
+      createdAt: Date.now(),
+    };
+
+    await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+    setInputValue("");
+  };
+
+  const togglePurchased = async (id: string) => {
+    if (!list?.id) return;
+    const item = items.find((i) => i.id === id);
+    if (!item) return;
+
+    const isNowPurchased = !item.isPurchased;
+    await updateDoc(doc(db, "lists", list.id, "items", id), {
+      isPurchased: isNowPurchased,
+      purchasedAt: isNowPurchased ? Date.now() : null,
+    });
+  };
+
+  const updateQty = async (id: string, delta: number) => {
+    if (!list?.id) return;
+    const item = items.find((i) => i.id === id);
+    if (!item) return;
+
+    await updateDoc(doc(db, "lists", list.id, "items", id), {
+      quantity: Math.max(1, item.quantity + delta),
+    });
+  };
+
+  const deleteItem = async (id: string) => {
+    if (!list?.id) return;
+    await deleteDoc(doc(db, "lists", list.id, "items", id));
+  };
+
+  const toggleFavorite = async (itemId: string) => {
+    if (!list?.id) return;
+    const item = items.find((i) => i.id === itemId);
+    if (!item) return;
+
+    const favRef = doc(db, "lists", list.id, "favorites", itemId);
+    if (favoritesById.has(itemId)) {
+      await deleteDoc(favRef);
+    } else {
+      await setDoc(favRef, { name: item.name, createdAt: Date.now() });
+    }
+  };
+
+  const removeFavorite = async (favId: string) => {
+    if (!list?.id) return;
+    await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
+  };
+
+  const clearList = async () => {
+    if (!list?.id) return;
+    const batch = items.map((i) => deleteDoc(doc(db, "lists", list.id, "items", i.id)));
+    await Promise.all(batch);
+    setShowClearConfirm(false);
+  };
+
+  const getAiSuggestions = async () => {
+    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
+    if (!apiKey) return;
+
+    setIsAiLoading(true);
+    const ai = new GoogleGenAI({ apiKey });
+
+    try {
+      const currentList = activeItems.map((i) => i.name).join(", ");
+      const response = await ai.models.generateContent({
+        model: "gemini-3-flash-preview",
+        contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
+      });
+
+      const suggestions = response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
+      if (suggestions.length > 0) setInputValue(suggestions[0]);
+    } catch (e) {
+      console.error(e);
+    } finally {
+      setIsAiLoading(false);
+    }
+  };
+
+  // Invite
+  const generateInviteTokenAndLink = async () => {
+    if (!user) {
+      await signInSmart();
+      return null;
+    }
+    if (!list?.id) return null;
+
+    const token = [...Array(32)].map(() => Math.floor(Math.random() * 16).toString(16)).join("");
+    const expiresAt = Date.now() + 48 * 60 * 60 * 1000;
+
+    await updateDoc(doc(db, "lists", list.id), {
+      [`pendingInvites.${token}`]: { createdAt: Date.now(), expiresAt },
+    });
+
+    return buildInviteLink(list.id, token);
+  };
+
+  const generateInviteLinkCopy = async () => {
+    const link = await generateInviteTokenAndLink();
+    if (!link) return;
+    await copyToClipboard(link);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  const shareInviteLinkSystem = async () => {
+    const link = await generateInviteTokenAndLink();
+    if (!link) return;
+
+    try {
+      if (typeof navigator !== "undefined" && "share" in navigator) {
+        // @ts-ignore
+        await navigator.share({
+          title: "קישור לרשימה",
+          text: "קישור הצטרפות לרשימת קניות",
+          url: link,
+        });
+        return;
+      }
+    } catch {
+      // user cancelled
+    }
+
+    await copyToClipboard(link);
+    setIsCopied(true);
+    setTimeout(() => setIsCopied(false), 2000);
+  };
+
+  // WhatsApp share (header bold must NOT contain bidi marks on mobile)
+  const shareListWhatsApp = () => {
+    const title = list?.title || "הרשימה שלי";
+    const active = items.filter((i) => !i.isPurchased);
+
+    // RTL for lines, isolate quantity digits
+    const RLE = "\u202B";
+    const PDF = "\u202C";
+    const LRI = "\u2066";
+    const PDI = "\u2069";
+
+    const lines =
+      active.length > 0
+        ? active.map((i) => `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`).join("\n")
+        : `${RLE}(הרשימה כרגע ריקה)${PDF}`;
+
+    const header = `*${title}:*`;
+    const footer = `נשלח מהרשימה החכמה 🛒`;
+    const text = `${header}\n\n${lines}\n\n${footer}`;
+    openWhatsApp(text);
+  };
+
+  // ---------------------------
+  // Voice commands
+  // ---------------------------
+  const normalize = (s: string) =>
+    (s || "")
+      .trim()
+      .toLowerCase()
+      .replace(/[״"']/g, "")
+      .replace(/\s+/g, " ");
+
+
+  const normalizeVoiceText = (s: string) => {
+    const t = (s || "").trim();
+    return t
+      .replace(/[.?!]/g, " ")
+      .replace(/，/g, ",")
+      .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
+      .replace(/\s+/g, " ")
+      .trim();
+  };
+
 
   const speak = (text: string) => {
     try {
+      if (!("speechSynthesis" in window)) return;
       const u = new SpeechSynthesisUtterance(text);
       u.lang = "he-IL";
       window.speechSynthesis.cancel();
@@ -198,158 +580,12 @@ function AppShell() {
     }
   };
 
-  const clearVoiceTimers = () => {
-    if (inactivityTimerRef.current) {
-      clearTimeout(inactivityTimerRef.current);
-      inactivityTimerRef.current = null;
-    }
-    if (sessionTimerRef.current) {
-      clearTimeout(sessionTimerRef.current);
-      sessionTimerRef.current = null;
-    }
-  };
-
-  const stopListening = () => {
-    clearVoiceTimers();
-    shouldKeepListeningRef.current = false;
-    shouldAnnounceStartRef.current = false;
-    voiceIntentRef.current = null;
-    setIsListening(false);
-    try {
-      speak("האזנה הופסקה");
-    } catch {
-      // ignore
-    }
-    try {
-      recognitionRef.current?.stop?.();
-    } catch {
-      // ignore
-    }
-  };
-
-  const armVoiceTimers = () => {
-    // Stop listening after silence (no recognized command)
-    clearVoiceTimers();
-
-    // Stop after 12 seconds of silence
-    inactivityTimerRef.current = setTimeout(() => {
-      if (shouldKeepListeningRef.current || isListening) {
-        stopListening();
-      }
-    }, 12000);
-
-    // Stop after a reasonable long session even if user keeps talking
-    sessionTimerRef.current = setTimeout(() => {
-      stopListening();
-    }, 60000);
-  };
-
   const findItemByName = (name: string) => {
-    const src = latestItemsRef.current ?? items;
     const n = normalize(name);
-    const exact = src.find((i) => normalize(i.name) === n);
+    const exact = items.find((i) => normalize(i.name) === n);
     if (exact) return exact;
-    const contains = src.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
+    const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
     return contains || null;
-  };
-
-  // ---------- Firestore subscriptions ----------
-  useEffect(() => {
-    if (!user?.uid) return;
-
-    const qLists = query(collection(db, "lists"), where("members", "array-contains", user.uid));
-    const unsub = onSnapshot(qLists, (snap) => {
-      const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
-      if (docs.length) {
-        setList({
-          id: docs[0].id,
-          title: docs[0].title || "הרשימה שלי",
-          ownerUid: docs[0].ownerUid,
-          members: docs[0].members || [],
-          createdAt: docs[0].createdAt || Date.now(),
-        });
-      } else {
-        setList(null);
-      }
-    });
-
-    return () => unsub();
-  }, [user?.uid]);
-
-  useEffect(() => {
-    if (!list?.id) return;
-
-    const qItems = query(collection(db, "lists", list.id, "items"));
-    const unsub = onSnapshot(qItems, (snap) => {
-      const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
-      const mapped: ShoppingItem[] = docs
-        .map((d) => ({
-          id: d.id,
-          name: d.name,
-          quantity: Number(d.quantity || 1),
-          isPurchased: !!d.isPurchased,
-          isFavorite: !!d.isFavorite,
-          createdAt: Number(d.createdAt || Date.now()),
-        }))
-        .sort((a, b) => (a.isPurchased === b.isPurchased ? a.createdAt - b.createdAt : a.isPurchased ? 1 : -1));
-      setItems(mapped);
-    });
-
-    return () => unsub();
-  }, [list?.id]);
-
-  // ---------- Favorites ----------
-  useEffect(() => {
-    if (!user?.uid) return;
-    const qFav = query(collection(db, "favorites"), where("uid", "==", user.uid));
-    const unsub = onSnapshot(qFav, (snap) => {
-      const docs = snap.docs.map((d) => ({ id: d.id, ...(d.data() as any) })) as any[];
-      const mapped: FavoriteDoc[] = docs
-        .map((d) => ({
-          id: d.id,
-          name: d.name,
-          createdAt: Number(d.createdAt || Date.now()),
-        }))
-        .sort((a, b) => a.name.localeCompare(b.name, "he"));
-      setFavorites(mapped);
-    });
-    return () => unsub();
-  }, [user?.uid]);
-
-  // ---------- Item ops ----------
-  const updateQty = async (itemId: string, delta: number) => {
-    if (!list?.id) return;
-    const ref = doc(db, "lists", list.id, "items", itemId);
-    await runTransaction(db, async (tx) => {
-      const snap = await tx.get(ref);
-      if (!snap.exists()) return;
-      const cur = snap.data() as any;
-      const q = Math.max(1, Number(cur.quantity || 1) + delta);
-      tx.update(ref, { quantity: q });
-    });
-  };
-
-  const togglePurchased = async (item: ShoppingItem) => {
-    if (!list?.id) return;
-    await updateDoc(doc(db, "lists", list.id, "items", item.id), { isPurchased: !item.isPurchased });
-  };
-
-  const deleteItem = async (itemId: string) => {
-    if (!list?.id) return;
-    await deleteDoc(doc(db, "lists", list.id, "items", itemId));
-  };
-
-  // ---------- Voice: parse & execute ----------
-  const splitByDelimiters = (t: string) => {
-    // normalize separators to comma, then split
-    return t
-      .replace(/\s+וגם\s+/g, ",")
-      .replace(/\s+ואז\s+/g, ",")
-      .replace(/\s+אחר כך\s+/g, ",")
-      .replace(/\s+ואחר כך\s+/g, ",")
-      .split(/,|\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
   };
 
   const executeVoiceCommand = async (raw: string) => {
@@ -373,27 +609,27 @@ function AppShell() {
       return;
     }
 
-    // Navigation
-    if (text.includes("רשימה")) {
-      setActiveTab("list");
-      speak("עברתי לרשימה");
-      return;
-    }
+    // Tab navigation
     if (text.includes("מועדפים") || text.includes("פייבוריט")) {
       setActiveTab("favorites");
       speak("עברתי למועדפים");
       return;
     }
+    if (text.includes("רשימה")) {
+      setActiveTab("list");
+      speak("עברתי לרשימה");
+      return;
+    }
 
-    // Add prompt only
-    if (
-      text === "הוסף" ||
-      text === "תוסיף" ||
-      text === "הוספה" ||
-      text === "הוסף פריט" ||
-      text === "תוסיף פריט" ||
-      text === "הוספה פריט"
-    ) {
+    // Clear list
+    if (text.includes("נקה") && text.includes("רשימה")) {
+      setShowClearConfirm(true);
+      speak("פותח אישור לניקוי הרשימה");
+      return;
+    }
+
+    // Add prompt only: "הוסף" / "תוסיף" / "הוספה" (optionally with "פריט")
+    if (text === "הוסף" || text === "תוסיף" || text === "הוספה" || text === "הוסף פריט" || text === "תוסיף פריט" || text === "הוספה פריט") {
       speak("איזה פריט להוסיף?");
       return;
     }
@@ -401,14 +637,14 @@ function AppShell() {
     // Add with quantity: "הוסף 3 עגבניות"
     const addMatch = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(\d+)\s+(.+)$/);
     if (addMatch) {
-      const qty = Math.max(1, Number(addMatch[2] || 1));
+      const qty = Math.max(1, Number(addMatch[2]));
       const name = addMatch[3].trim();
       if (!name) return;
 
       const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
       if (existing) {
-        await updateQty(existing.id, qty);
-        speak(`הגדלתי ${existing.name} ${qty}`);
+        await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: qty });
+        speak(`עדכנתי ${existing.name} לכמות ${qty}`);
         return;
       }
 
@@ -454,7 +690,7 @@ function AppShell() {
     }
 
     // Delete: "מחק חלב"
-    const delMatch = text.match(/^(מחק|תמחק|תמחקי)(?:\s+פריט)?\s+(.+)$/);
+    const delMatch = text.match(/^(מחק|תמחק|תמחוק|תמחקי)\s+(.+)$/);
     if (delMatch) {
       const name = delMatch[2].trim();
       const item = findItemByName(name);
@@ -462,8 +698,22 @@ function AppShell() {
         speak("לא מצאתי את הפריט למחיקה");
         return;
       }
-      await deleteDoc(doc(db, "lists", listId, "items", item.id));
+      await deleteItem(item.id);
       speak(`מחקתי ${item.name}`);
+      return;
+    }
+
+    // Mark purchased: "סמן חלב נקנה"
+    const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
+    if (buyMatch) {
+      const name = buyMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        speak("לא מצאתי את הפריט לסימון");
+        return;
+      }
+      if (!item.isPurchased) await togglePurchased(item.id);
+      speak(`סימנתי ${item.name} כנקנה`);
       return;
     }
 
@@ -495,66 +745,48 @@ function AppShell() {
       return;
     }
 
-    speak("לא הבנתי את הפקודה");
+    // Help / unknown
+    speak("לא הבנתי. אפשר לומר: הוסף פריט, מחק פריט, סמן פריט נקנה, הגדל, הקטן, נקה רשימה");
   };
 
-  const executeVoiceCommandsFromText = async (t: string) => {
-    const text = normalize(t);
-    if (!text) return;
-
-    // If user said multiple explicit commands in one phrase (e.g., "הוסף חלב הוסף ביצים")
-    const explicitMatches = text.match(/(הוסף|תוסיף|תוסיפי|הוספה|מחק|תמחק|תמחקי)\s+[^,]+/g);
-
-    if (explicitMatches && explicitMatches.length > 1) {
-      for (const cmd of explicitMatches) {
-        await executeVoiceCommand(cmd.trim());
-      }
-      return;
+  const clearVoiceTimers = () => {
+    if (inactivityTimerRef.current) {
+      clearTimeout(inactivityTimerRef.current);
+      inactivityTimerRef.current = null;
     }
-
-    // If the phrase starts with add/delete, remember intent and allow listing items without repeating the verb
-    if (/^(הוסף|תוסיף|תוסיפי|הוספה)/.test(text)) {
-      voiceIntentRef.current = "add";
-      const rest = text.replace(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s*/, "").trim();
-      if (!rest) {
-        speak("איזה פריט להוסיף?");
-        return;
-      }
-      for (const part of splitByDelimiters(rest)) {
-        await executeVoiceCommand(`הוסף ${part}`);
-      }
-      return;
+    if (sessionTimerRef.current) {
+      clearTimeout(sessionTimerRef.current);
+      sessionTimerRef.current = null;
     }
+  };
 
-    if (/^(מחק|תמחק|תמחקי)/.test(text)) {
-      voiceIntentRef.current = "delete";
-      const rest = text.replace(/^(מחק|תמחק|תמחקי)(?:\s+פריט)?\s*/, "").trim();
-      if (!rest) {
-        speak("איזה פריט למחוק?");
-        return;
-      }
-      for (const part of splitByDelimiters(rest)) {
-        await executeVoiceCommand(`מחק ${part}`);
-      }
-      return;
-    }
+  const armVoiceTimers = () => {
+    clearVoiceTimers();
 
-    // No verb - if we already have an intent, treat it as a list of items
-    if (voiceIntentRef.current === "add") {
-      for (const part of splitByDelimiters(text)) {
-        await executeVoiceCommand(`הוסף ${part}`);
+    // Stop after 12 seconds of silence
+    inactivityTimerRef.current = setTimeout(() => {
+      if (shouldKeepListeningRef.current || isListening) {
+        stopListening();
       }
-      return;
-    }
-    if (voiceIntentRef.current === "delete") {
-      for (const part of splitByDelimiters(text)) {
-        await executeVoiceCommand(`מחק ${part}`);
-      }
-      return;
-    }
+    }, 12000);
 
-    // Otherwise treat as a single command
-    await executeVoiceCommand(text);
+    // Stop after a reasonable long session even if user keeps talking
+    sessionTimerRef.current = setTimeout(() => {
+      stopListening();
+    }, 60000);
+  };
+
+
+  const stopListening = () => {
+    clearVoiceTimers();
+    shouldKeepListeningRef.current = false;
+    voiceIntentRef.current = null;
+    setIsListening(false);
+    try {
+      recognitionRef.current?.stop?.();
+    } catch {
+      // ignore
+    }
   };
 
   const startListening = () => {
@@ -571,7 +803,9 @@ function AppShell() {
       return;
     }
 
-    // reset any old instance
+    shouldKeepListeningRef.current = true;
+
+    // clean previous instance
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -588,18 +822,17 @@ function AppShell() {
     rec.interimResults = false;
     rec.maxAlternatives = 1;
 
-    // continuous mode:
-    // keep restarting after each phrase
+    // continuous mode: keep restarting after each phrase
     // some browsers ignore continuous=true, so we also restart onend
     rec.continuous = voiceMode === "continuous";
 
     rec.onstart = () => {
       setIsListening(true);
-      armVoiceTimers();
       if (shouldAnnounceStartRef.current) {
         speak("התחל לדבר");
         shouldAnnounceStartRef.current = false;
       }
+      armVoiceTimers();
     };
 
     rec.onerror = (e: any) => {
@@ -615,15 +848,10 @@ function AppShell() {
     };
 
     rec.onresult = async (event: any) => {
-      clearVoiceTimers();
-
       const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
       const best = event?.results?.[ri]?.[0];
-      const transcript = (best?.transcript || "").trim();
-      const finalTranscript =
-        transcript || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
-
-      const cleaned = normalizeVoiceText(finalTranscript);
+      const transcript = String(best?.transcript || "").trim() || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
+      const cleaned = normalizeVoiceText(transcript);
       setLastHeard(cleaned);
 
       try {
@@ -632,11 +860,6 @@ function AppShell() {
         console.error(e);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
-        // In continuous mode - if user goes silent, stop automatically
-        if (voiceMode === "continuous") {
-          armVoiceTimers();
-        }
-
         // In once mode, stop after one result
         if (voiceMode === "once") {
           stopListening();
@@ -646,20 +869,20 @@ function AppShell() {
 
     rec.onend = () => {
       clearVoiceTimers();
-      setIsListening(false);
+      const keep = shouldKeepListeningRef.current && voiceMode === "continuous";
+      setIsListening(keep);
 
-      // If in continuous mode and user still wants listening, restart
-      if (voiceMode === "continuous" && shouldKeepListeningRef.current) {
+      if (keep) {
+        // restart quickly
         try {
           rec.start();
         } catch {
-          // ignore
+          // if start throws, fully stop
+          stopListening();
         }
       }
     };
 
-    // Start
-    shouldKeepListeningRef.current = voiceMode === "continuous";
     shouldAnnounceStartRef.current = true;
     voiceIntentRef.current = null;
 
@@ -677,121 +900,384 @@ function AppShell() {
       try {
         recognitionRef.current?.stop?.();
       } catch {
-        //
+        // ignore
       }
     };
   }, []);
 
-  // ---------- UI ----------
   if (authLoading) {
     return (
-      <Center>
-        <div className="flex items-center gap-2 text-lg">
-          <Loader2 className="animate-spin" />
-          טוען...
-        </div>
-      </Center>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
+      </div>
     );
   }
 
   if (!user) {
     return (
-      <Center>
-        <div className="w-full max-w-md bg-white rounded-2xl shadow p-6 space-y-4">
-          <div className="text-xl font-bold">רשימת קניות חכמה</div>
-          <div className="text-gray-600">כדי להשתמש באפליקציה, התחבר עם חשבון Google.</div>
+      <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
+        <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
+          <h1 className="text-2xl font-black text-slate-800">רשימת קניות חכמה</h1>
+          <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
           <button
-            onClick={doLogin}
-            className="w-full flex items-center justify-center gap-2 bg-black text-white rounded-xl py-3"
+            onClick={async () => {
+              await signInSmart();
+            }}
+            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
-            <LogIn size={18} />
-            התחברות עם Google
+            <LogIn className="w-5 h-5" />
+            התחבר עם גוגל
           </button>
         </div>
-      </Center>
+      </div>
+    );
+  }
+
+  if (listLoading || !list?.id) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
+      </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-gray-50">
-      <header className="sticky top-0 z-10 bg-white border-b">
-        <div className="max-w-3xl mx-auto px-4 py-3 flex items-center justify-between">
-          <div className="flex items-center gap-2">
-            <ShoppingCart />
-            <div className="font-bold">{list?.title || "הרשימה שלי"}</div>
-          </div>
+    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
+      {/* Header */}
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
+        <div className="flex items-center gap-2">
+          {/* Voice button (replaces AI) */}
+          <button
+            onClick={startListening}
+            className={`p-2 rounded-full ${
+              isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
+            }`}
+            title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
+          >
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+          </button>
 
-          <div className="flex items-center gap-2">
-            <button
-              onClick={() => {
-                setVoiceMode("continuous");
-                shouldKeepListeningRef.current = true;
-                shouldAnnounceStartRef.current = true;
-                startListening();
-              }}
-              className="px-3 py-2 rounded-xl bg-indigo-600 text-white flex items-center gap-2"
-              title="AI קולי"
-            >
-              <Sparkles size={16} />
-              AI
-              {isListening ? <Mic size={16} /> : <MicOff size={16} />}
-            </button>
+          <button
+            onClick={() => setShowClearConfirm(true)}
+            className="p-2 text-slate-400 hover:text-rose-500"
+            title="נקה רשימה"
+          >
+            <Trash2 className="w-5 h-5" />
+          </button>
 
-            <button onClick={doLogout} className="px-3 py-2 rounded-xl bg-gray-200 flex items-center gap-2">
-              <LogOut size={16} />
-              יציאה
-            </button>
-          </div>
+          <button
+            onClick={shareInviteLinkSystem}
+            className="p-2 text-slate-400 hover:text-indigo-600"
+            title="הזמן חבר"
+          >
+            {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
+          </button>
         </div>
 
-        {lastHeard ? (
-          <div className="max-w-3xl mx-auto px-4 pb-2 text-sm text-gray-600">שמענו: {lastHeard}</div>
-        ) : null}
+        <h1 className="text-xl font-extrabold text-indigo-600">{list?.title || "הרשימה שלי"}</h1>
+
+        <button
+          onClick={() => signOut(auth)}
+          className="p-2 rounded-full shadow-lg active:scale-90 transition-transform bg-slate-100 text-slate-600"
+          title="התנתק"
+        >
+          <LogOut className="w-5 h-5" />
+        </button>
       </header>
 
-      <main className="max-w-3xl mx-auto p-4 space-y-4">
-        <div className="flex gap-2">
-          <button
-            onClick={() => setActiveTab("list")}
-            className={`flex-1 py-2 rounded-xl border ${activeTab === "list" ? "bg-black text-white" : "bg-white"}`}
-          >
-            רשימה
-          </button>
-          <button
-            onClick={() => setActiveTab("favorites")}
-            className={`flex-1 py-2 rounded-xl border ${
-              activeTab === "favorites" ? "bg-black text-white" : "bg-white"
-            }`}
-          >
-            מועדפים
-          </button>
+      {/* Optional small hint for last heard */}
+      {lastHeard ? (
+        <div className="px-5 pt-3">
+          <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
+            <div className="text-[11px] font-black text-slate-400">שמענו:</div>
+            <div className="text-sm font-bold text-slate-700" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
+              {lastHeard}
+            </div>
+            <div className="text-[10px] font-black text-slate-400 mt-1">
+              מצב: {voiceMode === "continuous" ? "רציף" : "חד פעמי"} (אפשר לומר: "מצב רציף" או "מצב חד פעמי")
+            </div>
+          </div>
         </div>
+      ) : null}
 
-        {/* The rest of your UI remains unchanged below... */}
-        {/* (kept as-is in your original file; only voice/auth parts were changed) */}
+      {/* Content */}
+      <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
+        {activeTab === "list" ? (
+          <>
+            <form onSubmit={addItem} className="relative">
+              <input
+                value={inputValue}
+                onChange={(e) => setInputValue(e.target.value)}
+                placeholder="מה להוסיף לרשימה?"
+                className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
+                dir="rtl"
+              />
+              <button
+                type="submit"
+                className="absolute left-2.5 top-2.5 bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all"
+                title="הוסף"
+              >
+                <Plus className="w-6 h-6" />
+              </button>
+            </form>
 
-        <div className="text-gray-500 text-sm">
-          אם תרצה שאשלח גם את כל המשך הקובץ (UI מלא) שוב כאן, תגיד לי - כרגע זה הקובץ המלא כפי שיש אצלך, עם השינויים
-          שקשורים להתחברות וה-AI הקולי.
-        </div>
+            {items.length === 0 ? (
+              <div className="text-center py-20 opacity-20">
+                <ShoppingCart className="w-20 h-20 mx-auto mb-4 stroke-1" />
+                <p className="text-lg font-bold">הרשימה ריקה</p>
+              </div>
+            ) : (
+              <div className="space-y-4">
+                <div className="space-y-3">
+                  {activeItems.map((item) => (
+                    <div
+                      key={item.id}
+                      className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                      dir="rtl"
+                    >
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => deleteItem(item.id)}
+                          className="p-2 text-slate-300 hover:text-rose-500"
+                          title="מחק"
+                        >
+                          <Trash2 className="w-4 h-4" />
+                        </button>
+
+                        <button
+                          onClick={() => toggleFavorite(item.id)}
+                          className={`p-2 ${favoritesById.has(item.id) ? "text-amber-500" : "text-slate-300"}`}
+                          title="מועדף"
+                        >
+                          <Star className={`w-4 h-4 ${favoritesById.has(item.id) ? "fill-amber-500" : ""}`} />
+                        </button>
+                      </div>
+
+                      <div
+                        className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
+                        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                        onClick={() => togglePurchased(item.id)}
+                      >
+                        {item.name}
+                      </div>
+
+                      <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
+                        <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
+                          <Minus className="w-3 h-3" />
+                        </button>
+
+                        <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+
+                        <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400" title="הוסף">
+                          <Plus className="w-3 h-3" />
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+
+                  {purchasedItems.length > 0 ? (
+                    <div className="space-y-2 pt-4 border-t border-slate-200">
+                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right mb-2">
+                        נקנו ({purchasedItems.length})
+                      </h3>
+
+                      {purchasedItems.map((item) => (
+                        <div
+                          key={item.id}
+                          className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
+                          dir="rtl"
+                        >
+                          <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
+                            <Trash2 className="w-4 h-4" />
+                          </button>
+
+                          <div
+                            className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
+                            onClick={() => togglePurchased(item.id)}
+                          >
+                            <span
+                              className="text-base font-bold text-slate-500 line-through truncate text-right"
+                              style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                            >
+                              {item.name} x{item.quantity}
+                            </span>
+                            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+            )}
+          </>
+        ) : (
+          <div className="space-y-6">
+            <div className="text-right">
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">מועדפים</h2>
+              <p className="text-sm text-slate-400 font-bold">פריטים שחוזרים לסל</p>
+            </div>
+
+            {favorites.length === 0 ? (
+              <div className="text-center py-20 opacity-20">
+                <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
+                <p className="font-bold">אין מועדפים עדיין</p>
+              </div>
+            ) : (
+              <div className="grid grid-cols-1 gap-3">
+                {favorites.map((fav) => (
+                  <div
+                    key={fav.id}
+                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                    dir="rtl"
+                  >
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={async () => {
+                          if (!list?.id) return;
+
+                          const existing = items.find((i) => !i.isPurchased && i.name.trim() === fav.name.trim());
+
+                          if (existing) {
+                            await updateQty(existing.id, 1);
+                          } else {
+                            const itemId = crypto.randomUUID();
+                            const newItem: ShoppingItem = {
+                              id: itemId,
+                              name: fav.name,
+                              quantity: 1,
+                              isPurchased: false,
+                              isFavorite: false,
+                              createdAt: Date.now(),
+                            };
+                            await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+                          }
+                        }}
+                        className="px-1 py-0.5 text-[10px] rounded-md bg-emerald-500 text-white shadow-md active:scale-90 transition-transform font-black"
+                        title="הוסף לרשימה"
+                      >
+                        הוסף לרשימה
+                      </button>
+
+                      <button
+                        onClick={() => removeFavorite(fav.id)}
+                        className="p-2 text-slate-300 hover:text-rose-500"
+                        title="הסר ממועדפים"
+                      >
+                        <Trash2 className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    <div
+                      className="flex-1 text-right font-black text-slate-700 truncate px-3"
+                      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                    >
+                      {fav.name}
+                    </div>
+
+                    <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
       </main>
 
-      {toast ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-xl shadow">
-          {toast}
+      {/* Bottom area: Share button + bottom nav */}
+      <div className="fixed bottom-0 left-0 right-0 z-50">
+        <div className="max-w-md mx-auto px-4 pb-3">
+          {/* Share button on LEFT (screen-left) */}
+          <div className="flex justify-start mb-2" dir="ltr">
+            <button
+              onClick={shareListWhatsApp}
+              className="flex items-center justify-center gap-2 bg-emerald-500 text-white py-3 px-6 rounded-full font-black shadow-lg shadow-emerald-200"
+              title="שתף רשימה בוואטסאפ"
+            >
+              <MessageCircle className="w-5 h-5" />
+              שתף רשימה
+            </button>
+          </div>
+
+          {/* Bottom nav: LTR so left/right are screen based */}
+          <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
+            <div className="flex items-center justify-between px-10 py-3">
+              {/* LEFT: Favorites */}
+              <button
+                onClick={() => setActiveTab("favorites")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="מועדפים"
+              >
+                <Star
+                  className={`w-7 h-7 ${
+                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
+                  }`}
+                />
+                מועדפים
+              </button>
+
+              {/* RIGHT: List */}
+              <button
+                onClick={() => setActiveTab("list")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="רשימה"
+              >
+                <ListChecks className="w-7 h-7" />
+                רשימה
+              </button>
+            </div>
+          </footer>
+        </div>
+      </div>
+
+      {/* Clear Confirm Modal */}
+      {showClearConfirm ? (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-black text-slate-800">לנקות את כל הרשימה?</div>
+                <div className="text-sm font-bold text-slate-400">הפעולה תמחק את כל הפריטים מהרשימה.</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowClearConfirm(false)}
+                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+              >
+                ביטול
+              </button>
+              <button onClick={clearList} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
+                מחק הכל
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
   );
-}
+};
 
-// ---------- Router wrapper ----------
-export default function App() {
+// ---------------------------
+// App Router
+// ---------------------------
+const App: React.FC = () => {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/*" element={<AppShell />} />
+        <Route path="/" element={<MainList />} />
+        <Route path="/invite" element={<InvitePage />} />
       </Routes>
     </HashRouter>
   );
-}
+};
+
+export default App;
