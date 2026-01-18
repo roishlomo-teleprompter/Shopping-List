@@ -256,6 +256,14 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
+  // Lightweight toast for runtime errors (voice/Firebase/etc.)
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
   // Voice
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
@@ -1255,6 +1263,16 @@ const MainList: React.FC = () => {
           </footer>
         </div>
       </div>
+
+      {/* Toast */}
+      {toast ? (
+        <div
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 text-white px-4 py-2 rounded-2xl shadow-lg text-sm font-bold"
+          dir="rtl"
+        >
+          {toast}
+        </div>
+      ) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
