@@ -90,6 +90,26 @@ async function signInSmart() {
   }
 }
 
+
+function safeRandomId() {
+  // Works in Android Chrome even when crypto.randomUUID is missing
+  try {
+    const c: any = (globalThis as any).crypto;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+  } catch {
+    // ignore
+  }
+  return (
+    "id_" +
+    Math.random().toString(16).slice(2) +
+    "_" +
+    Date.now().toString(16) +
+    "_" +
+    Math.random().toString(16).slice(2)
+  );
+}
+
+
 function openWhatsApp(text: string) {
   const message = encodeURIComponent(text);
   window.open(`https://wa.me/?text=${message}`, "_blank");
@@ -127,13 +147,6 @@ const InvitePage: React.FC = () => {
       setAuthLoading(false);
     });
   }, []);
-
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3000);
-    return () => clearTimeout(t);
-  }, [toast]);
-
 
   const handleLogin = async () => {
     setError(null);
@@ -267,7 +280,6 @@ const MainList: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
   const [lastHeard, setLastHeard] = useState<string>("");
-  const [toast, setToast] = useState<string | null>(null);
   const recognitionRef = React.useRef<any>(null);
   const shouldKeepListeningRef = React.useRef<boolean>(false);
   const shouldAnnounceStartRef = React.useRef<boolean>(false);
@@ -394,7 +406,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = crypto.randomUUID();
+    const itemId = safeRandomId();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -623,7 +635,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Starts with add: allow listing items without repeating the verb
+    // Add - allow listing multiple items after the verb
     if (/^(הוסף|תוסיף|תוסיפי|הוספה)/.test(text)) {
       voiceIntentRef.current = "add";
       const rest = text
@@ -641,7 +653,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Starts with delete
+    // Delete - allow listing multiple items after the verb
     if (/^(מחק|תמחק|תמחקי)/.test(text)) {
       voiceIntentRef.current = "delete";
       const rest = text
@@ -659,7 +671,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // No verb: use last intent
+    // No verb - use last intent to add/delete a sequence
     if (voiceIntentRef.current === "add") {
       for (const part of splitByDelimiters(text)) {
         await executeVoiceCommand(`הוסף ${part}`);
@@ -674,7 +686,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Fallback: single command
+    // Fallback - single command
     await executeVoiceCommand(text);
   };
 
@@ -739,7 +751,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = crypto.randomUUID();
+      const itemId = safeRandomId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -766,7 +778,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = crypto.randomUUID();
+      const itemId = safeRandomId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -949,7 +961,6 @@ const MainList: React.FC = () => {
         await executeVoiceCommandsFromText(cleaned);
       } catch (e) {
         console.error(e);
-        setToast(`שגיאה בביצוע הפקודה: ${String((e as any)?.message || e || "")}`);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
         // In once mode, stop after one result
@@ -1233,7 +1244,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = crypto.randomUUID();
+                            const itemId = safeRandomId();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
@@ -1354,14 +1365,7 @@ const MainList: React.FC = () => {
           </div>
         </div>
       ) : null}
-    
-      {toast ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
-          {toast}
-        </div>
-      ) : null}
-
-</div>
+    </div>
   );
 };
 
