@@ -90,26 +90,6 @@ async function signInSmart() {
   }
 }
 
-
-function safeRandomId() {
-  // Works in Android Chrome even when crypto.randomUUID is missing
-  try {
-    const c: any = (globalThis as any).crypto;
-    if (c && typeof c.randomUUID === "function") return c.randomUUID();
-  } catch {
-    // ignore
-  }
-  return (
-    "id_" +
-    Math.random().toString(16).slice(2) +
-    "_" +
-    Date.now().toString(16) +
-    "_" +
-    Math.random().toString(16).slice(2)
-  );
-}
-
-
 function openWhatsApp(text: string) {
   const message = encodeURIComponent(text);
   window.open(`https://wa.me/?text=${message}`, "_blank");
@@ -147,6 +127,13 @@ const InvitePage: React.FC = () => {
       setAuthLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
 
   const handleLogin = async () => {
     setError(null);
@@ -280,6 +267,7 @@ const MainList: React.FC = () => {
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
   const [lastHeard, setLastHeard] = useState<string>("");
+  const [toast, setToast] = useState<string | null>(null);
   const recognitionRef = React.useRef<any>(null);
   const shouldKeepListeningRef = React.useRef<boolean>(false);
   const shouldAnnounceStartRef = React.useRef<boolean>(false);
@@ -406,7 +394,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = safeRandomId();
+    const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -609,11 +597,19 @@ const MainList: React.FC = () => {
   };
 
   const splitByDelimiters = (t: string) => {
-    return t
+    const cleaned = t
       .replace(/\s+וגם\s+/g, ",")
       .replace(/\s+ואז\s+/g, ",")
       .replace(/\s+אחר כך\s+/g, ",")
       .replace(/\s+ואחר כך\s+/g, ",")
+      .trim();
+
+    // If there are no explicit separators, allow saying items separated by spaces
+    if (!cleaned.includes(",") && cleaned.split(/\s+/).length >= 2) {
+      return cleaned.split(/\s+/).map((s) => s.trim()).filter(Boolean);
+    }
+
+    return cleaned
       .split(/,|\n/)
       .map((s) => s.trim())
       .filter(Boolean);
@@ -635,7 +631,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Add - allow listing multiple items after the verb
+    // Starts with add: allow listing items without repeating the verb
     if (/^(הוסף|תוסיף|תוסיפי|הוספה)/.test(text)) {
       voiceIntentRef.current = "add";
       const rest = text
@@ -643,7 +639,7 @@ const MainList: React.FC = () => {
         .trim();
 
       if (!rest) {
-        speak("איזה פריט להוסיף?");
+        setToast("תגיד פריטים להוספה");
         return;
       }
 
@@ -653,7 +649,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Delete - allow listing multiple items after the verb
+    // Starts with delete
     if (/^(מחק|תמחק|תמחקי)/.test(text)) {
       voiceIntentRef.current = "delete";
       const rest = text
@@ -661,7 +657,7 @@ const MainList: React.FC = () => {
         .trim();
 
       if (!rest) {
-        speak("איזה פריט למחוק?");
+        setToast("תגיד פריטים למחיקה");
         return;
       }
 
@@ -671,8 +667,8 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // No verb - use last intent to add/delete a sequence
-    if (voiceIntentRef.current === "add") {
+    // No verb: use last intent (default is ADD when AI listening starts)
+    if (voiceIntentRef.current === "add" || !voiceIntentRef.current) {
       for (const part of splitByDelimiters(text)) {
         await executeVoiceCommand(`הוסף ${part}`);
       }
@@ -686,7 +682,7 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Fallback - single command
+    // Fallback: single command
     await executeVoiceCommand(text);
   };
 
@@ -733,7 +729,7 @@ const MainList: React.FC = () => {
 
     // Add prompt only: "הוסף" / "תוסיף" / "הוספה" (optionally with "פריט")
     if (text === "הוסף" || text === "תוסיף" || text === "הוספה" || text === "הוסף פריט" || text === "תוסיף פריט" || text === "הוספה פריט") {
-      speak("איזה פריט להוסיף?");
+      setToast("תגיד פריטים להוספה");
       return;
     }
 
@@ -751,7 +747,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = safeRandomId();
+      const itemId = crypto.randomUUID();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -761,7 +757,7 @@ const MainList: React.FC = () => {
         createdAt: Date.now(),
       };
       await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
-      speak(`הוספתי ${name} ${qty}`);
+      setToast(`הוספתי ${name} x${qty}`);
       return;
     }
 
@@ -778,7 +774,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = safeRandomId();
+      const itemId = crypto.randomUUID();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -788,7 +784,7 @@ const MainList: React.FC = () => {
         createdAt: Date.now(),
       };
       await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
-      speak(`הוספתי ${name}`);
+      setToast(`הוספתי ${name}`);
       return;
     }
 
@@ -798,11 +794,11 @@ const MainList: React.FC = () => {
       const name = delMatch[2].trim();
       const item = findItemByName(name);
       if (!item) {
-        speak("לא מצאתי את הפריט למחיקה");
+        setToast("לא מצאתי את הפריט למחיקה");
         return;
       }
       await deleteItem(item.id);
-      speak(`מחקתי ${item.name}`);
+      setToast(`מחקתי ${item.name}`);
       return;
     }
 
@@ -932,7 +928,7 @@ const MainList: React.FC = () => {
     rec.onstart = () => {
       setIsListening(true);
       if (shouldAnnounceStartRef.current) {
-        speak("התחל לדבר");
+        setToast("התחל לדבר");
         shouldAnnounceStartRef.current = false;
       }
       armVoiceTimers();
@@ -961,6 +957,7 @@ const MainList: React.FC = () => {
         await executeVoiceCommandsFromText(cleaned);
       } catch (e) {
         console.error(e);
+        setToast(`שגיאה בביצוע הפקודה: ${String((e as any)?.message || e || "")}`);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
         // In once mode, stop after one result
@@ -987,7 +984,8 @@ const MainList: React.FC = () => {
     };
 
     shouldAnnounceStartRef.current = true;
-    voiceIntentRef.current = null;
+    // Default behavior: if user says just items (no verb) we treat it as ADD
+    voiceIntentRef.current = "add";
 
     try {
       rec.start();
@@ -1244,7 +1242,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = safeRandomId();
+                            const itemId = crypto.randomUUID();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
@@ -1365,7 +1363,14 @@ const MainList: React.FC = () => {
           </div>
         </div>
       ) : null}
-    </div>
+    
+      {toast ? (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
+          {toast}
+        </div>
+      ) : null}
+
+</div>
   );
 };
 
