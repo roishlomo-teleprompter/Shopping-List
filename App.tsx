@@ -256,14 +256,6 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Lightweight toast for runtime errors (voice/Firebase/etc.)
-  const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(t);
-  }, [toast]);
-
   // Voice
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
@@ -394,7 +386,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = makeId();
+    const itemId = safeRandomId();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -574,19 +566,13 @@ const MainList: React.FC = () => {
       .replace(/\s+/g, " ")
       .trim();
   };
-  const makeId = () => {
-    try {
-      // crypto.randomUUID may be unavailable on some Android/WebView versions
-      const anyCrypto: any = (globalThis as any).crypto;
-      if (anyCrypto?.randomUUID) return String(anyCrypto.randomUUID());
-    } catch {
-      // ignore
-    }
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
+
+
+  const safeRandomId = () => {
+    const c: any = (globalThis as any).crypto;
+    if (c && typeof c.randomUUID === "function") return c.randomUUID();
+    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
   };
-
-
-
 
   const speak = (text: string) => {
     try {
@@ -611,7 +597,8 @@ const MainList: React.FC = () => {
   const executeVoiceCommand = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) {
-      speak("אין רשימה פעילה");
+      setToast("אין רשימה פעילה עדיין - המתן רגע ונסה שוב");
+      speak("אין רשימה פעילה עדיין");
       return;
     }
 
@@ -671,7 +658,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = makeId();
+      const itemId = safeRandomId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -698,7 +685,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = makeId();
+      const itemId = safeRandomId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -876,15 +863,14 @@ const MainList: React.FC = () => {
       const best = event?.results?.[ri]?.[0];
       const transcript = String(best?.transcript || "").trim() || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
       const cleaned = normalizeVoiceText(transcript);
-      console.log('[VOICE] heard:', cleaned);
       setLastHeard(cleaned);
 
       try {
         await executeVoiceCommandsFromText(cleaned);
-      } catch (e) {
+      } catch (e: any) {
         console.error(e);
-        const msg = (e as any)?.message || String(e);
-        setToast(`שגיאה בביצוע הפקודה: ${msg}`);
+        const msg = String(e?.message || e || "");
+        setToast(msg ? `שגיאה: ${msg}` : "שגיאה בביצוע הפקודה");
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
         if (voiceMode === "continuous") {
@@ -984,7 +970,7 @@ const MainList: React.FC = () => {
             }`}
             title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
           >
-            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <button
@@ -1171,7 +1157,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = makeId();
+                            const itemId = safeRandomId();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
@@ -1263,16 +1249,6 @@ const MainList: React.FC = () => {
           </footer>
         </div>
       </div>
-
-      {/* Toast */}
-      {toast ? (
-        <div
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 text-white px-4 py-2 rounded-2xl shadow-lg text-sm font-bold"
-          dir="rtl"
-        >
-          {toast}
-        </div>
-      ) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
