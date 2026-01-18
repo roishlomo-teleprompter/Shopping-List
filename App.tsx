@@ -47,6 +47,8 @@ import {
 
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from "./firebase.ts";
+
+const BUILD_ID = 'voicefix-2026-01-18-01';
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 // ---------------------------
@@ -72,6 +74,7 @@ async function signInSmart() {
   try {
     try {
       await setPersistence(auth, browserLocalPersistence);
+      console.log("[BUILD]", BUILD_ID);
     } catch {
       // ignore
     }
@@ -115,6 +118,7 @@ const InvitePage: React.FC = () => {
   useEffect(() => {
     try {
       setPersistence(auth, browserLocalPersistence);
+      console.log("[BUILD]", BUILD_ID);
     } catch (e) {
       console.warn("Failed to set auth persistence", e);
     }
@@ -256,6 +260,18 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
+  // Lightweight toast for runtime errors (voice/Firebase/etc.)
+  const [toast, setToast] = useState<string | null>(null);
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3500);
+    return () => clearTimeout(t);
+  }, [toast]);
+
+  useEffect(() => {
+    console.log('[BUILD]', BUILD_ID);
+  }, []);
+
   // Voice
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
@@ -273,6 +289,7 @@ const MainList: React.FC = () => {
   useEffect(() => {
     try {
       setPersistence(auth, browserLocalPersistence);
+      console.log("[BUILD]", BUILD_ID);
     } catch (e) {
       console.warn("Failed to set auth persistence", e);
     }
@@ -386,7 +403,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = safeRandomId();
+    const itemId = makeId();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -566,13 +583,19 @@ const MainList: React.FC = () => {
       .replace(/\s+/g, " ")
       .trim();
   };
-
-
-  const safeRandomId = () => {
-    const c: any = (globalThis as any).crypto;
-    if (c && typeof c.randomUUID === "function") return c.randomUUID();
-    return `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+  const makeId = () => {
+    try {
+      // crypto.randomUUID may be unavailable on some Android/WebView versions
+      const anyCrypto: any = (globalThis as any).crypto;
+      if (anyCrypto?.randomUUID) return String(anyCrypto.randomUUID());
+    } catch {
+      // ignore
+    }
+    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
   };
+
+
+
 
   const speak = (text: string) => {
     try {
@@ -587,18 +610,18 @@ const MainList: React.FC = () => {
   };
 
   const findItemByName = (name: string) => {
+    const srcItems = latestItemsRef.current || items;
     const n = normalize(name);
-    const exact = items.find((i) => normalize(i.name) === n);
+    const exact = srcItems.find((i) => normalize(i.name) === n);
     if (exact) return exact;
-    const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
+    const contains = srcItems.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
     return contains || null;
   };
 
   const executeVoiceCommand = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) {
-      setToast("אין רשימה פעילה עדיין - המתן רגע ונסה שוב");
-      speak("אין רשימה פעילה עדיין");
+      speak("אין רשימה פעילה");
       return;
     }
 
@@ -658,7 +681,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = safeRandomId();
+      const itemId = makeId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -685,7 +708,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = safeRandomId();
+      const itemId = makeId();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -863,14 +886,15 @@ const MainList: React.FC = () => {
       const best = event?.results?.[ri]?.[0];
       const transcript = String(best?.transcript || "").trim() || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
       const cleaned = normalizeVoiceText(transcript);
+      console.log('[VOICE] heard:', cleaned);
       setLastHeard(cleaned);
 
       try {
         await executeVoiceCommandsFromText(cleaned);
-      } catch (e: any) {
+      } catch (e) {
         console.error(e);
-        const msg = String(e?.message || e || "");
-        setToast(msg ? `שגיאה: ${msg}` : "שגיאה בביצוע הפקודה");
+        const msg = (e as any)?.message || String(e);
+        setToast(`שגיאה בביצוע הפקודה: ${msg}`);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
         if (voiceMode === "continuous") {
@@ -934,6 +958,7 @@ const MainList: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
           <h1 className="text-2xl font-black text-slate-800">רשימת קניות חכמה</h1>
+          <div className="text-xs text-slate-400 font-bold">גרסה: {BUILD_ID}</div>
           <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
           <button
             onClick={async () => {
@@ -970,7 +995,7 @@ const MainList: React.FC = () => {
             }`}
             title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
           >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
           </button>
 
           <button
@@ -1157,7 +1182,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = safeRandomId();
+                            const itemId = makeId();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
@@ -1249,6 +1274,16 @@ const MainList: React.FC = () => {
           </footer>
         </div>
       </div>
+
+      {/* Toast */}
+      {toast ? (
+        <div
+          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 text-white px-4 py-2 rounded-2xl shadow-lg text-sm font-bold"
+          dir="rtl"
+        >
+          {toast}
+        </div>
+      ) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
