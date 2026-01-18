@@ -47,8 +47,6 @@ import {
 
 import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from "./firebase.ts";
-
-const BUILD_ID = 'voicefix-2026-01-18-01';
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 // ---------------------------
@@ -74,7 +72,6 @@ async function signInSmart() {
   try {
     try {
       await setPersistence(auth, browserLocalPersistence);
-      console.log("[BUILD]", BUILD_ID);
     } catch {
       // ignore
     }
@@ -118,7 +115,6 @@ const InvitePage: React.FC = () => {
   useEffect(() => {
     try {
       setPersistence(auth, browserLocalPersistence);
-      console.log("[BUILD]", BUILD_ID);
     } catch (e) {
       console.warn("Failed to set auth persistence", e);
     }
@@ -131,6 +127,13 @@ const InvitePage: React.FC = () => {
       setAuthLoading(false);
     });
   }, []);
+
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 3000);
+    return () => clearTimeout(t);
+  }, [toast]);
+
 
   const handleLogin = async () => {
     setError(null);
@@ -260,22 +263,11 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Lightweight toast for runtime errors (voice/Firebase/etc.)
-  const [toast, setToast] = useState<string | null>(null);
-  useEffect(() => {
-    if (!toast) return;
-    const t = setTimeout(() => setToast(null), 3500);
-    return () => clearTimeout(t);
-  }, [toast]);
-
-  useEffect(() => {
-    console.log('[BUILD]', BUILD_ID);
-  }, []);
-
   // Voice
   const [isListening, setIsListening] = useState(false);
   const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
   const [lastHeard, setLastHeard] = useState<string>("");
+  const [toast, setToast] = useState<string | null>(null);
   const recognitionRef = React.useRef<any>(null);
   const shouldKeepListeningRef = React.useRef<boolean>(false);
   const shouldAnnounceStartRef = React.useRef<boolean>(false);
@@ -289,7 +281,6 @@ const MainList: React.FC = () => {
   useEffect(() => {
     try {
       setPersistence(auth, browserLocalPersistence);
-      console.log("[BUILD]", BUILD_ID);
     } catch (e) {
       console.warn("Failed to set auth persistence", e);
     }
@@ -403,7 +394,7 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
-    const itemId = makeId();
+    const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
       id: itemId,
       name,
@@ -583,18 +574,6 @@ const MainList: React.FC = () => {
       .replace(/\s+/g, " ")
       .trim();
   };
-  const makeId = () => {
-    try {
-      // crypto.randomUUID may be unavailable on some Android/WebView versions
-      const anyCrypto: any = (globalThis as any).crypto;
-      if (anyCrypto?.randomUUID) return String(anyCrypto.randomUUID());
-    } catch {
-      // ignore
-    }
-    return `${Date.now()}-${Math.random().toString(16).slice(2)}`;
-  };
-
-
 
 
   const speak = (text: string) => {
@@ -610,20 +589,99 @@ const MainList: React.FC = () => {
   };
 
   const findItemByName = (name: string) => {
-    const srcItems = latestItemsRef.current || items;
     const n = normalize(name);
-    const exact = srcItems.find((i) => normalize(i.name) === n);
+    const exact = items.find((i) => normalize(i.name) === n);
     if (exact) return exact;
-    const contains = srcItems.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
+    const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
     return contains || null;
   };
 
-  const executeVoiceCommand = async (raw: string) => {
-    const listId = latestListIdRef.current || list?.id;
-    if (!listId) {
-      speak("אין רשימה פעילה");
+  const splitByDelimiters = (t: string) => {
+    return t
+      .replace(/\s+וגם\s+/g, ",")
+      .replace(/\s+ואז\s+/g, ",")
+      .replace(/\s+אחר כך\s+/g, ",")
+      .replace(/\s+ואחר כך\s+/g, ",")
+      .split(/,|\n/)
+      .map((s) => s.trim())
+      .filter(Boolean);
+  };
+
+  const executeVoiceCommandsFromText = async (t: string) => {
+    const text = normalize(t);
+    if (!text) return;
+
+    // Multiple explicit commands in one phrase: "הוסף חלב, הוסף ביצים"
+    const explicitMatches = text.match(
+      /(הוסף|תוסיף|תוסיפי|הוספה|מחק|תמחק|תמחקי)\s+[^,]+/g
+    );
+
+    if (explicitMatches && explicitMatches.length > 1) {
+      for (const cmd of explicitMatches) {
+        await executeVoiceCommand(cmd.trim());
+      }
       return;
     }
+
+    // Starts with add: allow listing items without repeating the verb
+    if (/^(הוסף|תוסיף|תוסיפי|הוספה)/.test(text)) {
+      voiceIntentRef.current = "add";
+      const rest = text
+        .replace(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s*/, "")
+        .trim();
+
+      if (!rest) {
+        speak("איזה פריט להוסיף?");
+        return;
+      }
+
+      for (const part of splitByDelimiters(rest)) {
+        await executeVoiceCommand(`הוסף ${part}`);
+      }
+      return;
+    }
+
+    // Starts with delete
+    if (/^(מחק|תמחק|תמחקי)/.test(text)) {
+      voiceIntentRef.current = "delete";
+      const rest = text
+        .replace(/^(מחק|תמחק|תמחקי)(?:\s+פריט)?\s*/, "")
+        .trim();
+
+      if (!rest) {
+        speak("איזה פריט למחוק?");
+        return;
+      }
+
+      for (const part of splitByDelimiters(rest)) {
+        await executeVoiceCommand(`מחק ${part}`);
+      }
+      return;
+    }
+
+    // No verb: use last intent
+    if (voiceIntentRef.current === "add") {
+      for (const part of splitByDelimiters(text)) {
+        await executeVoiceCommand(`הוסף ${part}`);
+      }
+      return;
+    }
+
+    if (voiceIntentRef.current === "delete") {
+      for (const part of splitByDelimiters(text)) {
+        await executeVoiceCommand(`מחק ${part}`);
+      }
+      return;
+    }
+
+    // Fallback: single command
+    await executeVoiceCommand(text);
+  };
+
+
+  const executeVoiceCommand = async (raw: string) => {
+    const listId = latestListIdRef.current || list?.id;
+    if (!listId) return;
 
     const itemsNow = latestItemsRef.current || items;
 
@@ -681,7 +739,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = makeId();
+      const itemId = crypto.randomUUID();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -708,7 +766,7 @@ const MainList: React.FC = () => {
         return;
       }
 
-      const itemId = makeId();
+      const itemId = crypto.randomUUID();
       const newItem: ShoppingItem = {
         id: itemId,
         name,
@@ -881,25 +939,19 @@ const MainList: React.FC = () => {
     };
 
     rec.onresult = async (event: any) => {
-      clearVoiceTimers();
       const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
       const best = event?.results?.[ri]?.[0];
       const transcript = String(best?.transcript || "").trim() || String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
       const cleaned = normalizeVoiceText(transcript);
-      console.log('[VOICE] heard:', cleaned);
       setLastHeard(cleaned);
 
       try {
         await executeVoiceCommandsFromText(cleaned);
       } catch (e) {
         console.error(e);
-        const msg = (e as any)?.message || String(e);
-        setToast(`שגיאה בביצוע הפקודה: ${msg}`);
+        setToast(`שגיאה בביצוע הפקודה: ${String((e as any)?.message || e || "")}`);
         speak("הייתה שגיאה בביצוע הפקודה");
       } finally {
-        if (voiceMode === "continuous") {
-          armVoiceTimers();
-        }
         // In once mode, stop after one result
         if (voiceMode === "once") {
           stopListening();
@@ -958,7 +1010,6 @@ const MainList: React.FC = () => {
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
           <h1 className="text-2xl font-black text-slate-800">רשימת קניות חכמה</h1>
-          <div className="text-xs text-slate-400 font-bold">גרסה: {BUILD_ID}</div>
           <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
           <button
             onClick={async () => {
@@ -995,7 +1046,7 @@ const MainList: React.FC = () => {
             }`}
             title={isListening ? "מקשיב - לחץ לעצור" : "פקודות קוליות - לחץ להתחיל"}
           >
-            {isListening ? <Mic className="w-5 h-5" /> : <MicOff className="w-5 h-5" />}
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <button
@@ -1182,7 +1233,7 @@ const MainList: React.FC = () => {
                           if (existing) {
                             await updateQty(existing.id, 1);
                           } else {
-                            const itemId = makeId();
+                            const itemId = crypto.randomUUID();
                             const newItem: ShoppingItem = {
                               id: itemId,
                               name: fav.name,
@@ -1275,16 +1326,6 @@ const MainList: React.FC = () => {
         </div>
       </div>
 
-      {/* Toast */}
-      {toast ? (
-        <div
-          className="fixed bottom-4 left-1/2 -translate-x-1/2 z-[70] bg-slate-900 text-white px-4 py-2 rounded-2xl shadow-lg text-sm font-bold"
-          dir="rtl"
-        >
-          {toast}
-        </div>
-      ) : null}
-
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
@@ -1313,7 +1354,14 @@ const MainList: React.FC = () => {
           </div>
         </div>
       ) : null}
-    </div>
+    
+      {toast ? (
+        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
+          {toast}
+        </div>
+      ) : null}
+
+</div>
   );
 };
 
