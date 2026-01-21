@@ -48,7 +48,7 @@ import { auth, db, googleProvider } from "./firebase.ts";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 // ------------------------------------
-// Force auth persistence ASAP
+// Force auth persistence ASAP (reduces repeated login prompts)
 // ------------------------------------
 try {
   setPersistence(auth, browserLocalPersistence);
@@ -251,14 +251,17 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Voice
+  // Voice UI
   const [isListening, setIsListening] = useState(false);
+  const [voiceStatus, setVoiceStatus] = useState<string>(""); // extra clear status
   const [lastHeard, setLastHeard] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
 
+  // Voice internals
   const recognitionRef = useRef<any>(null);
   const holdingRef = useRef<boolean>(false);
   const startedRef = useRef<boolean>(false);
+  const pendingFinalizeRef = useRef<boolean>(false);
   const startDelayRef = useRef<any>(null);
   const sessionPartsRef = useRef<string[]>([]);
   const latestListIdRef = useRef<string | null>(null);
@@ -524,7 +527,7 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // WhatsApp share: if qty == 1 do NOT print quantity
+  // WhatsApp share: qty==1 is hidden
   const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
@@ -723,7 +726,7 @@ const MainList: React.FC = () => {
   };
 
   // ---------------------------
-  // Voice: pointer-only press and hold (fix Android double-events)
+  // Voice: press-and-hold - FIXED finalize timing
   // ---------------------------
   const clearStartDelay = () => {
     if (startDelayRef.current) {
@@ -740,129 +743,9 @@ const MainList: React.FC = () => {
     }
   };
 
-  const actuallyStartRecognizer = () => {
-    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
-    if (!SR) {
-      setToast("הדפדפן לא תומך בזיהוי דיבור");
-      holdingRef.current = false;
-      startedRef.current = false;
-      setIsListening(false);
-      return;
-    }
-
-    // cleanup
-    if (recognitionRef.current) {
-      stopRecognizer();
-      recognitionRef.current = null;
-    }
-
-    const rec = new SR();
-    recognitionRef.current = rec;
-
-    rec.lang = "he-IL";
-    rec.interimResults = false;
-    rec.maxAlternatives = 1;
-
-    // In Android, continuous can be unreliable. We'll restart onend while holding.
-    rec.continuous = false;
-
-    rec.onstart = () => {
-      startedRef.current = true;
-      setIsListening(true);
-    };
-
-    rec.onresult = (event: any) => {
-      const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
-      const best = event?.results?.[ri]?.[0];
-      const transcript =
-        String(best?.transcript || "").trim() ||
-        String(event?.results?.[event?.results?.length - 1]?.[0]?.transcript || "").trim();
-
-      const cleaned = normalizeVoiceText(transcript);
-      if (!cleaned) return;
-
-      sessionPartsRef.current.push(cleaned);
-      setLastHeard(cleaned);
-    };
-
-    rec.onerror = (e: any) => {
-      console.error("Speech error", e);
-      const err = String(e?.error || "");
-      setIsListening(false);
-      startedRef.current = false;
-
-      if (err === "not-allowed" || err === "service-not-allowed") {
-        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
-        holdingRef.current = false;
-        return;
-      }
-
-      // keep holding but show feedback
-      if (holdingRef.current) setToast("שגיאה בהאזנה");
-    };
-
-    rec.onend = () => {
-      // If still holding, restart to keep capturing more phrases
-      if (holdingRef.current) {
-        try {
-          rec.start();
-        } catch {
-          // If cannot restart, keep UI but stop session
-          holdingRef.current = false;
-          startedRef.current = false;
-          setIsListening(false);
-        }
-      }
-    };
-
-    try {
-      rec.start();
-    } catch (e) {
-      console.error(e);
-      holdingRef.current = false;
-      startedRef.current = false;
-      setIsListening(false);
-      setToast("לא הצלחתי להתחיל האזנה");
-    }
-  };
-
-  const startHoldListening = () => {
-    if (holdingRef.current) return;
-
-    holdingRef.current = true;
-    startedRef.current = false;
-    sessionPartsRef.current = [];
-    setLastHeard("");
-    setIsListening(true);
-    setToast("דבר עכשיו - שחרר כדי לשלוח");
-
-    clearStartDelay();
-
-    // Delay start slightly to avoid instant start/stop due to mobile event quirks
-    startDelayRef.current = setTimeout(() => {
-      // user might have released already
-      if (!holdingRef.current) return;
-      actuallyStartRecognizer();
-    }, 120);
-  };
-
-  const stopHoldListeningAndSend = async () => {
-    // Always stop holding
-    const wasHolding = holdingRef.current;
-    holdingRef.current = false;
-
-    clearStartDelay();
-
-    // If recognition never started, just reset UI (prevents "pressed but nothing" confusion)
-    if (!startedRef.current) {
-      setIsListening(false);
-      if (wasHolding) setToast("לא התחלתי להאזין");
-      return;
-    }
-
-    startedRef.current = false;
-    setIsListening(false);
-    stopRecognizer();
+  const finalizeAndExecuteIfNeeded = async () => {
+    // This runs after onend when user released
+    pendingFinalizeRef.current = false;
 
     const parts = sessionPartsRef.current.slice();
     sessionPartsRef.current = [];
@@ -881,12 +764,176 @@ const MainList: React.FC = () => {
     }
   };
 
+  const actuallyStartRecognizer = () => {
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) {
+      setToast("הדפדפן לא תומך בזיהוי דיבור");
+      holdingRef.current = false;
+      startedRef.current = false;
+      pendingFinalizeRef.current = false;
+      setIsListening(false);
+      setVoiceStatus("");
+      return;
+    }
+
+    // cleanup
+    if (recognitionRef.current) {
+      stopRecognizer();
+      recognitionRef.current = null;
+    }
+
+    const rec = new SR();
+    recognitionRef.current = rec;
+
+    rec.lang = "he-IL";
+    rec.interimResults = true; // better on Android
+    rec.maxAlternatives = 1;
+    rec.continuous = false;
+
+    rec.onstart = () => {
+      startedRef.current = true;
+      setIsListening(true);
+      setVoiceStatus("מקשיב...");
+    };
+
+    rec.onaudiostart = () => {
+      setVoiceStatus("שומע מיקרופון...");
+    };
+
+    rec.onsoundstart = () => {
+      setVoiceStatus("זוהה קול...");
+    };
+
+    rec.onresult = (event: any) => {
+      // take last result
+      const lastIndex = event?.results?.length ? event.results.length - 1 : 0;
+      const best = event?.results?.[lastIndex]?.[0];
+      const transcript = String(best?.transcript || "").trim();
+      const cleaned = normalizeVoiceText(transcript);
+
+      if (!cleaned) return;
+
+      // store last phrase (we avoid duplicates)
+      const arr = sessionPartsRef.current;
+      if (arr.length === 0 || arr[arr.length - 1] !== cleaned) arr.push(cleaned);
+
+      setLastHeard(cleaned);
+    };
+
+    rec.onerror = (e: any) => {
+      console.error("Speech error", e);
+      const err = String(e?.error || "");
+
+      setIsListening(false);
+      setVoiceStatus("");
+      startedRef.current = false;
+
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+        holdingRef.current = false;
+        pendingFinalizeRef.current = false;
+        return;
+      }
+
+      if (holdingRef.current) setToast("שגיאה בהאזנה");
+    };
+
+    rec.onend = async () => {
+      const shouldRestart = holdingRef.current && !pendingFinalizeRef.current;
+
+      if (pendingFinalizeRef.current) {
+        setIsListening(false);
+        setVoiceStatus("");
+        startedRef.current = false;
+        await finalizeAndExecuteIfNeeded();
+        return;
+      }
+
+      if (shouldRestart) {
+        try {
+          rec.start();
+        } catch {
+          holdingRef.current = false;
+          startedRef.current = false;
+          setIsListening(false);
+          setVoiceStatus("");
+        }
+      } else {
+        setIsListening(false);
+        setVoiceStatus("");
+        startedRef.current = false;
+      }
+    };
+
+    try {
+      rec.start();
+    } catch (e) {
+      console.error(e);
+      holdingRef.current = false;
+      startedRef.current = false;
+      pendingFinalizeRef.current = false;
+      setIsListening(false);
+      setVoiceStatus("");
+      setToast("לא הצלחתי להתחיל האזנה");
+    }
+  };
+
+  const startHoldListening = () => {
+    if (holdingRef.current) return;
+
+    holdingRef.current = true;
+    startedRef.current = false;
+    pendingFinalizeRef.current = false;
+    sessionPartsRef.current = [];
+    setLastHeard("");
+    setIsListening(true);
+    setVoiceStatus("החזק ודבר, שחרר כדי לשלוח");
+    setToast("דבר עכשיו - שחרר כדי לשלוח");
+
+    clearStartDelay();
+    startDelayRef.current = setTimeout(() => {
+      if (!holdingRef.current) return;
+      actuallyStartRecognizer();
+    }, 120);
+  };
+
+  const stopHoldListeningAndSend = () => {
+    const wasHolding = holdingRef.current;
+    holdingRef.current = false;
+
+    clearStartDelay();
+
+    if (!wasHolding) return;
+
+    // If recognizer hasn't started yet, just reset
+    if (!startedRef.current) {
+      setIsListening(false);
+      setVoiceStatus("");
+      setToast("לא התחלתי להאזין");
+      return;
+    }
+
+    // IMPORTANT: do not finalize here. wait for onend
+    pendingFinalizeRef.current = true;
+    setVoiceStatus("מעבד...");
+    try {
+      recognitionRef.current?.stop?.();
+    } catch {
+      // ignore
+      // fallback if stop failed
+      pendingFinalizeRef.current = false;
+      setIsListening(false);
+      setVoiceStatus("");
+    }
+  };
+
   useEffect(() => {
     return () => {
       try {
         clearStartDelay();
         holdingRef.current = false;
         startedRef.current = false;
+        pendingFinalizeRef.current = false;
         recognitionRef.current?.stop?.();
       } catch {
         // ignore
@@ -935,10 +982,8 @@ const MainList: React.FC = () => {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Voice: pointer-only press and hold */}
           <button
             onPointerDown={(e) => {
-              // Only primary pointer, avoid weird multi pointers
               if ((e as any).isPrimary === false) return;
               e.preventDefault();
               startHoldListening();
@@ -948,16 +993,14 @@ const MainList: React.FC = () => {
               e.preventDefault();
               stopHoldListeningAndSend();
             }}
-            onPointerCancel={() => {
-              stopHoldListeningAndSend();
-            }}
+            onPointerCancel={() => stopHoldListeningAndSend()}
             onPointerLeave={() => {
               if (holdingRef.current) stopHoldListeningAndSend();
             }}
             className={`p-2 rounded-full select-none ${
               isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
             }`}
-            title={isListening ? "מדבר עכשיו - שחרר כדי לשלוח" : "לחיצה רציפה כדי לדבר"}
+            title={isListening ? "מקשיב - שחרר כדי לשלוח" : "לחץ והחזק כדי לדבר"}
           >
             <Mic className="w-5 h-5" />
           </button>
@@ -970,11 +1013,7 @@ const MainList: React.FC = () => {
             <Trash2 className="w-5 h-5" />
           </button>
 
-          <button
-            onClick={shareInviteLinkSystem}
-            className="p-2 text-slate-400 hover:text-indigo-600"
-            title="הזמן חבר"
-          >
+          <button onClick={shareInviteLinkSystem} className="p-2 text-slate-400 hover:text-indigo-600" title="הזמן חבר">
             {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
           </button>
         </div>
@@ -990,11 +1029,11 @@ const MainList: React.FC = () => {
         </button>
       </header>
 
-      {/* Voice status line */}
+      {/* Voice status */}
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
-            {isListening ? "מקשיב עכשיו - שחרר כדי לשלוח" : "לחץ והחזק על המיקרופון כדי לדבר"}
+            {voiceStatus ? voiceStatus : "לחץ והחזק על המיקרופון, דבר, ושחרר כדי לשלוח"}
           </div>
           {lastHeard ? (
             <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
@@ -1040,11 +1079,7 @@ const MainList: React.FC = () => {
                       dir="rtl"
                     >
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => deleteItem(item.id)}
-                          className="p-2 text-slate-300 hover:text-rose-500"
-                          title="מחק"
-                        >
+                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500" title="מחק">
                           <Trash2 className="w-4 h-4" />
                         </button>
 
@@ -1095,10 +1130,7 @@ const MainList: React.FC = () => {
                             <Trash2 className="w-4 h-4" />
                           </button>
 
-                          <div
-                            className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
-                            onClick={() => togglePurchased(item.id)}
-                          >
+                          <div className="flex items-center gap-3 flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
                             <span
                               className="text-base font-bold text-slate-500 line-through truncate text-right"
                               style={{ direction: "rtl", unicodeBidi: "plaintext" }}
@@ -1163,19 +1195,12 @@ const MainList: React.FC = () => {
                         הוסף לרשימה
                       </button>
 
-                      <button
-                        onClick={() => removeFavorite(fav.id)}
-                        className="p-2 text-slate-300 hover:text-rose-500"
-                        title="הסר ממועדפים"
-                      >
+                      <button onClick={() => removeFavorite(fav.id)} className="p-2 text-slate-300 hover:text-rose-500" title="הסר ממועדפים">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div
-                      className="flex-1 text-right font-black text-slate-700 truncate px-3"
-                      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                    >
+                    <div className="flex-1 text-right font-black text-slate-700 truncate px-3" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
                       {fav.name}
                     </div>
 
@@ -1188,7 +1213,7 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom area: Share button + bottom nav */}
+      {/* Bottom area */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="flex justify-start mb-2" dir="ltr">
@@ -1211,11 +1236,7 @@ const MainList: React.FC = () => {
                 }`}
                 title="מועדפים"
               >
-                <Star
-                  className={`w-7 h-7 ${
-                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
-                  }`}
-                />
+                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
                 מועדפים
               </button>
 
@@ -1234,7 +1255,7 @@ const MainList: React.FC = () => {
         </div>
       </div>
 
-      {/* Clear Confirm Modal */}
+      {/* Clear Confirm */}
       {showClearConfirm ? (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
@@ -1249,10 +1270,7 @@ const MainList: React.FC = () => {
             </div>
 
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-              >
+              <button onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
                 ביטול
               </button>
               <button onClick={clearList} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
