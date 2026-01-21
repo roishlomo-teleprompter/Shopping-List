@@ -89,11 +89,7 @@ async function signInSmart() {
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
     const code = e?.code as string | undefined;
-    if (
-      code === "auth/popup-blocked" ||
-      code === "auth/cancelled-popup-request" ||
-      code === "auth/popup-closed-by-user"
-    ) {
+    if (code === "auth/popup-blocked" || code === "auth/cancelled-popup-request" || code === "auth/popup-closed-by-user") {
       await signInWithRedirect(auth, googleProvider);
       return;
     }
@@ -293,19 +289,22 @@ function qtyFromToken(tok: string): number | null {
  * - "חמש עגבניות שני מלפפונים רסק עגבניות"
  * - "עגבניות חמש"
  * - with commas / וגם / ואז / אחר כך
+ *
+ * Plus heuristic:
+ * - If no explicit delimiters and no qty tokens and 3+ words: split by spaces into separate items
+ *   Example: "ביצים חלב עגבניה" -> 3 items
  */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
   const t = normalize(t0);
   if (!t) return [];
 
-  // First split by explicit delimiters if any
   const cleaned = t
     .replace(/\s+וגם\s+/g, ",")
     .replace(/\s+ואז\s+/g, ",")
     .replace(/\s+אחר כך\s+/g, ",")
     .replace(/\s+ואחר כך\s+/g, ",")
-    .replace(/\s+ו\s+/g, ","); // "ו" באמצע משפט - עדיף לפצל
+    .replace(/\s+ו\s+/g, ",");
 
   const hasComma = cleaned.includes(",") || cleaned.includes("\n");
 
@@ -322,13 +321,20 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
     const words = seg.split(" ").filter(Boolean);
     if (words.length === 0) continue;
 
-    // If there are multiple qty markers in one segment, scan and split by qty tokens
     const qtyPositions = words
       .map((w, i) => (isQtyToken(w) ? i : -1))
       .filter((i) => i >= 0);
 
+    // Heuristic split: no delimiters, no qty, and 3+ tokens -> treat as separate items
+    if (!hasComma && qtyPositions.length === 0 && segments.length === 1 && words.length >= 3) {
+      for (const w of words) {
+        const name = (w || "").trim();
+        if (name) out.push({ name, qty: 1 });
+      }
+      continue;
+    }
+
     if (qtyPositions.length >= 2) {
-      // Example: "חמש עגבניות שני מלפפונים רסק עגבניות"
       let i = 0;
       while (i < words.length) {
         if (isQtyToken(words[i]) && i + 1 < words.length) {
@@ -342,7 +348,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
           const name = nameParts.join(" ").trim();
           if (name) out.push({ name, qty: q });
         } else {
-          // gather until next qty as qty=1
           const nameParts: string[] = [];
           while (i < words.length && !isQtyToken(words[i])) {
             nameParts.push(words[i]);
@@ -355,7 +360,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // Single qty token maybe at start
     if (isQtyToken(words[0]) && words.length >= 2) {
       const q = Math.max(1, qtyFromToken(words[0]) || 1);
       const name = words.slice(1).join(" ").trim();
@@ -363,7 +367,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // Single qty token maybe at end: "עגבניות חמש"
     if (words.length >= 2 && isQtyToken(words[words.length - 1])) {
       const q = Math.max(1, qtyFromToken(words[words.length - 1]) || 1);
       const name = words.slice(0, -1).join(" ").trim();
@@ -371,11 +374,9 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // Default
     out.push({ name: seg.trim(), qty: 1 });
   }
 
-  // Clean names
   return out
     .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
     .filter((x) => x.name.length > 0);
@@ -406,10 +407,11 @@ const MainList: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const holdActiveRef = useRef<boolean>(false);
   const transcriptBufferRef = useRef<string[]>([]);
+  const lastInterimRef = useRef<string>(""); // NEW: fallback if no final arrives
+  const startGuardRef = useRef<boolean>(false); // NEW: prevent double restart loops
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
 
-  // Keep latest listId/items for callbacks
   useEffect(() => {
     latestListIdRef.current = list?.id ?? null;
   }, [list?.id]);
@@ -418,7 +420,6 @@ const MainList: React.FC = () => {
     latestItemsRef.current = items;
   }, [items]);
 
-  // Auto-hide toast
   useEffect(() => {
     if (!toast) return;
     const t = setTimeout(() => setToast(null), 2500);
@@ -621,7 +622,6 @@ const MainList: React.FC = () => {
     }
   };
 
-  // Invite
   const generateInviteTokenAndLink = async () => {
     if (!user) {
       await signInSmart();
@@ -662,7 +662,6 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // WhatsApp share
   const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
@@ -733,14 +732,16 @@ const MainList: React.FC = () => {
     const text = normalize(raw);
     if (!text) return;
 
-    // Clear list commands
-    if (text.includes("מחק רשימה") || (text.includes("מחק") && text.includes("הכל")) || (text.includes("נקה") && text.includes("רשימה"))) {
+    if (
+      text.includes("מחק רשימה") ||
+      (text.includes("מחק") && text.includes("הכל")) ||
+      (text.includes("נקה") && text.includes("רשימה"))
+    ) {
       await clearList();
       setToast("הרשימה נמחקה");
       return;
     }
 
-    // Delete item: "מחק חלב"
     if (/^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(text)) {
       const name = text.replace(/^(מחק|תמחק|תמחוק|תמחקי)\s+/, "").trim();
       const item = findItemByName(name);
@@ -753,7 +754,6 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Mark purchased: "סמן חלב נקנה"
     const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
     if (buyMatch) {
       const name = buyMatch[2].trim();
@@ -767,7 +767,6 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Increase / decrease
     const incMatch = text.match(/^(הגדל|תגדיל|תגדילי)\s+(.+)$/);
     if (incMatch) {
       const name = incMatch[2].trim();
@@ -786,7 +785,6 @@ const MainList: React.FC = () => {
       return setToast(`הקטנתי: ${item.name}`);
     }
 
-    // ADD: with or without "הוסף"
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
@@ -824,14 +822,15 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Reset buffer
     transcriptBufferRef.current = [];
+    lastInterimRef.current = "";
+    startGuardRef.current = false;
+
     holdActiveRef.current = true;
     setLastHeard("");
     setIsListening(true);
     setToast("דבר עכשיו - שחרר כדי לבצע");
 
-    // clean previous instance
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -860,14 +859,19 @@ const MainList: React.FC = () => {
 
           if (r.isFinal) {
             transcriptBufferRef.current.push(transcript);
+            lastInterimRef.current = "";
           } else {
             interimCombined = transcript;
+            lastInterimRef.current = transcript;
           }
         }
 
         const last =
           interimCombined ||
-          (transcriptBufferRef.current.length ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1] : "");
+          (transcriptBufferRef.current.length
+            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
+            : "");
+
         if (last) setLastHeard(last);
       } catch {
         // ignore
@@ -888,14 +892,24 @@ const MainList: React.FC = () => {
     };
 
     rec.onend = () => {
-      // On mobile it may stop by itself. If still holding, restart.
-      if (holdActiveRef.current) {
+      if (!holdActiveRef.current) return;
+
+      if (startGuardRef.current) return;
+      startGuardRef.current = true;
+
+      setTimeout(() => {
+        if (!holdActiveRef.current) {
+          startGuardRef.current = false;
+          return;
+        }
         try {
           rec.start();
         } catch {
           // ignore
+        } finally {
+          startGuardRef.current = false;
         }
-      }
+      }, 150);
     };
 
     try {
@@ -920,8 +934,12 @@ const MainList: React.FC = () => {
       // ignore
     }
 
-    const combined = transcriptBufferRef.current.join(", ").trim();
+    const finalText = transcriptBufferRef.current.join(", ").trim();
+    const interimText = (lastInterimRef.current || "").trim();
+    const combined = (finalText || interimText).trim();
+
     transcriptBufferRef.current = [];
+    lastInterimRef.current = "";
 
     if (!combined) {
       setToast("לא נקלט קול - נסה שוב");
@@ -937,7 +955,6 @@ const MainList: React.FC = () => {
     }
   };
 
-  // stop recognition when unmount
   useEffect(() => {
     return () => {
       try {
@@ -987,10 +1004,8 @@ const MainList: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
-      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Hold-to-talk Voice button */}
           <button
             onPointerDown={(e) => {
               e.preventDefault();
@@ -1005,11 +1020,26 @@ const MainList: React.FC = () => {
               stopHoldListening();
             }}
             onPointerLeave={(e) => {
-              // if user drags finger away while holding
               if (holdActiveRef.current) {
                 e.preventDefault();
                 stopHoldListening();
               }
+            }}
+            onTouchStart={(e) => {
+              e.preventDefault();
+              startHoldListening();
+            }}
+            onTouchEnd={(e) => {
+              e.preventDefault();
+              stopHoldListening();
+            }}
+            onMouseDown={(e) => {
+              e.preventDefault();
+              startHoldListening();
+            }}
+            onMouseUp={(e) => {
+              e.preventDefault();
+              stopHoldListening();
             }}
             style={{ touchAction: "none" }}
             className={`p-2 rounded-full ${
@@ -1020,11 +1050,7 @@ const MainList: React.FC = () => {
             {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
-          <button
-            onClick={() => setShowClearConfirm(true)}
-            className="p-2 text-slate-400 hover:text-rose-500"
-            title="נקה רשימה"
-          >
+          <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
             <Trash2 className="w-5 h-5" />
           </button>
 
@@ -1044,7 +1070,6 @@ const MainList: React.FC = () => {
         </button>
       </header>
 
-      {/* Voice hint */}
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
@@ -1056,12 +1081,11 @@ const MainList: React.FC = () => {
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "חמש עגבניות שני מלפפונים רסק עגבניות" | "מחק חלב" | "מחק רשימה"
+            דוגמאות: "ביצים חלב עגבניה" | "ביצים, חלב, עגבניה" | "מחק חלב" | "מחק רשימה"
           </div>
         </div>
       </div>
 
-      {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === "list" ? (
           <>
@@ -1097,11 +1121,7 @@ const MainList: React.FC = () => {
                       dir="rtl"
                     >
                       <div className="flex items-center gap-2">
-                        <button
-                          onClick={() => deleteItem(item.id)}
-                          className="p-2 text-slate-300 hover:text-rose-500"
-                          title="מחק"
-                        >
+                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500" title="מחק">
                           <Trash2 className="w-4 h-4" />
                         </button>
 
@@ -1152,10 +1172,7 @@ const MainList: React.FC = () => {
                             <Trash2 className="w-4 h-4" />
                           </button>
 
-                          <div
-                            className="flex items-center gap-3 flex-1 justify-end cursor-pointer"
-                            onClick={() => togglePurchased(item.id)}
-                          >
+                          <div className="flex items-center gap-3 flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
                             <span
                               className="text-base font-bold text-slate-500 line-through truncate text-right"
                               style={{ direction: "rtl", unicodeBidi: "plaintext" }}
@@ -1220,19 +1237,12 @@ const MainList: React.FC = () => {
                         הוסף לרשימה
                       </button>
 
-                      <button
-                        onClick={() => removeFavorite(fav.id)}
-                        className="p-2 text-slate-300 hover:text-rose-500"
-                        title="הסר ממועדפים"
-                      >
+                      <button onClick={() => removeFavorite(fav.id)} className="p-2 text-slate-300 hover:text-rose-500" title="הסר ממועדפים">
                         <Trash2 className="w-4 h-4" />
                       </button>
                     </div>
 
-                    <div
-                      className="flex-1 text-right font-black text-slate-700 truncate px-3"
-                      style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                    >
+                    <div className="flex-1 text-right font-black text-slate-700 truncate px-3" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
                       {fav.name}
                     </div>
 
@@ -1245,7 +1255,6 @@ const MainList: React.FC = () => {
         )}
       </main>
 
-      {/* Bottom area: Share button + bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="flex justify-start mb-2" dir="ltr">
@@ -1268,11 +1277,7 @@ const MainList: React.FC = () => {
                 }`}
                 title="מועדפים"
               >
-                <Star
-                  className={`w-7 h-7 ${
-                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
-                  }`}
-                />
+                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
                 מועדפים
               </button>
 
@@ -1291,7 +1296,6 @@ const MainList: React.FC = () => {
         </div>
       </div>
 
-      {/* Clear Confirm Modal */}
       {showClearConfirm ? (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
@@ -1306,10 +1310,7 @@ const MainList: React.FC = () => {
             </div>
 
             <div className="flex gap-3">
-              <button
-                onClick={() => setShowClearConfirm(false)}
-                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-              >
+              <button onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
                 ביטול
               </button>
               <button onClick={clearList} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
