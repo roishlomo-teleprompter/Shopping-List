@@ -48,6 +48,18 @@ import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from "./firebase.ts";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
+/**
+ * Force Firebase auth persistence to LOCAL (so you won't need to login every time).
+ * Runs once on module load.
+ */
+(async () => {
+  try {
+    await setPersistence(auth, browserLocalPersistence);
+  } catch {
+    // ignore
+  }
+})();
+
 // ---------------------------
 // Helpers
 // ---------------------------
@@ -109,11 +121,6 @@ const InvitePage: React.FC = () => {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  // remember me
-  useEffect(() => {
-    setPersistence(auth, browserLocalPersistence).catch(() => {});
-  }, []);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -218,19 +225,167 @@ const InvitePage: React.FC = () => {
 // Main List
 // ---------------------------
 type FavoriteDoc = {
-  id: string;
+  id: string; // itemId
   name: string;
   createdAt: number;
 };
 
-type VoiceMode = "continuous" | "once";
+type VoiceMode = "hold_to_talk"; // נשמור מקום להרחבות
 
-const TRANSCRIBE_URL = "https://us-central1-shopping-list-218bd.cloudfunctions.net/transcribeAudio";
+const HEB_NUMBER_WORDS: Record<string, number> = {
+  "אחד": 1,
+  "אחת": 1,
+  "שני": 2,
+  "שניים": 2,
+  "שתיים": 2,
+  "שתים": 2,
+  "שתי": 2,
+  "שלוש": 3,
+  "שלושה": 3,
+  "ארבע": 4,
+  "ארבעה": 4,
+  "חמש": 5,
+  "חמישה": 5,
+  "שש": 6,
+  "שישה": 6,
+  "שבע": 7,
+  "שבעה": 7,
+  "שמונה": 8,
+  "תשע": 9,
+  "תשעה": 9,
+  "עשר": 10,
+  "עשרה": 10,
+};
+
+const normalize = (s: string) =>
+  (s || "")
+    .trim()
+    .toLowerCase()
+    .replace(/[״"']/g, "")
+    .replace(/\s+/g, " ");
+
+const normalizeVoiceText = (s: string) => {
+  const t = (s || "").trim();
+  return t
+    .replace(/[.?!]/g, " ")
+    .replace(/，/g, ",")
+    .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+};
+
+function isQtyToken(tok: string) {
+  if (!tok) return false;
+  if (/^\d+$/.test(tok)) return true;
+  return HEB_NUMBER_WORDS[tok] != null;
+}
+
+function qtyFromToken(tok: string): number | null {
+  if (!tok) return null;
+  if (/^\d+$/.test(tok)) return Number(tok);
+  const n = HEB_NUMBER_WORDS[tok];
+  return n != null ? n : null;
+}
+
+/**
+ * Parse a phrase into multiple items.
+ * Supports:
+ * - "חמש עגבניות שני מלפפונים רסק עגבניות"
+ * - "עגבניות חמש"
+ * - with commas / וגם / ואז / אחר כך
+ */
+function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
+  const t0 = normalizeVoiceText(raw);
+  const t = normalize(t0);
+  if (!t) return [];
+
+  // First split by explicit delimiters if any
+  const cleaned = t
+    .replace(/\s+וגם\s+/g, ",")
+    .replace(/\s+ואז\s+/g, ",")
+    .replace(/\s+אחר כך\s+/g, ",")
+    .replace(/\s+ואחר כך\s+/g, ",")
+    .replace(/\s+ו\s+/g, ","); // "ו" באמצע משפט - עדיף לפצל
+
+  const hasComma = cleaned.includes(",") || cleaned.includes("\n");
+
+  const segments = hasComma
+    ? cleaned
+        .split(/,|\n/)
+        .map((s) => s.trim())
+        .filter(Boolean)
+    : [cleaned];
+
+  const out: Array<{ name: string; qty: number }> = [];
+
+  for (const seg of segments) {
+    const words = seg.split(" ").filter(Boolean);
+    if (words.length === 0) continue;
+
+    // If there are multiple qty markers in one segment, scan and split by qty tokens
+    const qtyPositions = words
+      .map((w, i) => (isQtyToken(w) ? i : -1))
+      .filter((i) => i >= 0);
+
+    if (qtyPositions.length >= 2) {
+      // Example: "חמש עגבניות שני מלפפונים רסק עגבניות"
+      let i = 0;
+      while (i < words.length) {
+        if (isQtyToken(words[i]) && i + 1 < words.length) {
+          const q = Math.max(1, qtyFromToken(words[i]) || 1);
+          i++;
+          const nameParts: string[] = [];
+          while (i < words.length && !isQtyToken(words[i])) {
+            nameParts.push(words[i]);
+            i++;
+          }
+          const name = nameParts.join(" ").trim();
+          if (name) out.push({ name, qty: q });
+        } else {
+          // gather until next qty as qty=1
+          const nameParts: string[] = [];
+          while (i < words.length && !isQtyToken(words[i])) {
+            nameParts.push(words[i]);
+            i++;
+          }
+          const name = nameParts.join(" ").trim();
+          if (name) out.push({ name, qty: 1 });
+        }
+      }
+      continue;
+    }
+
+    // Single qty token maybe at start
+    if (isQtyToken(words[0]) && words.length >= 2) {
+      const q = Math.max(1, qtyFromToken(words[0]) || 1);
+      const name = words.slice(1).join(" ").trim();
+      if (name) out.push({ name, qty: q });
+      continue;
+    }
+
+    // Single qty token maybe at end: "עגבניות חמש"
+    if (words.length >= 2 && isQtyToken(words[words.length - 1])) {
+      const q = Math.max(1, qtyFromToken(words[words.length - 1]) || 1);
+      const name = words.slice(0, -1).join(" ").trim();
+      if (name) out.push({ name, qty: q });
+      continue;
+    }
+
+    // Default
+    out.push({ name: seg.trim(), qty: 1 });
+  }
+
+  // Clean names
+  return out
+    .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
+    .filter((x) => x.name.length > 0);
+}
 
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
@@ -242,20 +397,19 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Voice UX
-  const [isRecording, setIsRecording] = useState(false);
-  const [voiceMode, setVoiceMode] = useState<VoiceMode>("continuous");
+  // Voice UI + state
+  const [isListening, setIsListening] = useState(false);
+  const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
 
-  const mediaStreamRef = useRef<MediaStream | null>(null);
-  const recorderRef = useRef<MediaRecorder | null>(null);
-  const chunksRef = useRef<BlobPart[]>([]);
-  const pressActiveRef = useRef<boolean>(false);
-
+  const recognitionRef = useRef<any>(null);
+  const holdActiveRef = useRef<boolean>(false);
+  const transcriptBufferRef = useRef<string[]>([]);
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
 
+  // Keep latest listId/items for callbacks
   useEffect(() => {
     latestListIdRef.current = list?.id ?? null;
   }, [list?.id]);
@@ -264,10 +418,12 @@ const MainList: React.FC = () => {
     latestItemsRef.current = items;
   }, [items]);
 
-  // remember me (fix repeated login)
+  // Auto-hide toast
   useEffect(() => {
-    setPersistence(auth, browserLocalPersistence).catch(() => {});
-  }, []);
+    if (!toast) return;
+    const t = setTimeout(() => setToast(null), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
@@ -506,7 +662,7 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
-  // WhatsApp share: אם quantity=1 לא להדפיס כמות
+  // WhatsApp share
   const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
@@ -533,74 +689,14 @@ const MainList: React.FC = () => {
   };
 
   // ---------------------------
-  // Voice (Whisper via Cloud Function)
+  // Voice actions (NO server, only SpeechRecognition)
   // ---------------------------
-  const normalize = (s: string) =>
-    (s || "")
-      .trim()
-      .toLowerCase()
-      .replace(/[״"']/g, "")
-      .replace(/\s+/g, " ");
-
-  const normalizeVoiceText = (s: string) => {
-    const t = (s || "").trim();
-    return t
-      .replace(/[.?!]/g, " ")
-      .replace(/，/g, ",")
-      .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
-      .replace(/\s+/g, " ")
-      .trim();
-  };
-
-  const HEB_NUMBER_WORDS: Record<string, number> = {
-    "אחד": 1, "אחת": 1,
-    "שני": 2, "שניים": 2, "שתיים": 2, "שתים": 2, "שתי": 2,
-    "שלוש": 3, "שלושה": 3,
-    "ארבע": 4, "ארבעה": 4,
-    "חמש": 5, "חמישה": 5,
-    "שש": 6, "שישה": 6,
-    "שבע": 7, "שבעה": 7,
-    "שמונה": 8,
-    "תשע": 9, "תשעה": 9,
-    "עשר": 10, "עשרה": 10,
-  };
-
-  const tryParseQtyAndName = (phrase: string): { qty: number | null; name: string } => {
-    const p = normalizeVoiceText(phrase);
-    const parts = p.split(" ").filter(Boolean);
-    if (parts.length < 2) return { qty: null, name: p };
-
-    const first = parts[0];
-    const numFromDigit = /^\d+$/.test(first) ? Number(first) : null;
-    const numFromWord = HEB_NUMBER_WORDS[first] ?? null;
-    const qty = numFromDigit ?? numFromWord;
-
-    if (!qty) return { qty: null, name: p };
-    const name = parts.slice(1).join(" ").trim();
-    return { qty: Math.max(1, qty), name };
-  };
-
   const findItemByName = (name: string) => {
     const n = normalize(name);
     const exact = items.find((i) => normalize(i.name) === n);
     if (exact) return exact;
     const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
     return contains || null;
-  };
-
-  const splitByDelimiters = (t: string) => {
-    const cleaned = t
-      .replace(/\s+וגם\s+/g, ",")
-      .replace(/\s+ואז\s+/g, ",")
-      .replace(/\s+אחר כך\s+/g, ",")
-      .replace(/\s+ואחר כך\s+/g, ",")
-      .replace(/\s+,\s+/g, ",")
-      .trim();
-
-    return cleaned
-      .split(/,|\n/)
-      .map((s) => s.trim())
-      .filter(Boolean);
   };
 
   const addOrSetQuantity = async (nameRaw: string, qty: number) => {
@@ -614,7 +710,6 @@ const MainList: React.FC = () => {
     const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
     if (existing) {
       await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: qty });
-      setToast(`עודכן ${existing.name} לכמות ${qty}`);
       return;
     }
 
@@ -629,297 +724,228 @@ const MainList: React.FC = () => {
     };
 
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
-    setToast(`הוספתי ${name}`);
   };
 
-  const addOrIncrement = async (nameRaw: string) => {
+  const executeVoiceText = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) return;
 
-    const itemsNow = latestItemsRef.current || items;
-    const name = nameRaw.trim();
-    if (!name) return;
-
-    const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
-    if (existing) {
-      await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: Math.max(1, (existing.quantity || 1) + 1) });
-      setToast(`הגדלתי ${existing.name}`);
-      return;
-    }
-
-    const itemId = crypto.randomUUID();
-    const newItem: ShoppingItem = {
-      id: itemId,
-      name,
-      quantity: 1,
-      isPurchased: false,
-      isFavorite: false,
-      createdAt: Date.now(),
-    };
-    await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
-    setToast(`הוספתי ${name}`);
-  };
-
-  const executeVoiceCommand = async (raw: string) => {
-    const listId = latestListIdRef.current || list?.id;
-    if (!listId) return;
-
-    const itemsNow = latestItemsRef.current || items;
     const text = normalize(raw);
     if (!text) return;
 
-    // שינוי מצב
-    if (text.includes("מצב רציף") || text === "רציף") {
-      setVoiceMode("continuous");
-      setToast("מצב רציף הופעל");
-      return;
-    }
-    if (text.includes("מצב חד פעמי") || text.includes("חד פעמי") || text === "חד") {
-      setVoiceMode("once");
-      setToast("מצב חד פעמי הופעל");
-      return;
-    }
-
-    // ניווט טאבים (לא חובה, אבל נשאיר)
-    if (text.includes("מועדפים") || text.includes("פייבוריט")) {
-      setActiveTab("favorites");
-      setToast("עברתי למועדפים");
-      return;
-    }
-    if (text === "רשימה" || text.includes("לעבור לרשימה")) {
-      setActiveTab("list");
-      setToast("עברתי לרשימה");
-      return;
-    }
-
-    // מחק רשימה / נקה רשימה
-    if (text.includes("מחק רשימה") || (text.includes("נקה") && text.includes("רשימה"))) {
+    // Clear list commands
+    if (text.includes("מחק רשימה") || (text.includes("מחק") && text.includes("הכל")) || (text.includes("נקה") && text.includes("רשימה"))) {
       await clearList();
       setToast("הרשימה נמחקה");
       return;
     }
 
-    // הוסף עם כמות מספרית
-    const addMatch = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(\d+)\s+(.+)$/);
-    if (addMatch) {
-      const qty = Math.max(1, Number(addMatch[2]));
-      const name = addMatch[3].trim();
-      if (!name) return;
-      await addOrSetQuantity(name, qty);
-      return;
-    }
-
-    // הוסף פשוט
-    const addSimple = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
-    if (addSimple) {
-      const rest = addSimple[2].trim();
-      if (!rest) return;
-
-      for (const part of splitByDelimiters(rest)) {
-        const parsed = tryParseQtyAndName(part);
-        if (parsed.qty) await addOrSetQuantity(parsed.name, parsed.qty);
-        else await addOrIncrement(part);
-      }
-      return;
-    }
-
-    // מחק פריט
-    const delMatch = text.match(/^(מחק|תמחק|תמחוק|תמחקי)\s+(.+)$/);
-    if (delMatch) {
-      const name = delMatch[2].trim();
+    // Delete item: "מחק חלב"
+    if (/^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(text)) {
+      const name = text.replace(/^(מחק|תמחק|תמחוק|תמחקי)\s+/, "").trim();
       const item = findItemByName(name);
       if (!item) {
-        setToast("לא מצאתי את הפריט למחיקה");
+        setToast("לא מצאתי פריט למחיקה");
         return;
       }
       await deleteItem(item.id);
-      setToast(`מחקתי ${item.name}`);
+      setToast(`מחקתי: ${item.name}`);
       return;
     }
 
-    // אם הגיע רק "חמש עגבניות" בלי פועל
-    const parsed = tryParseQtyAndName(text);
-    if (parsed.qty) {
-      await addOrSetQuantity(parsed.name, parsed.qty);
+    // Mark purchased: "סמן חלב נקנה"
+    const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
+    if (buyMatch) {
+      const name = buyMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        setToast("לא מצאתי פריט לסימון");
+        return;
+      }
+      if (!item.isPurchased) await togglePurchased(item.id);
+      setToast(`סימנתי נקנה: ${item.name}`);
       return;
     }
 
-    // אחרת: תוסיף כפריט יחיד
-    await addOrIncrement(text);
+    // Increase / decrease
+    const incMatch = text.match(/^(הגדל|תגדיל|תגדילי)\s+(.+)$/);
+    if (incMatch) {
+      const name = incMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) return setToast("לא מצאתי פריט להגדלה");
+      await updateQty(item.id, 1);
+      return setToast(`הגדלתי: ${item.name}`);
+    }
+
+    const decMatch = text.match(/^(הקטן|תקטין|תקטיני)\s+(.+)$/);
+    if (decMatch) {
+      const name = decMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) return setToast("לא מצאתי פריט להקטנה");
+      await updateQty(item.id, -1);
+      return setToast(`הקטנתי: ${item.name}`);
+    }
+
+    // ADD: with or without "הוסף"
+    const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
+    const payload = addPrefix ? addPrefix[2] : text;
+
+    const parsed = parseItemsFromText(payload);
+    if (parsed.length === 0) return;
+
+    for (const p of parsed) {
+      await addOrSetQuantity(p.name, p.qty);
+    }
+
+    if (parsed.length === 1) {
+      const p = parsed[0];
+      setToast(p.qty > 1 ? `הוספתי: ${p.name} x${p.qty}` : `הוספתי: ${p.name}`);
+    } else {
+      setToast(`הוספתי ${parsed.length} פריטים`);
+    }
   };
 
-  const executeVoiceCommandsFromText = async (t: string) => {
-    const text = normalizeVoiceText(t);
-    if (!text) return;
+  const ensureSpeechRecognition = () => {
+    const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SR) return null;
+    return SR;
+  };
 
-    // פיצול לפי מפרידים, כדי שרצף פריטים יעבוד
-    const parts = splitByDelimiters(text);
-
-    // אם אין מפרידים, עדיין יכול להיות משפט אחד
-    if (parts.length <= 1) {
-      await executeVoiceCommand(text);
+  const startHoldListening = () => {
+    const SR = ensureSpeechRecognition();
+    if (!SR) {
+      alert("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.");
       return;
     }
 
-    // במצב רציף: כל חלק נפרד הוא פקודה/פריט
-    for (const p of parts) {
-      await executeVoiceCommand(p);
-    }
-  };
-
-  const fetchTranscribe = async (audioBlob: Blob) => {
-    const form = new FormData();
-    const file = new File([audioBlob], "audio.webm", { type: audioBlob.type || "audio/webm" });
-    form.append("file", file);
-
-    const res = await fetch(TRANSCRIBE_URL, { method: "POST", body: form });
-
-    if (!res.ok) {
-      const errText = await res.text().catch(() => "");
-      throw new Error(`Transcribe failed (${res.status}) ${errText}`.trim());
+    if (!user) {
+      setToast("צריך להתחבר לפני פקודות קוליות");
+      signInSmart();
+      return;
     }
 
-    const ct = (res.headers.get("content-type") || "").toLowerCase();
-    if (ct.includes("application/json")) {
-      const j: any = await res.json();
-      const text =
-        String(j?.text ?? j?.transcript ?? j?.result ?? j?.data?.text ?? j?.data?.transcript ?? "").trim();
-      return text;
+    // Reset buffer
+    transcriptBufferRef.current = [];
+    holdActiveRef.current = true;
+    setLastHeard("");
+    setIsListening(true);
+    setToast("דבר עכשיו - שחרר כדי לבצע");
+
+    // clean previous instance
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch {
+        // ignore
+      }
+      recognitionRef.current = null;
     }
 
-    return (await res.text()).trim();
-  };
+    const rec = new SR();
+    recognitionRef.current = rec;
 
-  const stopAndCleanupRecorder = () => {
+    rec.lang = "he-IL";
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.continuous = true;
+
+    rec.onresult = (event: any) => {
+      try {
+        let interimCombined = "";
+        for (let i = event.resultIndex; i < event.results.length; i++) {
+          const r = event.results[i];
+          const best = r?.[0];
+          const transcript = normalizeVoiceText(String(best?.transcript || ""));
+          if (!transcript) continue;
+
+          if (r.isFinal) {
+            transcriptBufferRef.current.push(transcript);
+          } else {
+            interimCombined = transcript;
+          }
+        }
+
+        const last =
+          interimCombined ||
+          (transcriptBufferRef.current.length ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1] : "");
+        if (last) setLastHeard(last);
+      } catch {
+        // ignore
+      }
+    };
+
+    rec.onerror = (e: any) => {
+      const err = String(e?.error || "");
+      console.error("Speech error", e);
+      setIsListening(false);
+      holdActiveRef.current = false;
+
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+      } else {
+        setToast(`שגיאת מיקרופון: ${err || "unknown"}`);
+      }
+    };
+
+    rec.onend = () => {
+      // On mobile it may stop by itself. If still holding, restart.
+      if (holdActiveRef.current) {
+        try {
+          rec.start();
+        } catch {
+          // ignore
+        }
+      }
+    };
+
     try {
-      recorderRef.current?.stop();
+      rec.start();
+    } catch (e) {
+      console.error(e);
+      setIsListening(false);
+      holdActiveRef.current = false;
+      setToast("לא הצלחתי להתחיל האזנה");
+    }
+  };
+
+  const stopHoldListening = async () => {
+    if (!holdActiveRef.current) return;
+
+    holdActiveRef.current = false;
+    setIsListening(false);
+
+    try {
+      recognitionRef.current?.stop?.();
     } catch {
       // ignore
     }
-  };
 
-  const ensureMicStream = async () => {
-    if (mediaStreamRef.current) return mediaStreamRef.current;
+    const combined = transcriptBufferRef.current.join(", ").trim();
+    transcriptBufferRef.current = [];
 
-    const stream = await navigator.mediaDevices.getUserMedia({
-      audio: {
-        echoCancellation: true,
-        noiseSuppression: true,
-        autoGainControl: true,
-      } as any,
-      video: false,
-    });
-
-    mediaStreamRef.current = stream;
-    return stream;
-  };
-
-  const startRecordPress = async () => {
-    if (isRecording) return;
-
-    if (!user) {
-      await signInSmart();
+    if (!combined) {
+      setToast("לא נקלט קול - נסה שוב");
       return;
     }
 
-    pressActiveRef.current = true;
-    setToast("מקליט... דבר ושחרר לשליחה");
-    setLastHeard("");
-
+    setToast("מבצע...");
     try {
-      const stream = await ensureMicStream();
-
-      chunksRef.current = [];
-      const mimeCandidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
-      let mimeType = "";
-      for (const m of mimeCandidates) {
-        if ((window as any).MediaRecorder?.isTypeSupported?.(m)) {
-          mimeType = m;
-          break;
-        }
-      }
-
-      const rec = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      recorderRef.current = rec;
-
-      rec.ondataavailable = (e: any) => {
-        if (e?.data && e.data.size > 0) chunksRef.current.push(e.data);
-      };
-
-      rec.onstart = () => setIsRecording(true);
-
-      rec.onstop = async () => {
-        setIsRecording(false);
-
-        // אם המשתמש כבר עזב לחיצה ובינתיים לא נאסף כלום
-        if (!chunksRef.current.length) {
-          setToast("לא נקלט אודיו. נסה שוב");
-          return;
-        }
-
-        const blob = new Blob(chunksRef.current, { type: rec.mimeType || "audio/webm" });
-        chunksRef.current = [];
-
-        try {
-          setToast("שולח לתמלול...");
-          const text = await fetchTranscribe(blob);
-          const cleaned = normalizeVoiceText(text);
-          setLastHeard(cleaned || "");
-          if (!cleaned) {
-            setToast("לא זוהה דיבור. נסה שוב");
-            return;
-          }
-          setToast("מבצע פקודות...");
-          await executeVoiceCommandsFromText(cleaned);
-
-          if (voiceMode === "once") {
-            setToast("בוצע");
-          } else {
-            setToast("בוצע. אפשר להחזיק שוב לפקודה נוספת");
-          }
-        } catch (e: any) {
-          console.error(e);
-          setToast(`שגיאה בתמלול: ${String(e?.message || e || "")}`);
-        }
-      };
-
-      rec.start(200);
+      await executeVoiceText(combined);
     } catch (e: any) {
       console.error(e);
-      setIsRecording(false);
-
-      const msg = String(e?.name || e?.message || "");
-      if (msg.includes("NotAllowedError") || msg.includes("Permission")) {
-        alert("אין הרשאה למיקרופון. אשר הרשאה בדפדפן ואז נסה שוב.");
-      } else {
-        alert("לא הצלחתי לפתוח מיקרופון. ודא שאין אפליקציה אחרת שתופסת אותו.");
-      }
+      setToast(`שגיאה: ${String(e?.message || e || "")}`);
     }
   };
 
-  const endRecordPress = () => {
-    if (!pressActiveRef.current) return;
-    pressActiveRef.current = false;
-
-    if (!isRecording) return;
-    setToast("מסיים הקלטה...");
-    stopAndCleanupRecorder();
-  };
-
-  // cleanup on unmount
+  // stop recognition when unmount
   useEffect(() => {
     return () => {
       try {
-        recorderRef.current?.stop();
+        holdActiveRef.current = false;
+        recognitionRef.current?.stop?.();
       } catch {
         // ignore
       }
-      try {
-        mediaStreamRef.current?.getTracks?.().forEach((t) => t.stop());
-      } catch {
-        // ignore
-      }
-      mediaStreamRef.current = null;
     };
   }, []);
 
@@ -964,31 +990,34 @@ const MainList: React.FC = () => {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Voice press and hold */}
+          {/* Hold-to-talk Voice button */}
           <button
             onPointerDown={(e) => {
               e.preventDefault();
-              startRecordPress();
+              startHoldListening();
             }}
             onPointerUp={(e) => {
               e.preventDefault();
-              endRecordPress();
+              stopHoldListening();
             }}
             onPointerCancel={(e) => {
               e.preventDefault();
-              endRecordPress();
+              stopHoldListening();
             }}
             onPointerLeave={(e) => {
-              e.preventDefault();
-              endRecordPress();
+              // if user drags finger away while holding
+              if (holdActiveRef.current) {
+                e.preventDefault();
+                stopHoldListening();
+              }
             }}
-            className={`p-2 rounded-full select-none touch-none ${
-              isRecording ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
+            style={{ touchAction: "none" }}
+            className={`p-2 rounded-full ${
+              isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
             }`}
-            title="לחץ והחזק כדי לדבר, שחרר לשליחה"
-            style={{ WebkitUserSelect: "none", userSelect: "none", touchAction: "none" }}
+            title={isListening ? "דבר עכשיו - שחרר כדי לבצע" : "לחץ והחזק כדי לדבר"}
           >
-            {isRecording ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
           </button>
 
           <button
@@ -999,11 +1028,7 @@ const MainList: React.FC = () => {
             <Trash2 className="w-5 h-5" />
           </button>
 
-          <button
-            onClick={shareInviteLinkSystem}
-            className="p-2 text-slate-400 hover:text-indigo-600"
-            title="הזמן חבר"
-          >
+          <button onClick={shareInviteLinkSystem} className="p-2 text-slate-400 hover:text-indigo-600" title="הזמן חבר">
             {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
           </button>
         </div>
@@ -1019,25 +1044,20 @@ const MainList: React.FC = () => {
         </button>
       </header>
 
-      {/* hint box */}
+      {/* Voice hint */}
       <div className="px-5 pt-3">
-        <div className="bg-white border border-slate-100 rounded-2xl px-4 py-3 text-right shadow-sm">
-          <div className="text-[11px] font-black text-slate-400">מיקרופון:</div>
-          <div className="text-sm font-bold text-slate-700">
-            לחץ והחזק - דבר - שחרר לשליחה
+        <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
+          <div className="text-[11px] font-black text-slate-400">
+            {isListening ? "מקשיב עכשיו - דבר ושחרר כדי לבצע" : "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע"}
           </div>
-          <div className="text-[10px] font-black text-slate-400 mt-1">
-            מצב: {voiceMode === "continuous" ? "רציף" : "חד פעמי"} (אפשר לומר: "מצב רציף" או "מצב חד פעמי")
-          </div>
-
           {lastHeard ? (
-            <div className="mt-2">
-              <div className="text-[11px] font-black text-slate-400">שמענו:</div>
-              <div className="text-sm font-bold text-slate-700" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
-                {lastHeard}
-              </div>
+            <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
+              שמענו: {lastHeard}
             </div>
           ) : null}
+          <div className="text-[10px] font-black text-slate-400 mt-1">
+            דוגמאות: "חמש עגבניות שני מלפפונים רסק עגבניות" | "מחק חלב" | "מחק רשימה"
+          </div>
         </div>
       </div>
 
@@ -1140,7 +1160,7 @@ const MainList: React.FC = () => {
                               className="text-base font-bold text-slate-500 line-through truncate text-right"
                               style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                             >
-                              {item.quantity <= 1 ? item.name : `${item.name} x${item.quantity}`}
+                              {item.name} x{item.quantity}
                             </span>
                             <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                           </div>
@@ -1313,11 +1333,6 @@ const MainList: React.FC = () => {
 // App Router
 // ---------------------------
 const App: React.FC = () => {
-  // עוד “נדנוד” קטן לפתרון התחברות חוזרת (מובייל לפעמים צריך את זה באתחול)
-  useEffect(() => {
-    setPersistence(auth, browserLocalPersistence).catch(() => {});
-  }, []);
-
   return (
     <HashRouter>
       <Routes>
