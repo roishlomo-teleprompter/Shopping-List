@@ -48,7 +48,7 @@ import { auth, db, googleProvider } from "./firebase.ts";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 // ------------------------------------
-// Force auth persistence ASAP (fix "login every time")
+// Force auth persistence ASAP
 // ------------------------------------
 try {
   setPersistence(auth, browserLocalPersistence);
@@ -258,6 +258,8 @@ const MainList: React.FC = () => {
 
   const recognitionRef = useRef<any>(null);
   const holdingRef = useRef<boolean>(false);
+  const startedRef = useRef<boolean>(false);
+  const startDelayRef = useRef<any>(null);
   const sessionPartsRef = useRef<string[]>([]);
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
@@ -270,7 +272,6 @@ const MainList: React.FC = () => {
     latestItemsRef.current = items;
   }, [items]);
 
-  // Remember me (again inside app lifecycle)
   useEffect(() => {
     try {
       setPersistence(auth, browserLocalPersistence);
@@ -596,7 +597,7 @@ const MainList: React.FC = () => {
   const toQty = (token: string): number | null => {
     const t = normalize(token);
     if (/^\d+$/.test(t)) return Math.max(1, Number(t));
-    const w = t.replace(/^ו/, ""); // "ושני" -> "שני"
+    const w = t.replace(/^ו/, "");
     if (w in HEB_NUMBER_WORDS) return HEB_NUMBER_WORDS[w];
     return null;
   };
@@ -607,27 +608,21 @@ const MainList: React.FC = () => {
       .replace(/^(פריט)\s+/g, "")
       .trim();
 
-  // Parse sentence into multiple items keeping multiword names ("רסק עגבניות")
-  // Supports:
-  // "חמש עגבניות ושני מלפפונים"
-  // "עגבניות חמש"
-  // "חלב ולחם"
   const parseItemsFromSpeech = (raw: string): Array<{ name: string; qty: number }> => {
     let t = stripVerb(raw);
     t = normalizeVoiceText(t);
 
-    // Turn common connectors into commas
     t = t
       .replace(/\s+וגם\s+/g, ",")
       .replace(/\s+ואז\s+/g, ",")
       .replace(/\s+אחר כך\s+/g, ",")
       .replace(/\s+ואחר כך\s+/g, ",");
 
-    // Split on "ו" carefully:
-    // 1) "ושני/ושתיים/וחמש" etc -> delimiter before qty-token
-    t = t.replace(/\s+ו(?=(אחד|אחת|שני|שניים|שתיים|שתים|שתי|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה|שבע|שבעה|שמונה|תשע|תשעה|עשר|עשרה|\d+)\b)/g, ",");
+    t = t.replace(
+      /\s+ו(?=(אחד|אחת|שני|שניים|שתיים|שתים|שתי|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה|שבע|שבעה|שמונה|תשע|תשעה|עשר|עשרה|\d+)\b)/g,
+      ","
+    );
 
-    // 2) Plain " ו " between names -> delimiter
     t = t.replace(/\s+ו\s+/g, ",");
 
     const chunks = t
@@ -641,7 +636,6 @@ const MainList: React.FC = () => {
       const words = c.split(/\s+/).filter(Boolean);
       if (words.length === 0) continue;
 
-      // qty at beginning
       const q1 = toQty(words[0]);
       if (q1 && words.length >= 2) {
         const name = words.slice(1).join(" ").trim();
@@ -649,7 +643,6 @@ const MainList: React.FC = () => {
         continue;
       }
 
-      // qty at end (for cases like "עגבניות חמש")
       const q2 = toQty(words[words.length - 1]);
       if (q2 && words.length >= 2) {
         const name = words.slice(0, -1).join(" ").trim();
@@ -657,11 +650,9 @@ const MainList: React.FC = () => {
         continue;
       }
 
-      // no qty -> default 1
       results.push({ name: c.trim(), qty: 1 });
     }
 
-    // Filter garbage
     return results
       .map((r) => ({ name: r.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, r.qty || 1) }))
       .filter((r) => r.name.length > 0);
@@ -698,14 +689,12 @@ const MainList: React.FC = () => {
     const text = normalize(sentence);
     if (!text) return;
 
-    // Clear list by voice
     if (text.includes("מחק רשימה") || (text.includes("נקה") && text.includes("רשימה"))) {
       await clearList();
       setToast("מחקתי את כל הרשימה");
       return;
     }
 
-    // Delete item command: "מחק חלב"
     if (/^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(text)) {
       const name = stripVerb(text);
       const item = items.find((i) => normalize(i.name) === normalize(name));
@@ -718,17 +707,13 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // Add items (with or without "הוסף")
     const parsed = parseItemsFromSpeech(sentence);
-
-    // If user says one word only, treat it as one item
     if (parsed.length === 0) return;
 
     for (const p of parsed) {
       await addOrSetQuantity(p.name, p.qty);
     }
 
-    // Friendly toast
     if (parsed.length === 1) {
       const p = parsed[0];
       setToast(p.qty === 1 ? `הוספתי ${p.name}` : `הוספתי ${p.name} (כמות ${p.qty})`);
@@ -738,8 +723,15 @@ const MainList: React.FC = () => {
   };
 
   // ---------------------------
-  // Press-and-hold voice capture
+  // Voice: pointer-only press and hold (fix Android double-events)
   // ---------------------------
+  const clearStartDelay = () => {
+    if (startDelayRef.current) {
+      clearTimeout(startDelayRef.current);
+      startDelayRef.current = null;
+    }
+  };
+
   const stopRecognizer = () => {
     try {
       recognitionRef.current?.stop?.();
@@ -748,23 +740,17 @@ const MainList: React.FC = () => {
     }
   };
 
-  const startHoldListening = () => {
+  const actuallyStartRecognizer = () => {
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) {
-      alert("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.");
+      setToast("הדפדפן לא תומך בזיהוי דיבור");
+      holdingRef.current = false;
+      startedRef.current = false;
+      setIsListening(false);
       return;
     }
 
-    // If already holding, ignore
-    if (holdingRef.current) return;
-
-    holdingRef.current = true;
-    sessionPartsRef.current = [];
-    setLastHeard("");
-    setIsListening(true);
-    setToast("דבר עכשיו - שחרר כדי לשלוח");
-
-    // Cleanup previous instance
+    // cleanup
     if (recognitionRef.current) {
       stopRecognizer();
       recognitionRef.current = null;
@@ -776,7 +762,14 @@ const MainList: React.FC = () => {
     rec.lang = "he-IL";
     rec.interimResults = false;
     rec.maxAlternatives = 1;
-    rec.continuous = true;
+
+    // In Android, continuous can be unreliable. We'll restart onend while holding.
+    rec.continuous = false;
+
+    rec.onstart = () => {
+      startedRef.current = true;
+      setIsListening(true);
+    };
 
     rec.onresult = (event: any) => {
       const ri = typeof event?.resultIndex === "number" ? event.resultIndex : 0;
@@ -794,27 +787,29 @@ const MainList: React.FC = () => {
 
     rec.onerror = (e: any) => {
       console.error("Speech error", e);
-      setIsListening(false);
-      holdingRef.current = false;
-
       const err = String(e?.error || "");
+      setIsListening(false);
+      startedRef.current = false;
+
       if (err === "not-allowed" || err === "service-not-allowed") {
         alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+        holdingRef.current = false;
         return;
       }
 
-      setToast("שגיאה בהאזנה");
+      // keep holding but show feedback
+      if (holdingRef.current) setToast("שגיאה בהאזנה");
     };
 
     rec.onend = () => {
-      // Android sometimes ends after each phrase, restart while still holding
+      // If still holding, restart to keep capturing more phrases
       if (holdingRef.current) {
         try {
           rec.start();
-          return;
         } catch {
-          // if restart fails, stop the session
+          // If cannot restart, keep UI but stop session
           holdingRef.current = false;
+          startedRef.current = false;
           setIsListening(false);
         }
       }
@@ -825,14 +820,47 @@ const MainList: React.FC = () => {
     } catch (e) {
       console.error(e);
       holdingRef.current = false;
+      startedRef.current = false;
       setIsListening(false);
+      setToast("לא הצלחתי להתחיל האזנה");
     }
   };
 
-  const stopHoldListeningAndSend = async () => {
-    if (!holdingRef.current) return;
+  const startHoldListening = () => {
+    if (holdingRef.current) return;
 
+    holdingRef.current = true;
+    startedRef.current = false;
+    sessionPartsRef.current = [];
+    setLastHeard("");
+    setIsListening(true);
+    setToast("דבר עכשיו - שחרר כדי לשלוח");
+
+    clearStartDelay();
+
+    // Delay start slightly to avoid instant start/stop due to mobile event quirks
+    startDelayRef.current = setTimeout(() => {
+      // user might have released already
+      if (!holdingRef.current) return;
+      actuallyStartRecognizer();
+    }, 120);
+  };
+
+  const stopHoldListeningAndSend = async () => {
+    // Always stop holding
+    const wasHolding = holdingRef.current;
     holdingRef.current = false;
+
+    clearStartDelay();
+
+    // If recognition never started, just reset UI (prevents "pressed but nothing" confusion)
+    if (!startedRef.current) {
+      setIsListening(false);
+      if (wasHolding) setToast("לא התחלתי להאזין");
+      return;
+    }
+
+    startedRef.current = false;
     setIsListening(false);
     stopRecognizer();
 
@@ -853,11 +881,12 @@ const MainList: React.FC = () => {
     }
   };
 
-  // stop recognition when unmount
   useEffect(() => {
     return () => {
       try {
+        clearStartDelay();
         holdingRef.current = false;
+        startedRef.current = false;
         recognitionRef.current?.stop?.();
       } catch {
         // ignore
@@ -906,27 +935,24 @@ const MainList: React.FC = () => {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Voice button: press and hold */}
+          {/* Voice: pointer-only press and hold */}
           <button
             onPointerDown={(e) => {
+              // Only primary pointer, avoid weird multi pointers
+              if ((e as any).isPrimary === false) return;
               e.preventDefault();
               startHoldListening();
             }}
             onPointerUp={(e) => {
+              if ((e as any).isPrimary === false) return;
               e.preventDefault();
+              stopHoldListeningAndSend();
+            }}
+            onPointerCancel={() => {
               stopHoldListeningAndSend();
             }}
             onPointerLeave={() => {
-              // if user drags finger away while holding
               if (holdingRef.current) stopHoldListeningAndSend();
-            }}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              stopHoldListeningAndSend();
             }}
             className={`p-2 rounded-full select-none ${
               isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
@@ -987,7 +1013,7 @@ const MainList: React.FC = () => {
                 value={inputValue}
                 onChange={(e) => setInputValue(e.target.value)}
                 placeholder="מה להוסיף לרשימה?"
-                className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm preceded focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
+                className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
                 dir="rtl"
               />
               <button
