@@ -234,28 +234,28 @@ type FavoriteDoc = {
 type VoiceMode = "hold_to_talk";
 
 const HEB_NUMBER_WORDS: Record<string, number> = {
-  "אחד": 1,
-  "אחת": 1,
-  "שני": 2,
-  "שניים": 2,
-  "שתיים": 2,
-  "שתים": 2,
-  "שתי": 2,
-  "שלוש": 3,
-  "שלושה": 3,
-  "ארבע": 4,
-  "ארבעה": 4,
-  "חמש": 5,
-  "חמישה": 5,
-  "שש": 6,
-  "שישה": 6,
-  "שבע": 7,
-  "שבעה": 7,
-  "שמונה": 8,
-  "תשע": 9,
-  "תשעה": 9,
-  "עשר": 10,
-  "עשרה": 10,
+  אחד: 1,
+  אחת: 1,
+  שני: 2,
+  שניים: 2,
+  שתיים: 2,
+  שתים: 2,
+  שתי: 2,
+  שלוש: 3,
+  שלושה: 3,
+  ארבע: 4,
+  ארבעה: 4,
+  חמש: 5,
+  חמישה: 5,
+  שש: 6,
+  שישה: 6,
+  שבע: 7,
+  שבעה: 7,
+  שמונה: 8,
+  תשע: 9,
+  תשעה: 9,
+  עשר: 10,
+  עשרה: 10,
 };
 
 const normalize = (s: string) =>
@@ -317,10 +317,17 @@ const MULTIWORD_PREFIXES = new Set<string>([
   "יוגורט",
 ]);
 
-function shouldKeepAsMultiwordByPrefix(first: stringivex: string) {
+function shouldKeepAsMultiwordByPrefix(first: string) {
   return MULTIWORD_PREFIXES.has(first);
 }
 
+/**
+ * Token-scan parser that handles:
+ * - "ביצים חלב עגבניה" -> 3 items
+ * - qty prefix: "שתי בננות"
+ * - qty suffix: "בננות שתיים"
+ * - long sequences, without requiring commas
+ */
 function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: number }> {
   const seg = normalize(segRaw);
   if (!seg) return [];
@@ -351,43 +358,37 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     if (isQtyToken(tok)) {
       const q = Math.max(1, qtyFromToken(tok) || 1);
 
-      // Case A: no current name yet -> qty applies to next item
+      // qty prefix
       if (nameParts.length === 0) {
         pendingQty = q;
         continue;
       }
 
-      // Case B: we already have a name -> treat as suffix qty for current item
-      // Example: "בננות שתיים", "ביצים 2"
+      // qty suffix
       flush(q);
       continue;
     }
 
     // normal word
     nameParts.push(tok);
-
     const nxt = nextToken(i);
 
-    // If we started a prefix that usually forms a multiword product, keep at least 2 tokens
+    // keep at least 2 words for known prefixes (רסק עגבניות, שמן זית וכו')
     if (nameParts.length === 1 && shouldKeepAsMultiwordByPrefix(nameParts[0])) {
-      // wait for at least one more token
       continue;
     }
 
-    // If connector "של/עם" exists, keep building
+    // keep phrases with connectors
     if (tok === "של" || tok === "עם") continue;
     if (nxt === "של" || nxt === "עם") continue;
 
-    // If next token is qty, likely suffix for this item, wait
+    // if next is qty, wait (suffix qty)
     if (isQtyToken(nxt)) continue;
 
-    // Heuristic: default split by single token items in long sequences
-    // If we have 1 token, flush now (this gives: ביצים חלב עגבניה)
-    // If we have 2+ tokens, flush unless it's clearly a multiword phrase (prefix/connector already handled)
+    // otherwise flush after each word/phrase - this splits "ביצים חלב עגבניה"
     flush();
   }
 
-  // Flush remaining
   if (nameParts.length > 0) flush();
 
   return out
@@ -397,18 +398,13 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
 /**
  * Parse a phrase into multiple items.
- * Supports:
- * - "חמש עגבניות שני מלפפונים רסק עגבניות"
- * - "עגבניות חמש"
- * - "ביצים חלב עגבניה" (גם בלי פסיקים)
- * - with commas / וגם / ואז / אחר כך
+ * Supports commas / וגם / ואז / אחר כך, and also no commas.
  */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
   const t = normalize(t0);
   if (!t) return [];
 
-  // turn common separators into commas
   const cleaned = t
     .replace(/\s+וגם\s+/g, ",")
     .replace(/\s+ואז\s+/g, ",")
@@ -422,14 +418,10 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
     .filter(Boolean);
 
   const out: Array<{ name: string; qty: number }> = [];
-
   for (const seg of segments) {
-    // Special case: "חמש עגבניות שני מלפפונים" inside one segment without commas
-    // The token-scan parser already handles qty prefix and suffix and splits long sequences.
     const parsed = parseSegmentTokensToItems(seg);
     for (const p of parsed) out.push(p);
   }
-
   return out;
 }
 
@@ -449,6 +441,7 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
+  // Voice UI + state
   const [isListening, setIsListening] = useState(false);
   const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
@@ -627,14 +620,12 @@ const MainList: React.FC = () => {
 
   const toggleFavorite = async (itemId: string) => {
     if (!list?.id) return;
-    const item = items.find((i) => i.id === itemId);
-    if (!item) return;
-
     const favRef = doc(db, "lists", list.id, "favorites", itemId);
     if (favoritesById.has(itemId)) {
       await deleteDoc(favRef);
     } else {
-      await setDoc(favRef, { name: item.name, createdAt: Date.now() });
+      const item = items.find((i) => i.id === itemId);
+      await setDoc(favRef, { name: item?.name || "", createdAt: Date.now() });
     }
   };
 
@@ -722,7 +713,7 @@ const MainList: React.FC = () => {
         return;
       }
     } catch {
-      // user cancelled
+      // ignore
     }
 
     await copyToClipboard(link);
@@ -755,6 +746,9 @@ const MainList: React.FC = () => {
     openWhatsApp(text);
   };
 
+  // ---------------------------
+  // Voice actions
+  // ---------------------------
   const findItemByName = (name: string) => {
     const n = normalize(name);
     const exact = items.find((i) => normalize(i.name) === n);
@@ -939,9 +933,7 @@ const MainList: React.FC = () => {
 
         const last =
           interimCombined ||
-          (transcriptBufferRef.current.length
-            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
-            : "");
+          (transcriptBufferRef.current.length ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1] : "");
 
         if (last) setLastHeard(last);
       } catch {
@@ -1005,7 +997,7 @@ const MainList: React.FC = () => {
       // ignore
     }
 
-    // FIX: join finals with SPACE (not comma) so qty + item won't break across chunks
+    // IMPORTANT: join finals with SPACE so qty+item won't break across chunks
     const finalText = transcriptBufferRef.current.join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = (finalText || interimText).trim();
@@ -1076,8 +1068,10 @@ const MainList: React.FC = () => {
 
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
+      {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
+          {/* Hold-to-talk Voice button */}
           <button
             onPointerDown={(e) => {
               e.preventDefault();
@@ -1142,6 +1136,7 @@ const MainList: React.FC = () => {
         </button>
       </header>
 
+      {/* Voice hint */}
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
@@ -1158,6 +1153,7 @@ const MainList: React.FC = () => {
         </div>
       </div>
 
+      {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === "list" ? (
           <>
@@ -1177,6 +1173,17 @@ const MainList: React.FC = () => {
                 <Plus className="w-6 h-6" />
               </button>
             </form>
+
+            <div className="flex gap-2">
+              <button
+                onClick={getAiSuggestions}
+                disabled={isAiLoading}
+                className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-2xl font-black disabled:opacity-50"
+                title="הצעות AI"
+              >
+                {isAiLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "הצעות AI"}
+              </button>
+            </div>
 
             {items.length === 0 ? (
               <div className="text-center py-20 opacity-20">
@@ -1327,6 +1334,7 @@ const MainList: React.FC = () => {
         )}
       </main>
 
+      {/* Bottom area: Share button + bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="flex justify-start mb-2" dir="ltr">
@@ -1368,6 +1376,7 @@ const MainList: React.FC = () => {
         </div>
       </div>
 
+      {/* Clear Confirm Modal */}
       {showClearConfirm ? (
         <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
           <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
