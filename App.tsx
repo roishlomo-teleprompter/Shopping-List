@@ -42,6 +42,7 @@ import {
   setDoc,
   updateDoc,
   where,
+  writeBatch,
 } from "firebase/firestore";
 
 import { GoogleGenAI } from "@google/genai";
@@ -89,7 +90,11 @@ async function signInSmart() {
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
     const code = e?.code as string | undefined;
-    if (code === "auth/popup-blocked" || code === "auth/cancelled-popup-request" || code === "auth/popup-closed-by-user") {
+    if (
+      code === "auth/popup-blocked" ||
+      code === "auth/cancelled-popup-request" ||
+      code === "auth/popup-closed-by-user"
+    ) {
       await signInWithRedirect(auth, googleProvider);
       return;
     }
@@ -226,7 +231,7 @@ type FavoriteDoc = {
   createdAt: number;
 };
 
-type VoiceMode = "hold_to_talk"; // נשמור מקום להרחבות
+type VoiceMode = "hold_to_talk";
 
 const HEB_NUMBER_WORDS: Record<string, number> = {
   "אחד": 1,
@@ -265,7 +270,6 @@ const normalizeVoiceText = (s: string) => {
   return t
     .replace(/[.?!]/g, " ")
     .replace(/，/g, ",")
-    // NEW: אם המנוע מחזיר את המילה "פסיק" במקום סימן פסיק
     .replace(/\bפסיקים\b/g, ",")
     .replace(/\bפסיק\b/g, ",")
     .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
@@ -286,7 +290,6 @@ function qtyFromToken(tok: string): number | null {
   return n != null ? n : null;
 }
 
-// NEW: הגנה בסיסית נגד פירוק שמות מוצר מרובי מילים
 const MULTIWORD_PREFIXES = new Set<string>([
   "רסק",
   "שמן",
@@ -303,7 +306,6 @@ const MULTIWORD_PREFIXES = new Set<string>([
   "מרק",
   "פירורי",
   "חמאת",
-  "חלב",
   "בשר",
   "עוף",
   "דג",
@@ -316,37 +318,20 @@ const MULTIWORD_PREFIXES = new Set<string>([
 function looksLikeMultiwordProduct(words: string[]) {
   if (words.length < 2) return false;
   if (words.includes("של") || words.includes("עם")) return true;
-
   const first = words[0] || "";
   if (MULTIWORD_PREFIXES.has(first)) return true;
-
-  // אם יש מילה מאוד ארוכה או מספר, לא מפצלים לפי רווחים
   if (words.some((w) => w.length >= 10)) return true;
-
   return false;
 }
 
 function isSimpleTokenForSplit(w: string) {
   if (!w) return false;
   if (isQtyToken(w)) return false;
-  // מילים קצרות יחסית, בלי סימנים
   if (w.length > 9) return false;
   if (/[\d]/.test(w)) return false;
   return true;
 }
 
-/**
- * Parse a phrase into multiple items.
- * Supports:
- * - "חמש עגבניות שני מלפפונים רסק עגבניות"
- * - "עגבניות חמש"
- * - with commas / וגם / ואז / אחר כך / ו
- *
- * NEW:
- * - "ביצים חלב עגבניה" -> 3 items
- * - "ביצים חלב" -> 2 items
- * - With safeguards to avoid breaking common multi-word products (like "רסק עגבניות")
- */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
   const t = normalize(t0);
@@ -374,7 +359,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       .map((w, i) => (isQtyToken(w) ? i : -1))
       .filter((i) => i >= 0);
 
-    // Multi qty markers in one segment
     if (qtyPositions.length >= 2) {
       let i = 0;
       while (i < words.length) {
@@ -401,7 +385,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // qty at start
     if (isQtyToken(words[0]) && words.length >= 2) {
       const q = Math.max(1, qtyFromToken(words[0]) || 1);
       const name = words.slice(1).join(" ").trim();
@@ -409,7 +392,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // qty at end
     if (words.length >= 2 && isQtyToken(words[words.length - 1])) {
       const q = Math.max(1, qtyFromToken(words[words.length - 1]) || 1);
       const name = words.slice(0, -1).join(" ").trim();
@@ -417,11 +399,9 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
-    // NEW: no qty - try split by spaces if it looks like a list of items
     if (qtyPositions.length === 0 && words.length >= 2 && !looksLikeMultiwordProduct(words)) {
       const allSimple = words.every(isSimpleTokenForSplit);
       if (allSimple) {
-        // If 2+ simple tokens, treat each as an item
         for (const w of words) {
           const name = (w || "").trim();
           if (name) out.push({ name, qty: 1 });
@@ -430,7 +410,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       }
     }
 
-    // Default: keep as one item
     out.push({ name: seg.trim(), qty: 1 });
   }
 
@@ -455,7 +434,6 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Voice UI + state
   const [isListening, setIsListening] = useState(false);
   const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
@@ -650,10 +628,29 @@ const MainList: React.FC = () => {
     await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
   };
 
-  const clearList = async () => {
-    if (!list?.id) return;
-    const batch = items.map((i) => deleteDoc(doc(db, "lists", list.id, "items", i.id)));
-    await Promise.all(batch);
+  // FIX: delete by querying Firestore, not by relying on state items
+  const clearListServer = async () => {
+    const listId = latestListIdRef.current || list?.id;
+    if (!listId) return;
+
+    const itemsCol = collection(db, "lists", listId, "items");
+    const snap = await getDocs(itemsCol);
+    if (snap.empty) {
+      setShowClearConfirm(false);
+      return;
+    }
+
+    // writeBatch limit is 500 operations, so chunk
+    const docs = snap.docs;
+    let idx = 0;
+    while (idx < docs.length) {
+      const batch = writeBatch(db);
+      const slice = docs.slice(idx, idx + 450);
+      for (const d of slice) batch.delete(d.ref);
+      await batch.commit();
+      idx += slice.length;
+    }
+
     setShowClearConfirm(false);
   };
 
@@ -745,9 +742,6 @@ const MainList: React.FC = () => {
     openWhatsApp(text);
   };
 
-  // ---------------------------
-  // Voice actions (NO server, only SpeechRecognition)
-  // ---------------------------
   const findItemByName = (name: string) => {
     const n = normalize(name);
     const exact = items.find((i) => normalize(i.name) === n);
@@ -783,6 +777,15 @@ const MainList: React.FC = () => {
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
+  // FIX: robust clear command matching
+  const isClearListCommand = (text: string) => {
+    const t = normalize(text);
+    // catches: "מחק רשימה", "מחק את הרשימה", "תמחק לי את כל הרשימה", "נקה רשימה", "תרוקן רשימה"
+    const clearRegex =
+      /(מחק|תמחק|תמחוק|נקה|תנקה|תרוקן|רוקן)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)/;
+    return clearRegex.test(t) || (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה")));
+  };
+
   const executeVoiceText = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) return;
@@ -790,12 +793,8 @@ const MainList: React.FC = () => {
     const text = normalize(raw);
     if (!text) return;
 
-    if (
-      text.includes("מחק רשימה") ||
-      (text.includes("מחק") && text.includes("הכל")) ||
-      (text.includes("נקה") && text.includes("רשימה"))
-    ) {
-      await clearList();
+    if (isClearListCommand(text)) {
+      await clearListServer();
       setToast("הרשימה נמחקה");
       return;
     }
@@ -1139,7 +1138,7 @@ const MainList: React.FC = () => {
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "ביצים חלב עגבניה" | "רסק עגבניות" | "מחק חלב" | "מחק רשימה"
+            דוגמאות: "מחק את הרשימה" | "נקה רשימה" | "ביצים חלב עגבניה"
           </div>
         </div>
       </div>
@@ -1371,7 +1370,7 @@ const MainList: React.FC = () => {
               <button onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
                 ביטול
               </button>
-              <button onClick={clearList} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
+              <button onClick={clearListServer} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
                 מחק הכל
               </button>
             </div>
