@@ -313,30 +313,102 @@ const MULTIWORD_PREFIXES = new Set<string>([
   "קפה",
   "תה",
   "שוקולד",
+  "מעדן",
+  "יוגורט",
 ]);
 
-function looksLikeMultiwordProduct(words: string[]) {
-  if (words.length < 2) return false;
-  if (words.includes("של") || words.includes("עם")) return true;
-  const first = words[0] || "";
-  if (MULTIWORD_PREFIXES.has(first)) return true;
-  if (words.some((w) => w.length >= 10)) return true;
-  return false;
+function shouldKeepAsMultiwordByPrefix(first: stringivex: string) {
+  return MULTIWORD_PREFIXES.has(first);
 }
 
-function isSimpleTokenForSplit(w: string) {
-  if (!w) return false;
-  if (isQtyToken(w)) return false;
-  if (w.length > 9) return false;
-  if (/[\d]/.test(w)) return false;
-  return true;
+function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: number }> {
+  const seg = normalize(segRaw);
+  if (!seg) return [];
+
+  const tokens = seg.split(" ").filter(Boolean);
+  if (tokens.length === 0) return [];
+
+  const out: Array<{ name: string; qty: number }> = [];
+
+  let pendingQty = 1;
+  let nameParts: string[] = [];
+
+  const flush = (qtyOverride?: number) => {
+    const name = nameParts.join(" ").trim();
+    if (name) {
+      const q = Math.max(1, Number(qtyOverride ?? pendingQty ?? 1));
+      out.push({ name, qty: q });
+    }
+    pendingQty = 1;
+    nameParts = [];
+  };
+
+  const nextToken = (i: number) => (i + 1 < tokens.length ? tokens[i + 1] : "");
+
+  for (let i = 0; i < tokens.length; i++) {
+    const tok = tokens[i];
+
+    if (isQtyToken(tok)) {
+      const q = Math.max(1, qtyFromToken(tok) || 1);
+
+      // Case A: no current name yet -> qty applies to next item
+      if (nameParts.length === 0) {
+        pendingQty = q;
+        continue;
+      }
+
+      // Case B: we already have a name -> treat as suffix qty for current item
+      // Example: "בננות שתיים", "ביצים 2"
+      flush(q);
+      continue;
+    }
+
+    // normal word
+    nameParts.push(tok);
+
+    const nxt = nextToken(i);
+
+    // If we started a prefix that usually forms a multiword product, keep at least 2 tokens
+    if (nameParts.length === 1 && shouldKeepAsMultiwordByPrefix(nameParts[0])) {
+      // wait for at least one more token
+      continue;
+    }
+
+    // If connector "של/עם" exists, keep building
+    if (tok === "של" || tok === "עם") continue;
+    if (nxt === "של" || nxt === "עם") continue;
+
+    // If next token is qty, likely suffix for this item, wait
+    if (isQtyToken(nxt)) continue;
+
+    // Heuristic: default split by single token items in long sequences
+    // If we have 1 token, flush now (this gives: ביצים חלב עגבניה)
+    // If we have 2+ tokens, flush unless it's clearly a multiword phrase (prefix/connector already handled)
+    flush();
+  }
+
+  // Flush remaining
+  if (nameParts.length > 0) flush();
+
+  return out
+    .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
+    .filter((x) => x.name.length > 0);
 }
 
+/**
+ * Parse a phrase into multiple items.
+ * Supports:
+ * - "חמש עגבניות שני מלפפונים רסק עגבניות"
+ * - "עגבניות חמש"
+ * - "ביצים חלב עגבניה" (גם בלי פסיקים)
+ * - with commas / וגם / ואז / אחר כך
+ */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
   const t = normalize(t0);
   if (!t) return [];
 
+  // turn common separators into commas
   const cleaned = t
     .replace(/\s+וגם\s+/g, ",")
     .replace(/\s+ואז\s+/g, ",")
@@ -352,70 +424,13 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const out: Array<{ name: string; qty: number }> = [];
 
   for (const seg of segments) {
-    const words = seg.split(" ").filter(Boolean);
-    if (words.length === 0) continue;
-
-    const qtyPositions = words
-      .map((w, i) => (isQtyToken(w) ? i : -1))
-      .filter((i) => i >= 0);
-
-    if (qtyPositions.length >= 2) {
-      let i = 0;
-      while (i < words.length) {
-        if (isQtyToken(words[i]) && i + 1 < words.length) {
-          const q = Math.max(1, qtyFromToken(words[i]) || 1);
-          i++;
-          const nameParts: string[] = [];
-          while (i < words.length && !isQtyToken(words[i])) {
-            nameParts.push(words[i]);
-            i++;
-          }
-          const name = nameParts.join(" ").trim();
-          if (name) out.push({ name, qty: q });
-        } else {
-          const nameParts: string[] = [];
-          while (i < words.length && !isQtyToken(words[i])) {
-            nameParts.push(words[i]);
-            i++;
-          }
-          const name = nameParts.join(" ").trim();
-          if (name) out.push({ name, qty: 1 });
-        }
-      }
-      continue;
-    }
-
-    if (isQtyToken(words[0]) && words.length >= 2) {
-      const q = Math.max(1, qtyFromToken(words[0]) || 1);
-      const name = words.slice(1).join(" ").trim();
-      if (name) out.push({ name, qty: q });
-      continue;
-    }
-
-    if (words.length >= 2 && isQtyToken(words[words.length - 1])) {
-      const q = Math.max(1, qtyFromToken(words[words.length - 1]) || 1);
-      const name = words.slice(0, -1).join(" ").trim();
-      if (name) out.push({ name, qty: q });
-      continue;
-    }
-
-    if (qtyPositions.length === 0 && words.length >= 2 && !looksLikeMultiwordProduct(words)) {
-      const allSimple = words.every(isSimpleTokenForSplit);
-      if (allSimple) {
-        for (const w of words) {
-          const name = (w || "").trim();
-          if (name) out.push({ name, qty: 1 });
-        }
-        continue;
-      }
-    }
-
-    out.push({ name: seg.trim(), qty: 1 });
+    // Special case: "חמש עגבניות שני מלפפונים" inside one segment without commas
+    // The token-scan parser already handles qty prefix and suffix and splits long sequences.
+    const parsed = parseSegmentTokensToItems(seg);
+    for (const p of parsed) out.push(p);
   }
 
-  return out
-    .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
-    .filter((x) => x.name.length > 0);
+  return out;
 }
 
 const MainList: React.FC = () => {
@@ -628,7 +643,6 @@ const MainList: React.FC = () => {
     await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
   };
 
-  // FIX: delete by querying Firestore, not by relying on state items
   const clearListServer = async () => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) return;
@@ -640,7 +654,6 @@ const MainList: React.FC = () => {
       return;
     }
 
-    // writeBatch limit is 500 operations, so chunk
     const docs = snap.docs;
     let idx = 0;
     while (idx < docs.length) {
@@ -777,13 +790,14 @@ const MainList: React.FC = () => {
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
-  // FIX: robust clear command matching
   const isClearListCommand = (text: string) => {
     const t = normalize(text);
-    // catches: "מחק רשימה", "מחק את הרשימה", "תמחק לי את כל הרשימה", "נקה רשימה", "תרוקן רשימה"
     const clearRegex =
       /(מחק|תמחק|תמחוק|נקה|תנקה|תרוקן|רוקן)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)/;
-    return clearRegex.test(t) || (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה")));
+    return (
+      clearRegex.test(t) ||
+      (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה")))
+    );
   };
 
   const executeVoiceText = async (raw: string) => {
@@ -991,7 +1005,8 @@ const MainList: React.FC = () => {
       // ignore
     }
 
-    const finalText = transcriptBufferRef.current.join(", ").trim();
+    // FIX: join finals with SPACE (not comma) so qty + item won't break across chunks
+    const finalText = transcriptBufferRef.current.join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = (finalText || interimText).trim();
 
@@ -1138,7 +1153,7 @@ const MainList: React.FC = () => {
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "מחק את הרשימה" | "נקה רשימה" | "ביצים חלב עגבניה"
+            דוגמאות: "ביצים חלב עגבניה" | "שתי בננות עגבניה" | "בננות שתיים"
           </div>
         </div>
       </div>
