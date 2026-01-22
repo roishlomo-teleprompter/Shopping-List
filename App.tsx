@@ -265,6 +265,9 @@ const normalizeVoiceText = (s: string) => {
   return t
     .replace(/[.?!]/g, " ")
     .replace(/，/g, ",")
+    // NEW: אם המנוע מחזיר את המילה "פסיק" במקום סימן פסיק
+    .replace(/\bפסיקים\b/g, ",")
+    .replace(/\bפסיק\b/g, ",")
     .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
@@ -283,16 +286,66 @@ function qtyFromToken(tok: string): number | null {
   return n != null ? n : null;
 }
 
+// NEW: הגנה בסיסית נגד פירוק שמות מוצר מרובי מילים
+const MULTIWORD_PREFIXES = new Set<string>([
+  "רסק",
+  "שמן",
+  "גבינה",
+  "גבינת",
+  "אבקת",
+  "מיץ",
+  "מי",
+  "רוטב",
+  "קמח",
+  "סוכר",
+  "מלח",
+  "פלפל",
+  "מרק",
+  "פירורי",
+  "חמאת",
+  "חלב",
+  "בשר",
+  "עוף",
+  "דג",
+  "דגים",
+  "קפה",
+  "תה",
+  "שוקולד",
+]);
+
+function looksLikeMultiwordProduct(words: string[]) {
+  if (words.length < 2) return false;
+  if (words.includes("של") || words.includes("עם")) return true;
+
+  const first = words[0] || "";
+  if (MULTIWORD_PREFIXES.has(first)) return true;
+
+  // אם יש מילה מאוד ארוכה או מספר, לא מפצלים לפי רווחים
+  if (words.some((w) => w.length >= 10)) return true;
+
+  return false;
+}
+
+function isSimpleTokenForSplit(w: string) {
+  if (!w) return false;
+  if (isQtyToken(w)) return false;
+  // מילים קצרות יחסית, בלי סימנים
+  if (w.length > 9) return false;
+  if (/[\d]/.test(w)) return false;
+  return true;
+}
+
 /**
  * Parse a phrase into multiple items.
  * Supports:
  * - "חמש עגבניות שני מלפפונים רסק עגבניות"
  * - "עגבניות חמש"
- * - with commas / וגם / ואז / אחר כך
+ * - with commas / וגם / ואז / אחר כך / ו
  *
- * Plus heuristic:
- * - If no explicit delimiters and no qty tokens and 3+ words: split by spaces into separate items
- *   Example: "ביצים חלב עגבניה" -> 3 items
+ * NEW:
+ * - "ביצים חלב עגבניה" -> 3 items
+ * - "ביצים חלב" -> 2 items
+ * - With safeguards to avoid breaking common multi-word products (like "רסק עגבניות")
  */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
@@ -306,14 +359,10 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
     .replace(/\s+ואחר כך\s+/g, ",")
     .replace(/\s+ו\s+/g, ",");
 
-  const hasComma = cleaned.includes(",") || cleaned.includes("\n");
-
-  const segments = hasComma
-    ? cleaned
-        .split(/,|\n/)
-        .map((s) => s.trim())
-        .filter(Boolean)
-    : [cleaned];
+  const segments = cleaned
+    .split(/,|\n/)
+    .map((s) => s.trim())
+    .filter(Boolean);
 
   const out: Array<{ name: string; qty: number }> = [];
 
@@ -325,15 +374,7 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       .map((w, i) => (isQtyToken(w) ? i : -1))
       .filter((i) => i >= 0);
 
-    // Heuristic split: no delimiters, no qty, and 3+ tokens -> treat as separate items
-    if (!hasComma && qtyPositions.length === 0 && segments.length === 1 && words.length >= 3) {
-      for (const w of words) {
-        const name = (w || "").trim();
-        if (name) out.push({ name, qty: 1 });
-      }
-      continue;
-    }
-
+    // Multi qty markers in one segment
     if (qtyPositions.length >= 2) {
       let i = 0;
       while (i < words.length) {
@@ -360,6 +401,7 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
+    // qty at start
     if (isQtyToken(words[0]) && words.length >= 2) {
       const q = Math.max(1, qtyFromToken(words[0]) || 1);
       const name = words.slice(1).join(" ").trim();
@@ -367,6 +409,7 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
+    // qty at end
     if (words.length >= 2 && isQtyToken(words[words.length - 1])) {
       const q = Math.max(1, qtyFromToken(words[words.length - 1]) || 1);
       const name = words.slice(0, -1).join(" ").trim();
@@ -374,6 +417,20 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
       continue;
     }
 
+    // NEW: no qty - try split by spaces if it looks like a list of items
+    if (qtyPositions.length === 0 && words.length >= 2 && !looksLikeMultiwordProduct(words)) {
+      const allSimple = words.every(isSimpleTokenForSplit);
+      if (allSimple) {
+        // If 2+ simple tokens, treat each as an item
+        for (const w of words) {
+          const name = (w || "").trim();
+          if (name) out.push({ name, qty: 1 });
+        }
+        continue;
+      }
+    }
+
+    // Default: keep as one item
     out.push({ name: seg.trim(), qty: 1 });
   }
 
@@ -407,8 +464,9 @@ const MainList: React.FC = () => {
   const recognitionRef = useRef<any>(null);
   const holdActiveRef = useRef<boolean>(false);
   const transcriptBufferRef = useRef<string[]>([]);
-  const lastInterimRef = useRef<string>(""); // NEW: fallback if no final arrives
-  const startGuardRef = useRef<boolean>(false); // NEW: prevent double restart loops
+  const lastInterimRef = useRef<string>("");
+  const startGuardRef = useRef<boolean>(false);
+
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
 
@@ -1081,7 +1139,7 @@ const MainList: React.FC = () => {
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "ביצים חלב עגבניה" | "ביצים, חלב, עגבניה" | "מחק חלב" | "מחק רשימה"
+            דוגמאות: "ביצים חלב עגבניה" | "רסק עגבניות" | "מחק חלב" | "מחק רשימה"
           </div>
         </div>
       </div>
