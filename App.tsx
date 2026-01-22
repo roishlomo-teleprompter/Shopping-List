@@ -45,7 +45,6 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
-import { GoogleGenAI } from "@google/genai";
 import { auth, db, googleProvider } from "./firebase.ts";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
@@ -327,6 +326,10 @@ function shouldKeepAsMultiwordByPrefix(first: string) {
  * - qty prefix: "שתי בננות"
  * - qty suffix: "בננות שתיים"
  * - long sequences, without requiring commas
+ *
+ * Important rule:
+ * - If qty token appears and there is a NEXT word, treat it as prefix for the NEXT item (default),
+ *   not suffix for previous item. Suffix is only when qty is LAST token.
  */
 function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: number }> {
   const seg = normalize(segRaw);
@@ -357,15 +360,24 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
     if (isQtyToken(tok)) {
       const q = Math.max(1, qtyFromToken(tok) || 1);
+      const nxt = nextToken(i);
 
-      // qty prefix
+      // Prefix qty (start of item)
       if (nameParts.length === 0) {
         pendingQty = q;
         continue;
       }
 
-      // qty suffix
-      flush(q);
+      // Suffix qty only if it's the last token (ex: "בננות שתיים")
+      if (!nxt) {
+        flush(q);
+        continue;
+      }
+
+      // Otherwise treat qty as prefix for NEXT item:
+      // finish current item with its pendingQty, then set pendingQty for next
+      flush();
+      pendingQty = q;
       continue;
     }
 
@@ -382,7 +394,7 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     if (tok === "של" || tok === "עם") continue;
     if (nxt === "של" || nxt === "עם") continue;
 
-    // if next is qty, wait (suffix qty)
+    // if next is qty, wait (suffix qty) or prefix qty handling will flush
     if (isQtyToken(nxt)) continue;
 
     // otherwise flush after each word/phrase - this splits "ביצים חלב עגבניה"
@@ -437,7 +449,6 @@ const MainList: React.FC = () => {
   const [isCopied, setIsCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
-  const [isAiLoading, setIsAiLoading] = useState(false);
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
@@ -658,29 +669,7 @@ const MainList: React.FC = () => {
     setShowClearConfirm(false);
   };
 
-  const getAiSuggestions = async () => {
-    const apiKey = import.meta.env.VITE_GEMINI_API_KEY as string | undefined;
-    if (!apiKey) return;
-
-    setIsAiLoading(true);
-    const ai = new GoogleGenAI({ apiKey });
-
-    try {
-      const currentList = activeItems.map((i) => i.name).join(", ");
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: `אני מכין רשימת קניות. הפריטים הנוכחיים שלי הם: ${currentList}. תן לי 5 הצעות לפריטים נוספים שחסרים לי בדרך כלל עם פריטים אלו. החזר רק רשימה מופרדת בפסיקים של שמות הפריטים בעברית.`,
-      });
-
-      const suggestions = response.text?.split(",").map((s) => s.trim()).filter(Boolean) || [];
-      if (suggestions.length > 0) setInputValue(suggestions[0]);
-    } catch (e) {
-      console.error(e);
-    } finally {
-      setIsAiLoading(false);
-    }
-  };
-
+  // Invite
   const generateInviteTokenAndLink = async () => {
     if (!user) {
       await signInSmart();
@@ -721,6 +710,7 @@ const MainList: React.FC = () => {
     setTimeout(() => setIsCopied(false), 2000);
   };
 
+  // WhatsApp share
   const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
@@ -801,12 +791,14 @@ const MainList: React.FC = () => {
     const text = normalize(raw);
     if (!text) return;
 
+    // Clear list
     if (isClearListCommand(text)) {
       await clearListServer();
       setToast("הרשימה נמחקה");
       return;
     }
 
+    // Delete item
     if (/^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(text)) {
       const name = text.replace(/^(מחק|תמחק|תמחוק|תמחקי)\s+/, "").trim();
       const item = findItemByName(name);
@@ -819,6 +811,7 @@ const MainList: React.FC = () => {
       return;
     }
 
+    // Mark purchased
     const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
     if (buyMatch) {
       const name = buyMatch[2].trim();
@@ -832,6 +825,7 @@ const MainList: React.FC = () => {
       return;
     }
 
+    // Increase / decrease
     const incMatch = text.match(/^(הגדל|תגדיל|תגדילי)\s+(.+)$/);
     if (incMatch) {
       const name = incMatch[2].trim();
@@ -850,6 +844,7 @@ const MainList: React.FC = () => {
       return setToast(`הקטנתי: ${item.name}`);
     }
 
+    // ADD: with or without "הוסף"
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
@@ -997,7 +992,7 @@ const MainList: React.FC = () => {
       // ignore
     }
 
-    // IMPORTANT: join finals with SPACE so qty+item won't break across chunks
+    // join finals with SPACE so qty+item won't break across chunks
     const finalText = transcriptBufferRef.current.join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = (finalText || interimText).trim();
@@ -1148,7 +1143,7 @@ const MainList: React.FC = () => {
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "ביצים חלב עגבניה" | "שתי בננות עגבניה" | "בננות שתיים"
+            דוגמאות: "ביצים עגבניה גמבה שתי מלפפונים" | "מלפפונים שתיים" | "מחק רשימה"
           </div>
         </div>
       </div>
@@ -1173,17 +1168,6 @@ const MainList: React.FC = () => {
                 <Plus className="w-6 h-6" />
               </button>
             </form>
-
-            <div className="flex gap-2">
-              <button
-                onClick={getAiSuggestions}
-                disabled={isAiLoading}
-                className="flex-1 flex items-center justify-center gap-2 bg-indigo-600 text-white py-3 rounded-2xl font-black disabled:opacity-50"
-                title="הצעות AI"
-              >
-                {isAiLoading ? <Loader2 className="w-5 h-5 animate-spin" /> : "הצעות AI"}
-              </button>
-            </div>
 
             {items.length === 0 ? (
               <div className="text-center py-20 opacity-20">
