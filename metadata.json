@@ -1,0 +1,7 @@
+{
+  "name": "SmartShop - AI Shopping Assistant",
+  "description": "A modern, intelligent shopping list application featuring AI-powered categorization, recipe generation, and a real-time voice assistant powered by Gemini.",
+  "requestFramePermissions": [
+    "microphone"
+  ]
+}

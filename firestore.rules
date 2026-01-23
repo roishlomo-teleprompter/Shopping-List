@@ -1,0 +1,50 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    match /lists/{listId} {
+
+      function signedIn() {
+        return request.auth != null;
+      }
+
+      function isMemberExisting() {
+        return signedIn()
+          && (
+            request.auth.uid == resource.data.ownerUid
+            || resource.data.sharedWith.hasAny([request.auth.uid])
+          );
+      }
+
+      allow create: if signedIn();
+
+      // קריאה רק למי שב-owner או sharedWith
+      allow read: if isMemberExisting();
+
+      // עדכון רגיל לחברי הרשימה
+      // וגם הצטרפות (Join) שמותרת רק אם המשתמש מוסיף את עצמו ל-sharedWith
+      // וב-Join מותר לשנות רק sharedWith + pendingInvites (למחוק טוקן)
+      allow update: if
+        // חבר קיים יכול לעדכן
+        isMemberExisting()
+        ||
+        (
+          signedIn()
+          // sharedWith יכול רק לגדול, לא למחוק אנשים קיימים
+          && request.resource.data.sharedWith.hasAll(resource.data.sharedWith)
+          && request.resource.data.sharedWith.size() == resource.data.sharedWith.size() + 1
+          // וה-uid שנוסף הוא המשתמש הנוכחי
+          && request.resource.data.sharedWith.hasAny([request.auth.uid])
+          // ב-Join לא מאפשרים לשנות עוד שדות חוץ מ-sharedWith ו-pendingInvites
+          && request.resource.data.diff(resource.data).affectedKeys().hasOnly([
+            "sharedWith",
+            "pendingInvites"
+          ])
+        );
+
+      match /items/{itemId} {
+        allow read, write: if isMemberExisting();
+      }
+    }
+  }
+}
