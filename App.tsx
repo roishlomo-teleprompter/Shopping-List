@@ -230,7 +230,7 @@ type FavoriteDoc = {
   createdAt: number;
 };
 
-type VoiceMode = "hold_to_talk";
+type VoiceMode = "continuous";
 
 const HEB_NUMBER_WORDS: Record<string, number> = {
   אחד: 1,
@@ -452,20 +452,31 @@ const MainList: React.FC = () => {
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
 
-  // Voice UI + state
+    // Voice UI + state
   const [isListening, setIsListening] = useState(false);
-  const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
+
+  // In "continuous" mode, this flag means: recognition is currently expected to be running
   const holdActiveRef = useRef<boolean>(false);
+
+  // Buffers
   const transcriptBufferRef = useRef<string[]>([]);
   const lastInterimRef = useRef<string>("");
+
+  // Guard against tight onend-start loops
   const startGuardRef = useRef<boolean>(false);
+
+  // Auto-stop after short silence / hard max duration
+  const silenceTimerRef = useRef<number | null>(null);
+  const sessionTimerRef = useRef<number | null>(null);
+  const lastResultAtRef = useRef<number>(0);
 
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
+
 
   useEffect(() => {
     latestListIdRef.current = list?.id ?? null;
@@ -869,6 +880,17 @@ const MainList: React.FC = () => {
     return SR;
   };
 
+    const clearVoiceTimers = () => {
+    if (silenceTimerRef.current != null) {
+      window.clearTimeout(silenceTimerRef.current);
+      silenceTimerRef.current = null;
+    }
+    if (sessionTimerRef.current != null) {
+      window.clearTimeout(sessionTimerRef.current);
+      sessionTimerRef.current = null;
+    }
+  };
+
   const startHoldListening = () => {
     const SR = ensureSpeechRecognition();
     if (!SR) {
@@ -882,6 +904,15 @@ const MainList: React.FC = () => {
       return;
     }
 
+    // אם כבר מאזין - לחיצה נוספת תעצור (התנהגות רציפה)
+    if (holdActiveRef.current || isListening) {
+      stopHoldListening();
+      return;
+    }
+
+    clearVoiceTimers();
+
+    // Reset buffers
     transcriptBufferRef.current = [];
     lastInterimRef.current = "";
     startGuardRef.current = false;
@@ -889,8 +920,9 @@ const MainList: React.FC = () => {
     holdActiveRef.current = true;
     setLastHeard("");
     setIsListening(true);
-    setToast("דבר עכשיו - שחרר כדי לבצע");
+    setToast("מקשיב... לחץ שוב לעצירה, או המתן להפסקה קצרה");
 
+    // clean previous instance
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
@@ -907,6 +939,29 @@ const MainList: React.FC = () => {
     rec.interimResults = true;
     rec.maxAlternatives = 1;
     rec.continuous = true;
+
+    const SILENCE_MS = 900; // עצירה אוטומטית אחרי שקט קצר
+    const MAX_SESSION_MS = 20_000; // רשת בטחון למשפטים ארוכים מאוד
+
+    lastResultAtRef.current = Date.now();
+
+    const scheduleSilenceStop = () => {
+      if (!holdActiveRef.current) return;
+
+      if (silenceTimerRef.current != null) window.clearTimeout(silenceTimerRef.current);
+
+      silenceTimerRef.current = window.setTimeout(() => {
+        if (!holdActiveRef.current) return;
+        const dt = Date.now() - (lastResultAtRef.current || 0);
+        if (dt >= SILENCE_MS) stopHoldListening();
+      }, SILENCE_MS + 50);
+    };
+
+    sessionTimerRef.current = window.setTimeout(() => {
+      if (!holdActiveRef.current) return;
+      setToast("עוצר בגלל משפט ארוך מדי - מבצע...");
+      stopHoldListening();
+    }, MAX_SESSION_MS);
 
     rec.onresult = (event: any) => {
       try {
@@ -928,9 +983,14 @@ const MainList: React.FC = () => {
 
         const last =
           interimCombined ||
-          (transcriptBufferRef.current.length ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1] : "");
+          (transcriptBufferRef.current.length
+            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
+            : "");
 
         if (last) setLastHeard(last);
+
+        lastResultAtRef.current = Date.now();
+        scheduleSilenceStop();
       } catch {
         // ignore
       }
@@ -939,6 +999,8 @@ const MainList: React.FC = () => {
     rec.onerror = (e: any) => {
       const err = String(e?.error || "");
       console.error("Speech error", e);
+
+      clearVoiceTimers();
       setIsListening(false);
       holdActiveRef.current = false;
 
@@ -950,6 +1012,7 @@ const MainList: React.FC = () => {
     };
 
     rec.onend = () => {
+      // Chrome לפעמים עוצר לבד. אם עדיין במצב “רציף”, נרים מחדש
       if (!holdActiveRef.current) return;
 
       if (startGuardRef.current) return;
@@ -972,8 +1035,10 @@ const MainList: React.FC = () => {
 
     try {
       rec.start();
+      scheduleSilenceStop();
     } catch (e) {
       console.error(e);
+      clearVoiceTimers();
       setIsListening(false);
       holdActiveRef.current = false;
       setToast("לא הצלחתי להתחיל האזנה");
@@ -981,10 +1046,12 @@ const MainList: React.FC = () => {
   };
 
   const stopHoldListening = async () => {
-    if (!holdActiveRef.current) return;
+    if (!holdActiveRef.current && !isListening) return;
 
+    // קודם כל לכבות מצב פעיל כדי למנוע restart ב-onend
     holdActiveRef.current = false;
     setIsListening(false);
+    clearVoiceTimers();
 
     try {
       recognitionRef.current?.stop?.();
@@ -992,10 +1059,12 @@ const MainList: React.FC = () => {
       // ignore
     }
 
-    // join finals with SPACE so qty+item won't break across chunks
     const finalText = transcriptBufferRef.current.join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
-    const combined = (finalText || interimText).trim();
+
+    // חשוב: מחברים Final + Interim יחד
+    // זה מונע מצב כמו: "שתי" ב-final ו-"מלפפונים" ב-interim שהופך בטעות לכמות לפריט הקודם
+    const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
     transcriptBufferRef.current = [];
     lastInterimRef.current = "";
@@ -1013,6 +1082,7 @@ const MainList: React.FC = () => {
       setToast(`שגיאה: ${String(e?.message || e || "")}`);
     }
   };
+
 
   useEffect(() => {
     return () => {
@@ -1066,50 +1136,20 @@ const MainList: React.FC = () => {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Hold-to-talk Voice button */}
-          <button
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onPointerUp={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onPointerCancel={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onPointerLeave={(e) => {
-              if (holdActiveRef.current) {
-                e.preventDefault();
-                stopHoldListening();
-              }
-            }}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onMouseUp={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            style={{ touchAction: "none" }}
-            className={`p-2 rounded-full ${
-              isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
-            }`}
-            title={isListening ? "דבר עכשיו - שחרר כדי לבצע" : "לחץ והחזק כדי לדבר"}
-          >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
+          {/* Voice button – continuous toggle */}
+<button
+  onClick={(e) => {
+    e.preventDefault();
+    startHoldListening(); // בפנים זה כבר Toggle: אם מאזין → stop
+  }}
+  className={`p-2 rounded-full ${
+    isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
+  }`}
+  title={isListening ? "מקשיב... לחץ כדי לעצור" : "לחץ כדי להתחיל האזנה"}
+>
+  {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
+</button>
+
 
           <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
             <Trash2 className="w-5 h-5" />
@@ -1135,7 +1175,8 @@ const MainList: React.FC = () => {
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
-            {isListening ? "מקשיב עכשיו - דבר ושחרר כדי לבצע" : "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע"}
+          {isListening ? "מקשיב... דבר ואז הפסק רגע כדי לבצע" : "פקודות קוליות: לחץ כדי להתחיל, לחץ שוב כדי לעצור"}
+
           </div>
           {lastHeard ? (
             <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
