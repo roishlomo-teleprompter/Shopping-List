@@ -181,8 +181,22 @@ const InvitePage: React.FC = () => {
 
   if (authLoading) {
     return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
-        <Loader2 className="animate-spin text-indigo-600" />
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl" style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}>
+
+
+      <style>{`
+        html, body, #root {
+          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
+        }
+        *, *::before, *::after,
+        input, button, select, textarea, option, label {
+          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
+        }
+        input::placeholder, textarea::placeholder {
+          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
+        }
+      `}</style>
+<Loader2 className="animate-spin text-indigo-600" />
       </div>
     );
   }
@@ -204,7 +218,7 @@ const InvitePage: React.FC = () => {
             onClick={handleLogin}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
-            <LogIn className="w-5 h-5" />
+            <LogIn className="w-4 h-4" />
             התחבר עם גוגל להצטרפות
           </button>
         ) : (
@@ -833,7 +847,7 @@ const MainList: React.FC = () => {
         // @ts-ignore
         await navigator.share({
           title: "קישור לרשימה",
-          text: "קישור הצטרפות לרשימת קניות",
+          text: "קישור הצטרפות להרשימה שלי",
           url: link,
         });
         return;
@@ -1254,7 +1268,7 @@ const MainList: React.FC = () => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
-          <h1 className="text-2xl font-black text-slate-800">רשימת קניות חכמה</h1>
+          <h1 className="text-2xl font-black text-slate-800">הרשימה שלי חכמה</h1>
           <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
           <button
             onClick={async () => {
@@ -1262,7 +1276,7 @@ const MainList: React.FC = () => {
             }}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
-            <LogIn className="w-5 h-5" />
+            <LogIn className="w-4 h-4" />
             התחבר עם גוגל
           </button>
         </div>
@@ -1281,8 +1295,8 @@ const MainList: React.FC = () => {
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
-        <div className="flex items-center gap-2">
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 items-center justify-between border-b border-slate-100 relative grid grid-cols-3 items-center">
+        <div className="flex items-center gap-2 justify-start">
           
 <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
             <Trash2 className="w-5 h-5" />
@@ -1293,14 +1307,14 @@ const MainList: React.FC = () => {
           </button>
         </div>
 
-        <h1 className="text-xl font-extrabold text-indigo-600">{list?.title || "הרשימה שלי"}</h1>
+        <h1 className="text-xl font-bold text-indigo-600 leading-none text-center justify-self-center whitespace-nowrap">{list?.title || "הרשימה שלי"}</h1>
 
         <button
           onClick={() => signOut(auth)}
-          className="p-2 rounded-full shadow-lg active:scale-90 transition-transform bg-slate-100 text-slate-600"
+          className="justify-self-end w-9 h-9 min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
           title="התנתק"
         >
-          <LogOut className="w-5 h-5" />
+          <LogOut className="w-4 h-4" />
         </button>
       </header>
 
@@ -1356,7 +1370,7 @@ const MainList: React.FC = () => {
                       className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
                       dir="rtl"
                     >
-                      <div className="flex items-center gap-2">
+                      <div className="flex items-center gap-2 justify-end">
                         <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500" title="מחק">
                           <Trash2 className="w-4 h-4" />
                         </button>
@@ -1429,7 +1443,7 @@ const MainList: React.FC = () => {
           <div className="space-y-6">
             <div className="text-right">
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">מועדפים</h2>
-              <p className="text-sm text-slate-400 font-bold">פריטים שחוזרים לסל</p>
+              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold">פריטים שחוזרים לסל</span></p>
             </div>
 
             {favorites.length === 0 ? (
@@ -1497,11 +1511,10 @@ const MainList: React.FC = () => {
           <div className="flex justify-start mb-2" dir="ltr">
             <button
               onClick={shareListWhatsApp}
-              className="flex items-center justify-center gap-2 bg-emerald-500 text-white py-3 px-6 rounded-full font-black shadow-lg shadow-emerald-200"
+              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200"
               title="שתף רשימה בוואטסאפ"
             >
-              <MessageCircle className="w-5 h-5" />
-              שתף רשימה
+              <MessageCircle className="w-6 h-6" />
             </button>
           </div>
 
