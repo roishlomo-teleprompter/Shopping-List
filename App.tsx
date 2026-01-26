@@ -1004,18 +1004,19 @@ const MainList: React.FC = () => {
 
     // Normalize + de-duplicate by name so the toast reflects what we actually apply
     const byName = new Map<string, { name: string; qty: number }>();
-    for (const p of normalized) {
+    for (const p of parsed) {
       const name = (p.name || "").trim();
       if (!name) continue;
-      const prev = byName.get(name);
+      const key = normalize(name);
+      const prev = byName.get(key);
       if (prev) prev.qty += Math.max(1, p.qty || 1);
-      else byName.set(name, { name, qty: Math.max(1, p.qty || 1) });
+      else byName.set(key, { name, qty: Math.max(1, p.qty || 1) });
     }
     const normalized = Array.from(byName.values());
 
     if (normalized.length === 0) return;
 
-    for (const p of parsed) {
+    for (const p of normalized) {
       await addOrSetQuantity(p.name, p.qty);
     }
 
@@ -1333,10 +1334,10 @@ const MainList: React.FC = () => {
 
         <button
           onClick={() => signOut(auth)}
-          className="justify-self-end w-10 h-10 min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
+          className="justify-self-end w-[44px] h-[44px] min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
           title="התנתק"
         >
-          <LogOut className="w-5 h-5" />
+          <LogOut className="w-6 h-6" />
         </button>
       </header>
 
@@ -1549,9 +1550,13 @@ const MainList: React.FC = () => {
                 }`}
                 title="מועדפים"
               >
-                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
+                <Star
+                  className={`w-7 h-7 ${
+                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
+                  }`}
+                />
                 מועדפים
-         
+              </button>
 
               {/* Hold-to-talk Voice button */}
               <button
@@ -1597,7 +1602,6 @@ const MainList: React.FC = () => {
               >
                 {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
               </button>
-     </button>
 
               <button
                 onClick={() => setActiveTab("list")}
