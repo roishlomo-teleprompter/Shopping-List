@@ -1511,7 +1511,7 @@ const MainList: React.FC = () => {
           <div className="flex justify-start mb-2" dir="ltr">
             <button
               onClick={shareListWhatsApp}
-              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200"
+              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
               title="שתף רשימה בוואטסאפ"
             >
               <MessageCircle className="w-6 h-6" />
