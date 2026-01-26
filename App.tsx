@@ -1000,17 +1000,29 @@ const MainList: React.FC = () => {
     const payload = addPrefix ? addPrefix[2] : text;
 
     const parsed = parseItemsFromText(payload);
-    if (parsed.length === 0) return;
+
+    // Normalize + de-duplicate by name so the toast reflects what we actually apply
+    const byName = new Map<string, { name: string; qty: number }>();
+    for (const p of normalized) {
+      const name = (p.name || "").trim();
+      if (!name) continue;
+      const prev = byName.get(name);
+      if (prev) prev.qty += Math.max(1, p.qty || 1);
+      else byName.set(name, { name, qty: Math.max(1, p.qty || 1) });
+    }
+    const normalized = Array.from(byName.values());
+
+    if (normalized.length === 0) return;
 
     for (const p of parsed) {
       await addOrSetQuantity(p.name, p.qty);
     }
 
-    if (parsed.length === 1) {
-      const p = parsed[0];
+    if (normalized.length === 1) {
+      const p = normalized[0];
       setToast(p.qty > 1 ? `הוספתי: ${p.name} x${p.qty}` : `הוספתי: ${p.name}`);
     } else {
-      setToast(`הוספתי ${parsed.length} פריטים`);
+      setToast(`הוספתי ${normalized.length} פריטים`);
     }
   };
 
@@ -1619,7 +1631,7 @@ const MainList: React.FC = () => {
       ) : null}
 
       {toast ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
+        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50 text-center">
           {toast}
         </div>
       ) : null}
