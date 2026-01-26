@@ -320,6 +320,142 @@ function shouldKeepAsMultiwordByPrefix(first: string) {
   return MULTIWORD_PREFIXES.has(first);
 }
 
+const COMPOUND_PHRASES = new Set<string>([
+  // ירקות ופירות
+  "מלפפון חמוץ",
+  "תפוח אדמה",
+  "בצל ירוק",
+  "שום כתוש",
+  "גזר גמדי",
+  "עגבניות שרי",
+  "פלפל חריף",
+  "פלפל ירוק",
+  "חסה קרחון",
+  "פטריות שמפיניון",
+
+  // מוצרי בסיס ומזווה
+  "רסק עגבניות",
+  "שמן זית",
+  "שמן קנולה",
+  "קמח לבן",
+  "קמח מלא",
+  "סוכר חום",
+  "אבקת אפייה",
+  "סודה לשתייה",
+  "פירורי לחם",
+
+  // מוצרי חלב וביצים
+  "גבינה צהובה",
+  "גבינה לבנה",
+  "גבינת שמנת",
+  "גבינה בולגרית",
+  "שמנת מתוקה",
+  "ביצים קשות",
+
+  // בשר ודגים
+  "חזה עוף",
+  "בשר טחון",
+  "דג סלמון",
+  "נקניקיות עוף",
+
+  // קפואים ומוכנים
+  "ציפס קפוא",
+  "צ'יפס קפוא",
+  "צ׳יפס קפוא",
+  "פיצה קפואה",
+  "ירקות קפואים",
+]);
+
+const ADJECTIVES = new Set<string>([
+  // צבעים (יחיד/רבים, זכר/נקבה)
+  "צהוב","צהובה","צהובים","צהובות",
+  "אדום","אדומה","אדומים","אדומות",
+  "ירוק","ירוקה","ירוקים","ירוקות",
+  "כחול","כחולה","כחולים","כחולות",
+  "שחור","שחורה","שחורים","שחורות",
+  "לבן","לבנה","לבנים","לבנות",
+  "אפור","אפורה","אפורים","אפורות",
+  "ורוד","ורודה","ורודים","ורודות",
+  "סגול","סגולה","סגולים","סגולות",
+  "חום","חומה","חומים","חומות",
+
+  // תיאורים נפוצים
+  "חריף","חריפה","חריפים","חריפות",
+  "חמוץ","חמוצה","חמוצים","חמוצות",
+  "מתוק","מתוקה","מתוקים","מתוקות",
+  "גדול","גדולה","גדולים","גדולות",
+  "קטן","קטנה","קטנים","קטנות",
+  "טרי","טרייה","טריים","טריות",
+  "קפוא","קפואה","קפואים","קפואות",
+]);
+
+
+
+
+
+const NOUN_COMPOUND_TAILS = new Set<string>([
+  "שיניים",
+  "ידיים",
+  "פנים",
+  "רצפה",
+  "חלון",
+  "כביסה",
+  "כלים",
+  "טואלט",
+  "סופג",
+  "זבל",
+  "ניקוי",
+  "רחצה",
+  "גילוח",
+]);
+
+function mergeCompounds(tokens: string[]): string[] {
+  const out: string[] = [];
+  let i = 0;
+
+  const stripHe = (t: string) => (t && t.startsWith("ה") && t.length > 1 ? t.slice(1) : t);
+
+  while (i < tokens.length) {
+    const a = tokens[i];
+    const b = i + 1 < tokens.length ? tokens[i + 1] : "";
+
+    // never merge quantity tokens
+    if (a && b && !isQtyToken(a) && !isQtyToken(b)) {
+      const pair = `${a} ${b}`;
+      const bNorm = stripHe(b);
+      const pairNorm = `${a} ${bNorm}`;
+
+      // 1) explicit phrase list (also allow adjective with leading ה')
+      if (COMPOUND_PHRASES.has(pair) || COMPOUND_PHRASES.has(pairNorm)) {
+        out.push(COMPOUND_PHRASES.has(pair) ? pair : pairNorm);
+        i += 2;
+        continue;
+      }
+
+      // 2) noun + adjective (מלפפון חמוץ, נעליים צהובות, בצל ירוק וכו')
+      if (ADJECTIVES.has(b) || ADJECTIVES.has(bNorm)) {
+        out.push(ADJECTIVES.has(b) ? pair : pairNorm);
+        i += 2;
+        continue;
+      }
+
+      // 3) noun + noun (consumer tail nouns) - e.g. מברשת שיניים, נייר טואלט
+      if (NOUN_COMPOUND_TAILS.has(b) || NOUN_COMPOUND_TAILS.has(bNorm)) {
+        out.push(NOUN_COMPOUND_TAILS.has(b) ? pair : pairNorm);
+        i += 2;
+        continue;
+      }
+    }
+
+    out.push(a);
+    i += 1;
+  }
+
+  return out;
+}
+
+
+
 /**
  * Token-scan parser that handles:
  * - "ביצים חלב עגבניה" -> 3 items
@@ -335,7 +471,8 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
   const seg = normalize(segRaw);
   if (!seg) return [];
 
-  const tokens = seg.split(" ").filter(Boolean);
+  let tokens = seg.split(" ").filter(Boolean);
+  tokens = mergeCompounds(tokens);
   if (tokens.length === 0) return [];
 
   const out: Array<{ name: string; qty: number }> = [];
