@@ -1283,52 +1283,8 @@ const MainList: React.FC = () => {
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 flex items-center justify-between border-b border-slate-100">
         <div className="flex items-center gap-2">
-          {/* Hold-to-talk Voice button */}
-          <button
-            onPointerDown={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onPointerUp={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onPointerCancel={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onPointerLeave={(e) => {
-              if (holdActiveRef.current) {
-                e.preventDefault();
-                stopHoldListening();
-              }
-            }}
-            onTouchStart={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onTouchEnd={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            onMouseDown={(e) => {
-              e.preventDefault();
-              startHoldListening();
-            }}
-            onMouseUp={(e) => {
-              e.preventDefault();
-              stopHoldListening();
-            }}
-            style={{ touchAction: "none" }}
-            className={`p-2 rounded-full ${
-              isListening ? "bg-rose-100 text-rose-600 animate-pulse" : "bg-slate-100 hover:bg-indigo-50 text-indigo-600"
-            }`}
-            title={isListening ? "דבר עכשיו - שחרר כדי לבצע" : "לחץ והחזק כדי לדבר"}
-          >
-            {isListening ? <MicOff className="w-5 h-5" /> : <Mic className="w-5 h-5" />}
-          </button>
-
-          <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
+          
+<button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
             <Trash2 className="w-5 h-5" />
           </button>
 
@@ -1550,7 +1506,7 @@ const MainList: React.FC = () => {
           </div>
 
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
-            <div className="flex items-center justify-between px-10 py-3">
+            <div className="relative flex items-center justify-between px-10 pt-9 pb-3">
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -1560,7 +1516,53 @@ const MainList: React.FC = () => {
               >
                 <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
                 מועדפים
+         
+
+              {/* Hold-to-talk Voice button */}
+              <button
+                onPointerDown={(e) => {
+                  e.preventDefault();
+                  startHoldListening();
+                }}
+                onPointerUp={(e) => {
+                  e.preventDefault();
+                  stopHoldListening();
+                }}
+                onPointerCancel={(e) => {
+                  e.preventDefault();
+                  stopHoldListening();
+                }}
+                onPointerLeave={(e) => {
+                  if (holdActiveRef.current) {
+                    e.preventDefault();
+                    stopHoldListening();
+                  }
+                }}
+                onTouchStart={(e) => {
+                  e.preventDefault();
+                  startHoldListening();
+                }}
+                onTouchEnd={(e) => {
+                  e.preventDefault();
+                  stopHoldListening();
+                }}
+                onMouseDown={(e) => {
+                  e.preventDefault();
+                  startHoldListening();
+                }}
+                onMouseUp={(e) => {
+                  e.preventDefault();
+                  stopHoldListening();
+                }}
+                style={{ touchAction: "none" }}
+                className={`absolute left-1/2 -translate-x-1/2 -top-8 w-16 h-16 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
+                  isListening ? "bg-rose-500 text-white animate-pulse" : "bg-indigo-600 text-white hover:bg-indigo-700"
+                }`}
+                title={isListening ? "דבר עכשיו - שחרר כדי לבצע" : "לחץ והחזק כדי לדבר"}
+              >
+                {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
               </button>
+     </button>
 
               <button
                 onClick={() => setActiveTab("list")}
