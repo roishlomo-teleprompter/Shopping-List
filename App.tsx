@@ -1056,6 +1056,7 @@ const MainList: React.FC = () => {
 
     if (recognitionRef.current) {
       try {
+        intentionalStopRef.current = true;
         recognitionRef.current.stop();
       } catch {
         // ignore
@@ -1157,6 +1158,12 @@ const MainList: React.FC = () => {
 
     rec.onerror = (e: any) => {
       const err = String(e?.error || "");
+      // aborted קורה כשאנחנו עוצרים ידנית (שחרור כפתור) - מתעלמים
+      if (err === "aborted" && intentionalStopRef.current) {
+        intentionalStopRef.current = false;
+        return;
+      }
+
       console.warn("Speech error:", err, e);
 
       // no-speech בדסקטופ הוא מצב נפוץ - לא מפסיקים את ההאזנה
@@ -1172,7 +1179,7 @@ const MainList: React.FC = () => {
       holdActiveRef.current = false;
 
       if (err === "not-allowed" || err === "service-not-allowed") {
-        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+        setToast("אין הרשאה למיקרופון. אשר הרשאה בדפדפן ואז נסה שוב.");
       } else if (err === "audio-capture") {
         setToast("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)");
       } else {
@@ -1181,6 +1188,8 @@ const MainList: React.FC = () => {
     };
 
     rec.onend = () => {
+      // מנקים דגל עצירה ידנית
+      if (intentionalStopRef.current) intentionalStopRef.current = false;
       // Chrome לפעמים עוצר לבד. אם עדיין במצב “רציף”, נרים מחדש
       if (!holdActiveRef.current) {
         clearLocalTimers();
@@ -1228,6 +1237,7 @@ const MainList: React.FC = () => {
     setIsListening(false);
 
     try {
+      intentionalStopRef.current = true;
       recognitionRef.current?.stop?.();
     } catch {
       // ignore
