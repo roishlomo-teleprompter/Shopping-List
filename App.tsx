@@ -218,7 +218,7 @@ const InvitePage: React.FC = () => {
             onClick={handleLogin}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
-            <LogIn className="w-5 h-5" />
+            <LogIn className="w-4 h-4" />
             התחבר עם גוגל להצטרפות
           </button>
         ) : (
@@ -610,7 +610,6 @@ const MainList: React.FC = () => {
   const [toast, setToast] = useState<string | null>(null);
 
   const recognitionRef = useRef<any>(null);
-  const intentionalStopRef = useRef(false);
   const holdActiveRef = useRef<boolean>(false);
   const transcriptBufferRef = useRef<string[]>([]);
   const lastInterimRef = useRef<string>("");
@@ -1001,30 +1000,17 @@ const MainList: React.FC = () => {
     const payload = addPrefix ? addPrefix[2] : text;
 
     const parsed = parseItemsFromText(payload);
+    if (parsed.length === 0) return;
 
-    // Normalize + de-duplicate by name so the toast reflects what we actually apply
-    const byName = new Map<string, { name: string; qty: number }>();
     for (const p of parsed) {
-      const name = (p.name || "").trim();
-      if (!name) continue;
-      const key = normalize(name);
-      const prev = byName.get(key);
-      if (prev) prev.qty += Math.max(1, p.qty || 1);
-      else byName.set(key, { name, qty: Math.max(1, p.qty || 1) });
-    }
-    const normalized = Array.from(byName.values());
-
-    if (normalized.length === 0) return;
-
-    for (const p of normalized) {
       await addOrSetQuantity(p.name, p.qty);
     }
 
-    if (normalized.length === 1) {
-      const p = normalized[0];
+    if (parsed.length === 1) {
+      const p = parsed[0];
       setToast(p.qty > 1 ? `הוספתי: ${p.name} x${p.qty}` : `הוספתי: ${p.name}`);
     } else {
-      setToast(`הוספתי ${normalized.length} פריטים`);
+      setToast(`הוספתי ${parsed.length} פריטים`);
     }
   };
 
@@ -1058,7 +1044,6 @@ const MainList: React.FC = () => {
 
     if (recognitionRef.current) {
       try {
-        intentionalStopRef.current = true;
         recognitionRef.current.stop();
       } catch {
         // ignore
@@ -1162,11 +1147,6 @@ const MainList: React.FC = () => {
       const err = String(e?.error || "");
       console.warn("Speech error:", err, e);
 
-      // Chrome fires "aborted" when we stop() intentionally (hold-to-talk release). Ignore it.
-      if (err === "aborted" && intentionalStopRef.current) {
-        return;
-      }
-
       // no-speech בדסקטופ הוא מצב נפוץ - לא מפסיקים את ההאזנה
       if (err === "no-speech") {
         setToast("לא זוהה דיבור - נסה לדבר ברור וקרוב למיקרופון");
@@ -1180,7 +1160,7 @@ const MainList: React.FC = () => {
       holdActiveRef.current = false;
 
       if (err === "not-allowed" || err === "service-not-allowed") {
-        setToast("אין הרשאה למיקרופון - אשר הרשאה בדפדפן ואז נסה שוב");
+        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
       } else if (err === "audio-capture") {
         setToast("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)");
       } else {
@@ -1189,8 +1169,6 @@ const MainList: React.FC = () => {
     };
 
     rec.onend = () => {
-      // reset stop flag after ending
-      intentionalStopRef.current = false;
       // Chrome לפעמים עוצר לבד. אם עדיין במצב “רציף”, נרים מחדש
       if (!holdActiveRef.current) {
         clearLocalTimers();
@@ -1238,7 +1216,6 @@ const MainList: React.FC = () => {
     setIsListening(false);
 
     try {
-      intentionalStopRef.current = true;
       recognitionRef.current?.stop?.();
     } catch {
       // ignore
@@ -1299,7 +1276,7 @@ const MainList: React.FC = () => {
             }}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
-            <LogIn className="w-5 h-5" />
+            <LogIn className="w-4 h-4" />
             התחבר עם גוגל
           </button>
         </div>
@@ -1334,10 +1311,10 @@ const MainList: React.FC = () => {
 
         <button
           onClick={() => signOut(auth)}
-          className="justify-self-end w-[44px] h-[44px] min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
+          className="justify-self-end w-9 h-9 min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
           title="התנתק"
         >
-          <LogOut className="w-6 h-6" />
+          <LogOut className="w-4 h-4" />
         </button>
       </header>
 
@@ -1550,13 +1527,9 @@ const MainList: React.FC = () => {
                 }`}
                 title="מועדפים"
               >
-                <Star
-                  className={`w-7 h-7 ${
-                    activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
-                  }`}
-                />
+                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
                 מועדפים
-              </button>
+         
 
               {/* Hold-to-talk Voice button */}
               <button
@@ -1602,6 +1575,7 @@ const MainList: React.FC = () => {
               >
                 {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
               </button>
+     </button>
 
               <button
                 onClick={() => setActiveTab("list")}
@@ -1645,7 +1619,11 @@ const MainList: React.FC = () => {
       ) : null}
 
       {toast ? (
-        <div className="fixed top-20 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50 text-center">
+        <div
+          className={`fixed left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50 ${
+            toast.includes("דבר עכשיו") ? "top-24" : "bottom-4"
+          }`}
+        >
           {toast}
         </div>
       ) : null}
