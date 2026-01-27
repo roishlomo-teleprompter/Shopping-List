@@ -925,15 +925,18 @@ const MainList: React.FC = () => {
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
-  const isClearListCommand = (text: string) => {
-    const t = normalize(text);
-    const clearRegex =
-      /(מחק|תמחק|תמחוק|נקה|תנקה|תרוקן|רוקן)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)/;
-    return (
-      clearRegex.test(t) ||
-      (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה")))
-    );
-  };
+const isClearListCommand = (t: string) => {
+  const clearRegex =
+    /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/;
+
+  return (
+    clearRegex.test(t) ||
+    /^(מחק|רחק|מרחק)$/.test(t) ||
+    (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה"))) ||
+    (t.includes("למחוק") && (t.includes("רשימה") || t.includes("הרשימה")))
+  );
+};
+
 
   const executeVoiceText = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
