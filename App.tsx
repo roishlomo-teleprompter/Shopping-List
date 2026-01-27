@@ -1062,8 +1062,8 @@ const MainList: React.FC = () => {
     // --- Step 2: יציבות + משפטים ארוכים ---
     // לא עוצרים מיד על no-speech (זה נפוץ בדסקטופ)
     // מוסיפים עצירה אוטומטית אחרי שקט קצר + רשת בטחון למשפטים ארוכים
-    const SILENCE_MS = 1200;
-    const MAX_SESSION_MS = 25_000;
+    const SILENCE_MS = 3000;
+    const MAX_SESSION_MS = 90_000;
 
     let hadAnyResult = false;
     let lastResultAt = Date.now();
@@ -1149,8 +1149,7 @@ const MainList: React.FC = () => {
 
       // no-speech בדסקטופ הוא מצב נפוץ - לא מפסיקים את ההאזנה
       if (err === "no-speech") {
-        setToast("לא זוהה דיבור - נסה לדבר ברור וקרוב למיקרופון");
-        // לא משנים state, נותנים ל-onend להרים מחדש אם צריך
+        // no-speech is common in Chrome desktop - ignore without user toast
         return;
       }
 
