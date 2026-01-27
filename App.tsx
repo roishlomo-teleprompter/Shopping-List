@@ -1410,9 +1410,7 @@ const isClearListCommand = (t: string) => {
 
                   {purchasedItems.length > 0 ? (
                     <div className="space-y-2 pt-4 border-t border-slate-200">
-                      <h3 className="text-[10px] font-black text-slate-400 uppercase tracking-widest text-right mb-2">
-                        נקנו ({purchasedItems.length})
-                      </h3>
+                      <h3 className="text-base font-bold text-slate-700 text-right mb-2">נקנו ({purchasedItems.length})</h3>
 
                       {purchasedItems.map((item) => (
                         <div
@@ -1429,7 +1427,16 @@ const isClearListCommand = (t: string) => {
                               className="text-base font-bold text-slate-500 line-through truncate text-right"
                               style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                             >
-                              {item.name} x{item.quantity}
+                              
+                              <span dir="rtl" className="flex gap-1 justify-end">
+                                <span>{item.name}</span>
+                                {(item.quantity || 1) > 1 && (
+                                  <>
+                                    <span>x</span>
+                                    <span>{item.quantity}</span>
+                                  </>
+                                )}
+                              </span>
                             </span>
                             <CheckCircle2 className="w-6 h-6 text-emerald-500" />
                           </div>
