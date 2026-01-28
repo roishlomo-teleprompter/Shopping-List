@@ -615,6 +615,113 @@ const MainList: React.FC = () => {
   const lastInterimRef = useRef<string>("");
   const startGuardRef = useRef<boolean>(false);
 
+  // ---------------------------
+  // Swipe gestures (active items): swipe left = delete, swipe right = favorite
+  // Works on desktop (mouse drag) and mobile (touch).
+  const swipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
+  const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
+  const swipeConsumedRef = useRef(false);
+  const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+  const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+
+  const SWIPE_THRESHOLD_PX = 70;
+  const SWIPE_MAX_SHIFT_PX = 110;
+
+  const isNoSwipeTarget = (t: EventTarget | null) => {
+    const el = t as HTMLElement | null;
+    if (!el) return false;
+    // Don't start swipe from buttons/inputs (qty buttons etc.)
+    return Boolean(el.closest("button, input, textarea, select, a, [data-noswipe='true']"));
+  };
+
+  const onSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
+    if (isNoSwipeTarget(e.target)) return;
+
+        swipeConsumedRef.current = false;
+    swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
+    swipeLastRef.current = { x: e.clientX, y: e.clientY };
+    setSwipeUi({ id, dx: 0 });
+  };
+
+  const onSwipePointerMove = (id: string) => (e: React.PointerEvent) => {
+    const s = swipeStartRef.current;
+    if (!s || s.id !== id || s.pointerId !== e.pointerId) return;
+
+    swipeLastRef.current = { x: e.clientX, y: e.clientY };
+
+    const dxRaw = e.clientX - s.x;
+    const dx = Math.max(-SWIPE_MAX_SHIFT_PX, Math.min(SWIPE_MAX_SHIFT_PX, dxRaw));
+
+    // Start capturing pointer only after we know this is a swipe (prevents breaking normal clicks)
+    if (!swipeCaptureRef.current && Math.abs(dxRaw) > 10 && Math.abs(dxRaw) >= Math.abs(e.clientY - s.y)) {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        swipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
+      } catch {}
+    }
+    setSwipeUi({ id, dx });
+  };
+
+  const onSwipePointerUp = (id: string) => async (e: React.PointerEvent) => {
+    const s = swipeStartRef.current;
+    const last = swipeLastRef.current;
+
+    swipeStartRef.current = null;
+
+    // Release pointer capture if we started capturing
+    try {
+      if (swipeCaptureRef.current) {
+        swipeCaptureRef.current.el.releasePointerCapture(s.pointerId);
+      }
+    } catch {}
+    swipeCaptureRef.current = null;
+    swipeLastRef.current = null;
+
+    if (!s || s.id !== id) {
+      setSwipeUi({ id: null, dx: 0 });
+      return;
+    }
+
+    const endX = last?.x ?? e.clientX;
+    const endY = last?.y ?? e.clientY;
+
+    const dx = endX - s.x;
+    const dy = endY - s.y;
+
+    // reset UI immediately
+    setSwipeUi({ id: null, dx: 0 });
+
+    // horizontal swipe only
+    if (Math.abs(dx) < SWIPE_THRESHOLD_PX || Math.abs(dx) < Math.abs(dy)) return;
+
+    swipeConsumedRef.current = true;
+
+    try {
+      if (dx < 0) {
+        await deleteItem(id); // swipe left
+      } else {
+        await toggleFavorite(id); // swipe right
+      }
+    } finally {
+      window.setTimeout(() => {
+        swipeConsumedRef.current = false;
+      }, 0);
+    }
+  };
+
+  const onSwipePointerCancel = () => {
+    swipeStartRef.current = null;
+    swipeLastRef.current = null;
+    try {
+      if (swipeCaptureRef.current) {
+        swipeCaptureRef.current.el.releasePointerCapture(swipeCaptureRef.current.pointerId);
+      }
+    } catch {}
+    swipeCaptureRef.current = null;
+    setSwipeUi({ id: null, dx: 0 });
+  };
+
+
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
 
@@ -1369,42 +1476,86 @@ const isClearListCommand = (t: string) => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      className="flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                      className="relative overflow-hidden flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm select-none"
                       dir="rtl"
+                      onPointerDown={onSwipePointerDown(item.id)}
+                      onPointerMove={onSwipePointerMove(item.id)}
+                      onPointerUp={onSwipePointerUp(item.id)}
+                      onPointerCancel={onSwipePointerCancel}
                     >
-                      <div className="flex items-center gap-2 justify-end">
-                        <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300 hover:text-rose-500" title="מחק">
-                          <Trash2 className="w-4 h-4" />
-                        </button>
-
-                        <button
-                          onClick={() => toggleFavorite(item.id)}
-                          className={`p-2 ${favoritesById.has(item.id) ? "text-amber-500" : "text-slate-300"}`}
-                          title="מועדף"
-                        >
-                          <Star className={`w-4 h-4 ${favoritesById.has(item.id) ? "fill-amber-500" : ""}`} />
-                        </button>
-                      </div>
-
+                      {/* Swipe background cue */}
                       <div
-                        className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
-                        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                        onClick={() => togglePurchased(item.id)}
+                        className={`absolute inset-0 ${
+                          swipeUi.id === item.id
+                            ? swipeUi.dx > 0
+                              ? "bg-emerald-50"
+                              : swipeUi.dx < 0
+                                ? "bg-rose-50"
+                                : "bg-transparent"
+                            : "bg-transparent"
+                        }`}
+                        style={{
+                          opacity:
+                            swipeUi.id === item.id ? Math.min(1, Math.abs(swipeUi.dx) / SWIPE_MAX_SHIFT_PX) : 0,
+                        }}
+                      />
+
+                      {/* Foreground content (slides with finger/mouse) */}
+                      <div
+                        className="relative z-10 flex items-center justify-between w-full"
+                        style={{
+                          transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
+                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
+                        }}
                       >
-                        {item.name}
+                        <div
+                          className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
+                          style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                          onClick={() => {
+                            if (swipeConsumedRef.current) return;
+                            togglePurchased(item.id);
+                          }}
+                        >
+                          {item.name}
+                        </div>
+
+                        <div
+                          className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
+                          data-noswipe="true"
+                        >
+                          <button
+                            onClick={() => updateQty(item.id, -1)}
+                            className="p-1 text-slate-400"
+                            title="הפחת"
+                            data-noswipe="true"
+                          >
+                            <Minus className="w-3 h-3" />
+                          </button>
+
+                          <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+
+                          <button
+                            onClick={() => updateQty(item.id, 1)}
+                            className="p-1 text-slate-400"
+                            title="הוסף"
+                            data-noswipe="true"
+                          >
+                            <Plus className="w-3 h-3" />
+                          </button>
+                        </div>
                       </div>
 
-                      <div className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
-                        <button onClick={() => updateQty(item.id, -1)} className="p-1 text-slate-400" title="הפחת">
-                          <Minus className="w-3 h-3" />
-                        </button>
-
-                        <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
-
-                        <button onClick={() => updateQty(item.id, 1)} className="p-1 text-slate-400" title="הוסף">
-                          <Plus className="w-3 h-3" />
-                        </button>
-                      </div>
+                      {/* Left / Right hint icons */}
+                      {swipeUi.id === item.id && swipeUi.dx > 12 ? (
+                        <div className="absolute inset-y-0 left-3 flex items-center text-emerald-600 pointer-events-none">
+                          <Star className="w-5 h-5 fill-emerald-600" />
+                        </div>
+                      ) : null}
+                      {swipeUi.id === item.id && swipeUi.dx < -12 ? (
+                        <div className="absolute inset-y-0 right-3 flex items-center text-rose-600 pointer-events-none">
+                          <Trash2 className="w-5 h-5" />
+                        </div>
+                      ) : null}
                     </div>
                   ))}
 
