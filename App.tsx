@@ -709,6 +709,74 @@ const MainList: React.FC = () => {
     }
   };
 
+  // Touch fallback for mobile browsers that may not deliver pointermove while scrolling
+  const onSwipeTouchStart = (id: string) => (e: React.TouchEvent) => {
+    if (isNoSwipeTarget(e.target)) return;
+
+    const t = e.touches[0];
+    if (!t) return;
+
+    swipeConsumedRef.current = false;
+    swipeStartRef.current = { x: t.clientX, y: t.clientY, id, pointerId: -1 };
+    swipeLastRef.current = { x: t.clientX, y: t.clientY };
+    setSwipeUi({ id, dx: 0 });
+  };
+
+  const onSwipeTouchMove = (id: string) => (e: React.TouchEvent) => {
+    const s = swipeStartRef.current;
+    if (!s || s.id !== id) return;
+
+    const t = e.touches[0];
+    if (!t) return;
+
+    swipeLastRef.current = { x: t.clientX, y: t.clientY };
+
+    const dxRaw = t.clientX - s.x;
+    const dyRaw = t.clientY - s.y;
+
+    // Only treat as swipe if mostly horizontal
+    if (Math.abs(dxRaw) < 6 || Math.abs(dxRaw) < Math.abs(dyRaw)) return;
+
+    // When we are swiping horizontally, prevent the page from hijacking the gesture (best-effort)
+    try {
+      e.preventDefault();
+    } catch {}
+
+    const dx = Math.max(-SWIPE_MAX_SHIFT_PX, Math.min(SWIPE_MAX_SHIFT_PX, dxRaw));
+    setSwipeUi({ id, dx });
+  };
+
+  const onSwipeTouchEnd = (id: string) => async (_e: React.TouchEvent) => {
+    const s = swipeStartRef.current;
+    const last = swipeLastRef.current;
+
+    swipeStartRef.current = null;
+    swipeLastRef.current = null;
+
+    if (!s || s.id !== id) {
+      setSwipeUi({ id: null, dx: 0 });
+      return;
+    }
+
+    const dxRaw = last ? last.x - s.x : 0;
+
+    if (Math.abs(dxRaw) < SWIPE_THRESHOLD_PX) {
+      setSwipeUi({ id: null, dx: 0 });
+      return;
+    }
+
+    swipeConsumedRef.current = true;
+
+    if (dxRaw < 0) {
+      await deleteItem(id);
+    } else {
+      await toggleFavorite(id);
+    }
+
+    setSwipeUi({ id: null, dx: 0 });
+  };
+
+
   const onSwipePointerCancel = () => {
     swipeStartRef.current = null;
     swipeLastRef.current = null;
@@ -1482,7 +1550,13 @@ const isClearListCommand = (t: string) => {
                       onPointerMove={onSwipePointerMove(item.id)}
                       onPointerUp={onSwipePointerUp(item.id)}
                       onPointerCancel={onSwipePointerCancel}
-                    >
+                    
+                          onTouchStart={onSwipeTouchStart(item.id)}
+                          onTouchMove={onSwipeTouchMove(item.id)}
+                          onTouchEnd={onSwipeTouchEnd(item.id)}
+                         style={{ touchAction: "pan-y" }}
+
+                        >
                       {/* Swipe background cue */}
                       <div
                         className={`absolute inset-0 ${
