@@ -1410,37 +1410,37 @@ const isClearListCommand = (t: string) => {
 
                   {purchasedItems.length > 0 ? (
                     <div className="space-y-2 pt-4 border-t border-slate-200">
-                      <h3 className="text-base font-bold text-slate-700 text-right mb-2">נקנו ({purchasedItems.length})</h3>
+                      <h3 className="text-lg font-bold text-slate-700 text-right mb-2">נקנו ({purchasedItems.length})</h3>
 
                       {purchasedItems.map((item) => (
                         <div
                           key={item.id}
                           className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
                           dir="rtl"
-                        >
-                          <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
-                            <Trash2 className="w-4 h-4" />
-                          </button>
+                        ><div className="flex items-center justify-between w-full">
+      <div
+        className="flex items-center gap-3 flex-1 justify-start cursor-pointer"
+        onClick={() => togglePurchased(item.id)}
+        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+      >
+        <CheckCircle2 className="w-6 h-6 text-emerald-500 flex-shrink-0" />
+        <span className="text-base font-bold text-slate-500 line-through truncate text-left">
+          <span className="flex gap-1">
+            <span>{item.name}</span>
+            {(item.quantity || 1) > 1 && (
+              <>
+                <span>x</span>
+                <span>{item.quantity}</span>
+              </>
+            )}
+          </span>
+        </span>
+      </div>
 
-                          <div className="flex items-center gap-3 flex-1 justify-end cursor-pointer" onClick={() => togglePurchased(item.id)}>
-                            <span
-                              className="text-base font-bold text-slate-500 line-through truncate text-right"
-                              style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                            >
-                              
-                              <span dir="rtl" className="flex gap-1 justify-end">
-                                <span>{item.name}</span>
-                                {(item.quantity || 1) > 1 && (
-                                  <>
-                                    <span>x</span>
-                                    <span>{item.quantity}</span>
-                                  </>
-                                )}
-                              </span>
-                            </span>
-                            <CheckCircle2 className="w-6 h-6 text-emerald-500" />
-                          </div>
-                        </div>
+      <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
+        <Trash2 className="w-4 h-4" />
+      </button>
+    </div></div>
                       ))}
                     </div>
                   ) : null}
