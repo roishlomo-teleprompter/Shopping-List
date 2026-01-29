@@ -616,7 +616,7 @@ const MainList: React.FC = () => {
   const startGuardRef = useRef<boolean>(false);
 
   // ---------------------------
-  // Swipe gestures (active items): swipe left = delete, swipe right = favorite
+  // Swipe gestures (active items): swipe right = delete, swipe left = favorite
   // Works on desktop (mouse drag) and mobile (touch).
   const swipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
   const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
@@ -697,10 +697,10 @@ const MainList: React.FC = () => {
     swipeConsumedRef.current = true;
 
     try {
-      if (dx < 0) {
-        await deleteItem(id); // swipe left
+      if (dx > 0) {
+        await deleteItem(id); // swipe right
       } else {
-        await toggleFavorite(id); // swipe right
+        await toggleFavorite(id); // swipe left
       }
     } finally {
       window.setTimeout(() => {
@@ -767,7 +767,7 @@ const MainList: React.FC = () => {
 
     swipeConsumedRef.current = true;
 
-    if (dxRaw < 0) {
+    if (dxRaw > 0) {
       await deleteItem(id);
     } else {
       await toggleFavorite(id);
@@ -1561,10 +1561,7 @@ const isClearListCommand = (t: string) => {
                       <div
                         className={`absolute inset-0 ${
                           swipeUi.id === item.id
-                            ? swipeUi.dx > 0
-                              ? "bg-emerald-50"
-                              : swipeUi.dx < 0
-                                ? "bg-rose-50"
+                            ? swipeUi.dx > 0 ? "bg-rose-50" : swipeUi.dx < 0 ? "bg-emerald-50"
                                 : "bg-transparent"
                             : "bg-transparent"
                         }`}
@@ -1621,13 +1618,13 @@ const isClearListCommand = (t: string) => {
 
                       {/* Left / Right hint icons */}
                       {swipeUi.id === item.id && swipeUi.dx > 12 ? (
-                        <div className="absolute inset-y-0 left-3 flex items-center text-emerald-600 pointer-events-none">
-                          <Star className="w-5 h-5 fill-emerald-600" />
+                        <div className="absolute inset-y-0 left-3 flex items-center text-rose-600 pointer-events-none">
+                          <Trash2 className="w-5 h-5" />
                         </div>
                       ) : null}
                       {swipeUi.id === item.id && swipeUi.dx < -12 ? (
-                        <div className="absolute inset-y-0 right-3 flex items-center text-rose-600 pointer-events-none">
-                          <Trash2 className="w-5 h-5" />
+                        <div className="absolute inset-y-0 right-3 flex items-center text-emerald-600 pointer-events-none">
+                          <Star className="w-5 h-5 fill-emerald-600" />
                         </div>
                       ) : null}
                     </div>
