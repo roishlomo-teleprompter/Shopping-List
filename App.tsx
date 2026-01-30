@@ -55,6 +55,7 @@ import {
   runTransaction,
   setDoc,
   updateDoc,
+  increment,
   where,
   writeBatch,
 } from "firebase/firestore";
@@ -602,6 +603,173 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   return out;
 }
 
+
+
+// ---------------------------
+// Autocomplete (Hebrew grocery suggestions)
+// ---------------------------
+const COMMON_GROCERY_HE: string[] = [
+  "עגבניה","מלפפון","בצל","שום","גזר","תפוח אדמה","בטטה","פלפל","חסה","כרוב","כרובית","ברוקולי","פטריות","אבוקדו","לימון","תפוז","תפוח","בננה","ענבים","אבטיח","מלון",
+  "לחם","פיתות","חלה","טורטיה","בגט","לחמניות",
+  "חלב","יוגורט","קוטג'","גבינה צהובה","גבינה לבנה","שמנת מתוקה","חמאה","ביצים",
+  "אורז","פסטה","קמח","סוכר","מלח","פלפל שחור","שמן זית","שמן","חומץ","רסק עגבניות","טונה",
+  "קפה","תה","דבש","שוקולד","עוגיות",
+  "נייר טואלט","מגבונים","נייר סופג","סבון כלים","נוזל רצפות","אבקת כביסה","מרכך כביסה","שקיות אשפה","שמפו","סבון","משחת שיניים",
+];
+
+type ItemHistoryEntry = { name: string; count: number; lastUsed: number };
+type SuggestSource = "favorite" | "items" | "history" | "static";
+type SuggestCandidate = { name: string; key: string; sources: Set<SuggestSource>; history?: ItemHistoryEntry };
+
+type SuggestView = { name: string; key: string; canHide: boolean; isInList: boolean; itemId?: string; currentQty?: number };
+
+
+function normalizeItemName(s: string) {
+  return s
+    .trim()
+    .replace(/\s+/g, " ")
+    .replace(/[״“”]/g, '"')
+    .replace(/[׳’]/g, "'")
+    .toLowerCase();
+}
+
+const HISTORY_STORAGE_KEY = "shopping_list_item_history_v1";
+
+
+const HIDDEN_SUGGESTIONS_STORAGE_KEY = "shopping_list_hidden_suggestions_v1";
+
+function loadHiddenSuggestions(): string[] {
+  try {
+    const raw = localStorage.getItem(HIDDEN_SUGGESTIONS_STORAGE_KEY);
+    if (!raw) return [];
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return [];
+    return parsed.filter((x) => typeof x === "string");
+  } catch {
+    return [];
+  }
+}
+
+function saveHiddenSuggestions(keys: string[]) {
+  try {
+    localStorage.setItem(HIDDEN_SUGGESTIONS_STORAGE_KEY, JSON.stringify(keys));
+  } catch {
+    // ignore
+  }
+}
+
+function loadItemHistory(): Record<string, ItemHistoryEntry> {
+  try {
+    const raw = localStorage.getItem(HISTORY_STORAGE_KEY);
+    if (!raw) return {};
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return {};
+    return parsed as Record<string, ItemHistoryEntry>;
+  } catch {
+    return {};
+  }
+}
+
+function saveItemHistory(map: Record<string, ItemHistoryEntry>) {
+  try {
+    localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(map));
+  } catch {
+    // ignore
+  }
+}
+
+function getAutocompleteSuggestions(opts: {
+  query: string;
+  favorites: string[];
+  items: ShoppingItem[];
+  history: Record<string, ItemHistoryEntry>;
+  hiddenKeys: Set<string>;
+  limit?: number;
+}) {
+  const qRaw = opts.query;
+  const q = normalizeItemName(qRaw);
+  const limit = opts.limit ?? 8;
+  if (!q) return [] as string[];
+
+  const map = new Map<string, SuggestCandidate>();
+
+  const add = (name: string, source: SuggestSource) => {
+    const trimmed = name.trim();
+    if (!trimmed) return;
+    const key = normalizeItemName(trimmed);
+    if (!key) return;
+    if (opts.hiddenKeys.has(key)) return;
+    const existing = map.get(key);
+    if (existing) {
+      existing.sources.add(source);
+      return;
+    }
+    map.set(key, { name: trimmed, key, sources: new Set([source]) });
+  };
+
+  // Prefer user-owned casing/spacing by adding user sources first
+  for (const n of opts.favorites) add(n, "favorite");
+  for (const it of opts.items) add(it.name, "items");
+  for (const [key, h] of Object.entries(opts.history)) {
+    add(h?.name || key, "history");
+    const c = map.get(key);
+    if (c) c.history = h;
+  }
+  for (const n of COMMON_GROCERY_HE) add(n, "static");
+
+  const candidates = Array.from(map.values());
+
+  const inListByKey = new Map<string, { id: string; quantity: number }>();
+  for (const it of opts.items) {
+    const k = normalizeItemName(it.name);
+    if (!k) continue;
+    // keep first occurrence
+    if (!inListByKey.has(k)) inListByKey.set(k, { id: it.id, quantity: it.quantity });
+  }
+
+
+  const score = (c: SuggestCandidate) => {
+    const nameKey = c.key;
+    const starts = nameKey.startsWith(q);
+    const contains = !starts && nameKey.includes(q);
+    if (!starts && !contains) return -Infinity;
+
+    let s = starts ? 120 : 70;
+
+    if (c.sources.has("favorite")) s += 45;
+    if (c.sources.has("history")) s += 35;
+    if (c.sources.has("items")) s += 20;
+    if (c.sources.has("static")) s += 10;
+
+    if (c.history) {
+      const cnt = Math.max(0, c.history.count || 0);
+      const last = Math.max(0, c.history.lastUsed || 0);
+      s += Math.min(30, Math.log2(cnt + 1) * 8);
+      const daysAgo = (Date.now() - last) / (1000 * 60 * 60 * 24);
+      const recency = Math.max(0, 20 - daysAgo);
+      s += Math.min(20, recency);
+    }
+
+    return s;
+  };
+
+  return candidates    .map((c) => ({ c, s: score(c) }))
+    .filter((x) => Number.isFinite(x.s))
+    .sort((a, b) => b.s - a.s)
+    .slice(0, limit)
+    .map((x) => {
+      const inList = inListByKey.get(x.c.key);
+      return {
+        name: x.c.name,
+        key: x.c.key,
+        canHide: x.c.sources.has("history") && !x.c.sources.has("favorite"),
+        isInList: Boolean(inList),
+        itemId: inList?.id,
+        currentQty: inList?.quantity,
+      };
+    });
+}
+
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
@@ -611,6 +779,19 @@ const MainList: React.FC = () => {
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
   const [inputValue, setInputValue] = useState("");
+
+// Autocomplete state
+const inputRef = useRef<HTMLInputElement | null>(null);
+const [isSuggestOpen, setIsSuggestOpen] = useState(false);
+const [activeSuggestIndex, setActiveSuggestIndex] = useState(-1);
+const historyRef = useRef<Record<string, ItemHistoryEntry>>({});
+const blurCloseTimerRef = useRef<number | null>(null);
+
+useEffect(() => {
+  historyRef.current = loadItemHistory();
+}, []);
+
+
   const [isCopied, setIsCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
 
@@ -916,6 +1097,101 @@ const MainList: React.FC = () => {
     [items]
   );
 
+
+
+const recordHistory = (rawName: string) => {
+  const name = rawName.trim();
+  if (!name) return;
+  const key = normalizeItemName(name);
+  if (!key) return;
+
+  const prev = historyRef.current[key];
+  const next: ItemHistoryEntry = {
+    name,
+    count: (prev?.count || 0) + 1,
+    lastUsed: Date.now(),
+  };
+  historyRef.current = { ...historyRef.current, [key]: next };
+  saveItemHistory(historyRef.current);
+};
+
+const hiddenSuggestRef = useRef<Set<string>>(new Set());
+
+useEffect(() => {
+  hiddenSuggestRef.current = new Set(loadHiddenSuggestions());
+}, []);
+
+const suggestionList = useMemo(() => {
+  return getAutocompleteSuggestions({
+    query: inputValue,
+    favorites: favorites.map((f) => f.name),
+    items: items,
+    history: historyRef.current,
+    hiddenKeys: hiddenSuggestRef.current,
+    limit: 8,
+  });
+}, [inputValue, favorites, items]);
+
+const closeSuggestionsSoon = () => {
+  if (blurCloseTimerRef.current) window.clearTimeout(blurCloseTimerRef.current);
+  blurCloseTimerRef.current = window.setTimeout(() => {
+    setIsSuggestOpen(false);
+    setActiveSuggestIndex(-1);
+  }, 120);
+};
+
+const openSuggestions = () => {
+  if (blurCloseTimerRef.current) window.clearTimeout(blurCloseTimerRef.current);
+  setIsSuggestOpen(true);
+};
+
+const applySuggestion = async (s: SuggestView) => {
+  // If already in list: increment quantity instead of inserting duplicate
+  if (s.isInList && s.itemId) {
+    const nextQty = (s.currentQty ?? 1) + 1;
+    await updateQty(s.itemId, +1);
+    setToast(`כבר ברשימה - הגדלתי כמות ל-${nextQty}`);
+    setInputValue("");
+    setActiveSuggestIndex(-1);
+    setIsSuggestOpen(false);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+    return;
+  }
+
+  // Otherwise: fill input for regular add flow
+  setInputValue(s.name);
+  setActiveSuggestIndex(-1);
+  setIsSuggestOpen(false);
+  window.requestAnimationFrame(() => inputRef.current?.focus());
+};
+
+
+const hideSuggestion = (s: SuggestView) => {
+  const key = s.key || normalizeItemName(s.name);
+  if (!key) return;
+
+  // 1) remove from history (so it won't reappear)
+  const nextHistory = { ...historyRef.current };
+  if (nextHistory[key]) {
+    delete nextHistory[key];
+    historyRef.current = nextHistory;
+    saveItemHistory(nextHistory);
+  }
+
+  // 2) add to hidden list (so it won't show even from static later)
+  const nextHidden = new Set(hiddenSuggestRef.current);
+  nextHidden.add(key);
+  hiddenSuggestRef.current = nextHidden;
+  saveHiddenSuggestions(Array.from(nextHidden));
+
+  // close suggestions and keep focus
+  setIsSuggestOpen(false);
+  setActiveSuggestIndex(-1);
+  window.requestAnimationFrame(() => inputRef.current?.focus());
+};
+
+
+
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
@@ -928,6 +1204,19 @@ const MainList: React.FC = () => {
     const name = inputValue.trim();
     if (!name) return;
 
+    // If the item already exists in the list, increment quantity instead of creating a duplicate row
+    const normalized = normalizeItemName(name);
+    const existing = items.find((it) => normalizeItemName(it.name) === normalized);
+
+    if (existing) {
+      await updateQty(existing.id, 1);
+      recordHistory(existing.name);
+      setInputValue("");
+      setIsSuggestOpen(false);
+      setActiveSuggestIndex(-1);
+      return;
+    }
+
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
       id: itemId,
@@ -939,7 +1228,10 @@ const MainList: React.FC = () => {
     };
 
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+    recordHistory(name);
     setInputValue("");
+    setIsSuggestOpen(false);
+      setActiveSuggestIndex(-1);
   };
 
   const togglePurchased = async (id: string) => {
@@ -956,6 +1248,17 @@ const MainList: React.FC = () => {
 
   const updateQty = async (id: string, delta: number) => {
     if (!list?.id) return;
+
+    // For positive deltas (the common case), use an atomic Firestore increment to avoid stale-state bugs
+    // when the user adds the same item multiple times quickly.
+    if (delta > 0) {
+      await updateDoc(doc(db, "lists", list.id, "items", id), {
+        quantity: increment(delta),
+      });
+      return;
+    }
+
+    // For negative deltas we clamp locally to keep quantity >= 1.
     const item = items.find((i) => i.id === id);
     if (!item) return;
 
@@ -1091,7 +1394,11 @@ const MainList: React.FC = () => {
   const addFavoriteToList = async (fav: { id: string; name: string }) => {
     if (!list?.id) return;
 
-    const existing = items.find((i) => !i.isPurchased && i.name.trim() === fav.name.trim());
+    const favKey = normalizeItemName(fav.name);
+
+    const existing = items.find(
+      (i) => !i.isPurchased && normalizeItemName(i.name) === favKey
+    );
 
     if (existing) {
       await updateQty(existing.id, 1);
@@ -1170,15 +1477,15 @@ const MainList: React.FC = () => {
     if (Math.abs(dxRaw) < FAV_SWIPE_THRESHOLD_PX) return;
     if (Math.abs(dyRaw) > Math.abs(dxRaw) * 1.6) return;
 
+    const fav = favorites.find((f) => f.id === id);
+
     if (dxRaw > 0) {
-      // swipe right -> add to list
-      const fav = favorites.find((f) => f.id === id);
+      // swipe right -> add to list (or increment if exists)
       if (fav) await addFavoriteToList(fav);
     } else {
-      // swipe left -> remove from favorites
+      // swipe left -> remove from favorites ONLY
       await removeFavorite(id);
-      const fav = favorites.find((f) => f.id === id);
-      if (fav) await addFavoriteToList(fav);
+      setToast("הוסר מהמועדפים");
     }
   };
 
@@ -1646,12 +1953,65 @@ const isClearListCommand = (t: string) => {
           <>
             <form onSubmit={addItem} className="relative">
               <input
+                ref={inputRef}
                 value={inputValue}
-                onChange={(e) => setInputValue(e.target.value)}
+                onFocus={openSuggestions}
+                onBlur={closeSuggestionsSoon}
+                onKeyDown={(e) => {
+                  if (!isSuggestOpen) return;
+
+                  if (e.key === "Escape") {
+                    e.preventDefault();
+                    setIsSuggestOpen(false);
+                    setActiveSuggestIndex(-1);
+                    return;
+                  }
+
+                  if (e.key === "ArrowDown") {
+                    e.preventDefault();
+                    if (suggestionList.length === 0) return;
+                    setActiveSuggestIndex((prev) => {
+                      const next = prev + 1;
+                      return next >= suggestionList.length ? 0 : next;
+                    });
+                    return;
+                  }
+
+                  if (e.key === "ArrowUp") {
+                    e.preventDefault();
+                    if (suggestionList.length === 0) return;
+                    setActiveSuggestIndex((prev) => {
+                      const next = prev - 1;
+                      return next < 0 ? suggestionList.length - 1 : next;
+                    });
+                    return;
+                  }
+
+                  if (e.key === "Tab") {
+                    if (suggestionList.length === 0) return;
+                    e.preventDefault();
+                    applySuggestion(suggestionList[Math.max(0, activeSuggestIndex >= 0 ? activeSuggestIndex : 0)]);
+                    return;
+                  }
+
+                  if (e.key === "Enter") {
+                    if (suggestionList.length > 0) {
+                      e.preventDefault();
+                      const idx = activeSuggestIndex >= 0 ? activeSuggestIndex : 0;
+                      applySuggestion(suggestionList[idx]);
+                      return;
+                    }
+                  }
+                }}
+                onChange={(e) => {
+                  setInputValue(e.target.value);                  openSuggestions();
+                  setActiveSuggestIndex(-1);
+                }}
                 placeholder="מה להוסיף לרשימה?"
-                className="w-full p-4 pr-4 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
+                className="w-full p-4 pr-12 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
                 dir="rtl"
               />
+
               <button
                 type="submit"
                 className="absolute left-2.5 top-2.5 bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all"
@@ -1659,6 +2019,66 @@ const isClearListCommand = (t: string) => {
               >
                 <Plus className="w-6 h-6" />
               </button>
+
+              {isSuggestOpen && inputValue.trim() && suggestionList.length > 0 ? (
+  <div
+    className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden"
+    dir="rtl"
+    onMouseDown={(e) => {
+      // Prevent input blur before click
+      e.preventDefault();
+    }}
+    onPointerDown={(e) => {
+      // Mobile/touch: prevent blur before selection
+      e.preventDefault();
+    }}
+  >
+    {suggestionList.map((s, idx) => (
+    <div
+      key={s.key + "-" + idx}
+      className={
+        "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
+        (idx === activeSuggestIndex ? "bg-slate-100" : "")
+      }
+    >
+      <button
+        type="button"
+        className="flex-1 text-right px-4 py-3 flex items-center justify-between"
+        onPointerDown={(e) => {
+          e.preventDefault();
+          applySuggestion(s);
+        }}
+        title="השלמה"
+      >
+        <span className="font-semibold text-slate-700">{s.name}</span>
+        {s.isInList ? (
+          <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+            ברשימה{typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
+          </span>
+        ) : (
+          <span className="text-xs text-slate-400">Tab</span>
+        )}
+      </button>
+
+      {s.canHide ? (
+        <button
+          type="button"
+          className="px-3 text-slate-400 hover:text-slate-700"
+          onPointerDown={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            hideSuggestion(s);
+          }}
+          title="הסר מההשלמות"
+          aria-label="הסר מההשלמות"
+        >
+          ✕
+        </button>
+      ) : null}
+    </div>
+  ))}
+  </div>
+) : null}
             </form>
 
             {items.length === 0 ? (
@@ -1886,14 +2306,13 @@ const isClearListCommand = (t: string) => {
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="flex justify-start mb-2" dir="ltr">
-           <button
-  onClick={shareListWhatsApp}
-  className="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
-  title="שתף רשימה בוואטסאפ"
->
-  <MessageCircle className="w-6 h-6" />
-</button>
-
+            <button
+              onClick={shareListWhatsApp}
+              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
+              title="שתף רשימה בוואטסאפ"
+            >
+              <MessageCircle className="w-6 h-6" />
+            </button>
           </div>
 
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
