@@ -19,6 +19,20 @@ import {
   MicOff,
 } from "lucide-react";
 
+// Local icon: list + plus (works even if lucide doesn't include ListPlus)
+const ListPlusIcon: React.FC<{ className?: string }> = ({ className }) => {
+  return (
+    <span className={"relative inline-block " + (className || "")}>
+      <ListChecks className="w-5 h-5" />
+      <span className="absolute -right-1 -top-1">
+        <Plus className="w-3.5 h-3.5" />
+      </span>
+    </span>
+  )
+}
+
+
+
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -616,7 +630,7 @@ const MainList: React.FC = () => {
   const startGuardRef = useRef<boolean>(false);
 
   // ---------------------------
-  // Swipe gestures (active items): swipe right = delete, swipe left = favorite
+  // Swipe gestures (active items): swipe left = delete, swipe right = favorite
   // Works on desktop (mouse drag) and mobile (touch).
   const swipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
   const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
@@ -697,10 +711,10 @@ const MainList: React.FC = () => {
     swipeConsumedRef.current = true;
 
     try {
-      if (dx > 0) {
-        await deleteItem(id); // swipe right
+      if (dx < 0) {
+        await deleteItem(id); // swipe left
       } else {
-        await toggleFavorite(id); // swipe left
+        await toggleFavorite(id); // swipe right
       }
     } finally {
       window.setTimeout(() => {
@@ -767,7 +781,7 @@ const MainList: React.FC = () => {
 
     swipeConsumedRef.current = true;
 
-    if (dxRaw > 0) {
+    if (dxRaw < 0) {
       await deleteItem(id);
     } else {
       await toggleFavorite(id);
@@ -1061,6 +1075,120 @@ const MainList: React.FC = () => {
     const text = `${header}\n\n${lines}\n\n${footer}`;
     openWhatsApp(text);
   };
+
+
+  // ---------------------------
+  // Swipe gestures (favorites): swipe right = remove from favorites (delete), swipe left = add to list
+  // Pointer-only for Android stability.
+  const favSwipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
+  const favSwipeLastRef = useRef<{ x: number; y: number } | null>(null);
+  const favSwipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+  const [favSwipeUi, setFavSwipeUi] = useState<{ id: string | null; dx: number; rawDx: number }>({ id: null, dx: 0, rawDx: 0 });
+
+  const FAV_SWIPE_THRESHOLD_PX = 60;
+  const FAV_SWIPE_MAX_SHIFT_PX = 110;
+
+  const addFavoriteToList = async (fav: { id: string; name: string }) => {
+    if (!list?.id) return;
+
+    const existing = items.find((i) => !i.isPurchased && i.name.trim() === fav.name.trim());
+
+    if (existing) {
+      await updateQty(existing.id, 1);
+    } else {
+      const itemId = crypto.randomUUID();
+      const newItem: ShoppingItem = {
+        id: itemId,
+        name: fav.name,
+        quantity: 1,
+        isPurchased: false,
+        isFavorite: false,
+        createdAt: Date.now(),
+      };
+      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+    }
+  };
+
+  const onFavSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
+    if (isNoSwipeTarget(e.target)) return;
+
+    favSwipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
+    favSwipeLastRef.current = { x: e.clientX, y: e.clientY };
+    setFavSwipeUi({ id, dx: 0, rawDx: 0 });
+  };
+
+  const onFavSwipePointerMove = (id: string) => (e: React.PointerEvent) => {
+    const s = favSwipeStartRef.current;
+    if (!s || s.id !== id) return;
+
+    favSwipeLastRef.current = { x: e.clientX, y: e.clientY };
+
+    const dxRaw = e.clientX - s.x;
+    const dyRaw = e.clientY - s.y;
+
+    // start capture only when it's clearly horizontal
+    if (!favSwipeCaptureRef.current && Math.abs(dxRaw) > 10 && Math.abs(dyRaw) <= Math.abs(dxRaw) * 1.2) {
+      try {
+        (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+        favSwipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
+      } catch {}
+    }
+
+    // allow a bit of vertical movement (so swipe doesn't "fail" on real phones)
+    if (Math.abs(dyRaw) > Math.abs(dxRaw) * 1.6) return;
+
+    const dxClamped = Math.max(-FAV_SWIPE_MAX_SHIFT_PX, Math.min(FAV_SWIPE_MAX_SHIFT_PX, dxRaw));
+    setFavSwipeUi({ id, dx: dxClamped, rawDx: dxRaw });
+  };
+
+  const onFavSwipePointerUp = (id: string) => async (e: React.PointerEvent) => {
+    const s = favSwipeStartRef.current;
+    const last = favSwipeLastRef.current;
+
+    favSwipeStartRef.current = null;
+
+    try {
+      if (favSwipeCaptureRef.current && s) {
+        favSwipeCaptureRef.current.el.releasePointerCapture(s.pointerId);
+      }
+    } catch {}
+    favSwipeCaptureRef.current = null;
+    favSwipeLastRef.current = null;
+
+    // reset UI
+    setFavSwipeUi({ id: null, dx: 0, rawDx: 0 });
+
+    if (!s || s.id !== id) return;
+
+    const endX = last?.x ?? e.clientX;
+    const endY = last?.y ?? e.clientY;
+
+    const dxRaw = endX - s.x;
+    const dyRaw = endY - s.y;
+
+    // require a meaningful horizontal swipe (but not too strict)
+    if (Math.abs(dxRaw) < FAV_SWIPE_THRESHOLD_PX) return;
+    if (Math.abs(dyRaw) > Math.abs(dxRaw) * 1.6) return;
+
+    if (dxRaw > 0) {
+      // swipe right -> add to list
+      const fav = favorites.find((f) => f.id === id);
+      if (fav) await addFavoriteToList(fav);
+    } else {
+      // swipe left -> remove from favorites
+      await removeFavorite(id);
+      const fav = favorites.find((f) => f.id === id);
+      if (fav) await addFavoriteToList(fav);
+    }
+  };
+
+  const onFavSwipePointerCancel = () => {
+    favSwipeStartRef.current = null;
+    favSwipeLastRef.current = null;
+    favSwipeCaptureRef.current = null;
+    setFavSwipeUi({ id: null, dx: 0, rawDx: 0 });
+  };
+
 
   // ---------------------------
   // Voice actions
@@ -1561,7 +1689,10 @@ const isClearListCommand = (t: string) => {
                       <div
                         className={`absolute inset-0 ${
                           swipeUi.id === item.id
-                            ? swipeUi.dx > 0 ? "bg-rose-50" : swipeUi.dx < 0 ? "bg-emerald-50"
+                            ? swipeUi.dx > 0
+                              ? "bg-emerald-50"
+                              : swipeUi.dx < 0
+                                ? "bg-rose-50"
                                 : "bg-transparent"
                             : "bg-transparent"
                         }`}
@@ -1618,13 +1749,13 @@ const isClearListCommand = (t: string) => {
 
                       {/* Left / Right hint icons */}
                       {swipeUi.id === item.id && swipeUi.dx > 12 ? (
-                        <div className="absolute inset-y-0 left-3 flex items-center text-rose-600 pointer-events-none">
-                          <Trash2 className="w-5 h-5" />
+                        <div className="absolute inset-y-0 left-3 flex items-center text-emerald-600 pointer-events-none">
+                          <Star className="w-5 h-5 fill-emerald-600" />
                         </div>
                       ) : null}
                       {swipeUi.id === item.id && swipeUi.dx < -12 ? (
-                        <div className="absolute inset-y-0 right-3 flex items-center text-emerald-600 pointer-events-none">
-                          <Star className="w-5 h-5 fill-emerald-600" />
+                        <div className="absolute inset-y-0 right-3 flex items-center text-rose-600 pointer-events-none">
+                          <Trash2 className="w-5 h-5" />
                         </div>
                       ) : null}
                     </div>
@@ -1687,47 +1818,62 @@ const isClearListCommand = (t: string) => {
                 {favorites.map((fav) => (
                   <div
                     key={fav.id}
-                    className="flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
-                    dir="rtl"
+                    className="relative overflow-hidden rounded-2xl select-none"
+                    dir="ltr"
+                    onPointerDown={onFavSwipePointerDown(fav.id)}
+                    onPointerMove={onFavSwipePointerMove(fav.id)}
+                    onPointerUp={onFavSwipePointerUp(fav.id)}
+                    onPointerCancel={onFavSwipePointerCancel}
+                    style={{ touchAction: "pan-y" }}
                   >
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={async () => {
-                          if (!list?.id) return;
+                    {/* Swipe background */}
+                    <div
+                      className={`absolute inset-0 ${
+                        favSwipeUi.id === fav.id
+                          ? favSwipeUi.rawDx > 0
+                            ? "bg-emerald-50"
+                            : favSwipeUi.rawDx < 0
+                              ? "bg-rose-50"
+                              : "bg-transparent"
+                          : "bg-transparent"
+                      }`}
+                      style={{
+                        opacity: favSwipeUi.id === fav.id ? Math.min(1, Math.abs(favSwipeUi.rawDx) / FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                      }}
+                    />
 
-                          const existing = items.find((i) => !i.isPurchased && i.name.trim() === fav.name.trim());
+                    {/* Swipe icons: RIGHT swipe shows Add-to-list on LEFT, LEFT swipe shows Delete on RIGHT */}
+                    <div className="absolute inset-0 flex items-center justify-between px-4 pointer-events-none">
+                      {/* Swipe RIGHT (add to list) reveals LEFT side */}
+                      <div className="flex items-center gap-2 text-emerald-600">
+                        <ListPlusIcon className="w-6 h-6" />
+                      </div>
 
-                          if (existing) {
-                            await updateQty(existing.id, 1);
-                          } else {
-                            const itemId = crypto.randomUUID();
-                            const newItem: ShoppingItem = {
-                              id: itemId,
-                              name: fav.name,
-                              quantity: 1,
-                              isPurchased: false,
-                              isFavorite: false,
-                              createdAt: Date.now(),
-                            };
-                            await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
-                          }
-                        }}
-                        className="px-1 py-0.5 text-[10px] rounded-md bg-emerald-500 text-white shadow-md active:scale-90 transition-transform font-black"
-                        title="הוסף לרשימה"
+                      {/* Swipe LEFT (remove favorite) reveals RIGHT side */}
+                      <div className="flex items-center gap-2 text-rose-600">
+                        <Trash2 className="w-5 h-5" />
+                      </div>
+                    </div>
+
+                    {/* Foreground card */}
+                    <div
+                      className="relative z-10 flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                      style={{
+                        transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
+                        transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
+                      }}
+                    >
+                      <div className="flex items-center gap-2" />
+
+                      <div
+                        className="flex-1 text-right font-bold text-slate-700 truncate px-3 text-base"
+                        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                       >
-                        הוסף לרשימה
-                      </button>
+                        {fav.name}
+                      </div>
 
-                      <button onClick={() => removeFavorite(fav.id)} className="p-2 text-slate-300 hover:text-rose-500" title="הסר ממועדפים">
-                        <Trash2 className="w-4 h-4" />
-                      </button>
+                      <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
                     </div>
-
-                    <div className="flex-1 text-right font-black text-slate-700 truncate px-3" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
-                      {fav.name}
-                    </div>
-
-                    <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
                   </div>
                 ))}
               </div>
