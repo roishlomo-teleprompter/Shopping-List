@@ -70,7 +70,7 @@ import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 (async () => {
   try {
     await setPersistence(auth, browserLocalPersistence);
-  } catch {
+  } catch (e) {
     // ignore
   }
 })();
@@ -88,7 +88,7 @@ async function copyToClipboard(text: string) {
   try {
     await navigator.clipboard.writeText(text);
     return true;
-  } catch {
+  } catch (e) {
     window.prompt("העתק את הקישור:", text);
     return false;
   }
@@ -98,9 +98,9 @@ async function signInSmart() {
   try {
     try {
       await setPersistence(auth, browserLocalPersistence);
-    } catch {
-      // ignore
-    }
+    } catch (e) {
+    return []
+  }
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
     const code = e?.code as string | undefined;
@@ -636,24 +636,79 @@ function normalizeItemName(s: string) {
 const HISTORY_STORAGE_KEY = "shopping_list_item_history_v1";
 
 
+
 const HIDDEN_SUGGESTIONS_STORAGE_KEY = "shopping_list_hidden_suggestions_v1";
 
-function loadHiddenSuggestions(): string[] {
+// Soft-hide behavior:
+// - Hiding a suggestion removes it from the list for a limited time (TTL).
+// - If the user adds the item again, it becomes visible again immediately.
+const HIDDEN_TTL_MS = 24 * 60 * 60 * 1000; // 24 hours
+
+type HiddenSuggestionsMap = Record<string, number>; // key -> expiresAt (epoch ms)
+
+function loadHiddenSuggestionsMap(): HiddenSuggestionsMap {
   try {
     const raw = localStorage.getItem(HIDDEN_SUGGESTIONS_STORAGE_KEY);
-    if (!raw) return [];
+    if (!raw) return {};
     const parsed = JSON.parse(raw);
-    if (!Array.isArray(parsed)) return [];
-    return parsed.filter((x) => typeof x === "string");
-  } catch {
-    return [];
+    if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
+    const out: HiddenSuggestionsMap = {};
+    for (const [k, v] of Object.entries(parsed as Record<string, unknown>)) {
+      if (typeof k !== "string") continue;
+      if (typeof v === "number" && Number.isFinite(v)) out[k] = v;
+    }
+    return out;
+  } catch (e) {
+    return {};
   }
 }
 
-function saveHiddenSuggestions(keys: string[]) {
+function saveHiddenSuggestionsMap(map: HiddenSuggestionsMap) {
   try {
-    localStorage.setItem(HIDDEN_SUGGESTIONS_STORAGE_KEY, JSON.stringify(keys));
-  } catch {
+    localStorage.setItem(HIDDEN_SUGGESTIONS_STORAGE_KEY, JSON.stringify(map));
+  } catch (e) {
+    // ignore
+  }
+}
+
+// Returns active hidden keys (and cleans up expired ones)
+function loadHiddenSuggestions(): string[] {
+  const map = loadHiddenSuggestionsMap();
+  const now = Date.now();
+  const active: string[] = [];
+  let changed = false;
+
+  for (const [k, expiresAt] of Object.entries(map)) {
+    if (typeof expiresAt !== "number" || !Number.isFinite(expiresAt)) {
+      delete map[k];
+      changed = true;
+      continue;
+    }
+    if (expiresAt > now) active.push(k);
+    else {
+      delete map[k];
+      changed = true;
+    }
+  }
+
+  if (changed) saveHiddenSuggestionsMap(map);
+  return active;
+}
+
+function hideSuggestionKey(key: string) {
+  const map = loadHiddenSuggestionsMap();
+  map[key] = Date.now() + HIDDEN_TTL_MS;
+  saveHiddenSuggestionsMap(map);
+}
+
+function unhideSuggestionKey(key: string) {
+  try {
+    const map = loadHiddenSuggestionsMap();
+    if (map[key]) {
+      delete map[key];
+      saveHiddenSuggestionsMap(map);
+    }
+  } catch (e) {
     // ignore
   }
 }
@@ -665,7 +720,7 @@ function loadItemHistory(): Record<string, ItemHistoryEntry> {
     const parsed = JSON.parse(raw);
     if (!parsed || typeof parsed !== "object") return {};
     return parsed as Record<string, ItemHistoryEntry>;
-  } catch {
+  } catch (e) {
     return {};
   }
 }
@@ -673,7 +728,7 @@ function loadItemHistory(): Record<string, ItemHistoryEntry> {
 function saveItemHistory(map: Record<string, ItemHistoryEntry>) {
   try {
     localStorage.setItem(HISTORY_STORAGE_KEY, JSON.stringify(map));
-  } catch {
+  } catch (e) {
     // ignore
   }
 }
@@ -852,7 +907,7 @@ useEffect(() => {
       try {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         swipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
-      } catch {}
+      } catch (e) {}
     }
     setSwipeUi({ id, dx });
   };
@@ -868,7 +923,7 @@ useEffect(() => {
       if (swipeCaptureRef.current) {
         swipeCaptureRef.current.el.releasePointerCapture(s.pointerId);
       }
-    } catch {}
+    } catch (e) {}
     swipeCaptureRef.current = null;
     swipeLastRef.current = null;
 
@@ -935,7 +990,7 @@ useEffect(() => {
     // When we are swiping horizontally, prevent the page from hijacking the gesture (best-effort)
     try {
       e.preventDefault();
-    } catch {}
+    } catch (e) {}
 
     const dx = Math.max(-SWIPE_MAX_SHIFT_PX, Math.min(SWIPE_MAX_SHIFT_PX, dxRaw));
     setSwipeUi({ id, dx });
@@ -979,7 +1034,7 @@ useEffect(() => {
       if (swipeCaptureRef.current) {
         swipeCaptureRef.current.el.releasePointerCapture(swipeCaptureRef.current.pointerId);
       }
-    } catch {}
+    } catch (e) {}
     swipeCaptureRef.current = null;
     setSwipeUi({ id: null, dx: 0 });
   };
@@ -1122,12 +1177,15 @@ useEffect(() => {
 }, []);
 
 const suggestionList = useMemo(() => {
+  const hidden = new Set(loadHiddenSuggestions());
+  hiddenSuggestRef.current = hidden;
+
   return getAutocompleteSuggestions({
     query: inputValue,
     favorites: favorites.map((f) => f.name),
     items: items,
     history: historyRef.current,
-    hiddenKeys: hiddenSuggestRef.current,
+    hiddenKeys: hidden,
     limit: 8,
   });
 }, [inputValue, favorites, items]);
@@ -1150,6 +1208,11 @@ const applySuggestion = async (s: SuggestView) => {
   if (s.isInList && s.itemId) {
     const nextQty = (s.currentQty ?? 1) + 1;
     await updateQty(s.itemId, +1);
+    const pickKey = s.key || normalizeItemName(s.name);
+    if (pickKey) {
+      unhideSuggestionKey(pickKey);
+      hiddenSuggestRef.current.delete(pickKey);
+    }
     setToast(`כבר ברשימה - הגדלתי כמות ל-${nextQty}`);
     setInputValue("");
     setActiveSuggestIndex(-1);
@@ -1182,7 +1245,7 @@ const hideSuggestion = (s: SuggestView) => {
   const nextHidden = new Set(hiddenSuggestRef.current);
   nextHidden.add(key);
   hiddenSuggestRef.current = nextHidden;
-  saveHiddenSuggestions(Array.from(nextHidden));
+  hideSuggestionKey(key);
 
   // close suggestions and keep focus
   setIsSuggestOpen(false);
@@ -1210,6 +1273,10 @@ const hideSuggestion = (s: SuggestView) => {
 
     if (existing) {
       await updateQty(existing.id, 1);
+      if (normalized) {
+        unhideSuggestionKey(normalized);
+        hiddenSuggestRef.current.delete(normalized);
+      }
       recordHistory(existing.name);
       setInputValue("");
       setIsSuggestOpen(false);
@@ -1228,6 +1295,10 @@ const hideSuggestion = (s: SuggestView) => {
     };
 
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+    if (normalized) {
+      unhideSuggestionKey(normalized);
+      hiddenSuggestRef.current.delete(normalized);
+    }
     recordHistory(name);
     setInputValue("");
     setIsSuggestOpen(false);
@@ -1344,9 +1415,9 @@ const hideSuggestion = (s: SuggestView) => {
         });
         return;
       }
-    } catch {
-      // ignore
-    }
+    } catch (e) {
+    return []
+  }
 
     await copyToClipboard(link);
     setIsCopied(true);
@@ -1438,7 +1509,7 @@ const hideSuggestion = (s: SuggestView) => {
       try {
         (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
         favSwipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
-      } catch {}
+      } catch (e) {}
     }
 
     // allow a bit of vertical movement (so swipe doesn't "fail" on real phones)
@@ -1458,7 +1529,7 @@ const hideSuggestion = (s: SuggestView) => {
       if (favSwipeCaptureRef.current && s) {
         favSwipeCaptureRef.current.el.releasePointerCapture(s.pointerId);
       }
-    } catch {}
+    } catch (e) {}
     favSwipeCaptureRef.current = null;
     favSwipeLastRef.current = null;
 
@@ -1658,7 +1729,7 @@ const isClearListCommand = (t: string) => {
     if (recognitionRef.current) {
       try {
         recognitionRef.current.stop();
-      } catch {
+      } catch (e) {
         // ignore
       }
       recognitionRef.current = null;
@@ -1751,7 +1822,7 @@ const isClearListCommand = (t: string) => {
         hadAnyResult = true;
         lastResultAt = Date.now();
         scheduleSilenceStop();
-      } catch {
+      } catch (e) {
         // ignore
       }
     };
@@ -1800,7 +1871,7 @@ const isClearListCommand = (t: string) => {
         }
         try {
           rec.start();
-        } catch {
+        } catch (e) {
           // ignore
         } finally {
           startGuardRef.current = false;
@@ -1829,9 +1900,9 @@ const isClearListCommand = (t: string) => {
 
     try {
       recognitionRef.current?.stop?.();
-    } catch {
-      // ignore
-    }
+    } catch (e) {
+    return []
+  }
 
     // חשוב: מחברים Final + Interim יחד
     // זה מונע מצב כמו: "שתי" ב-final ו-"מלפפונים" ב-interim שנדבקים בטעות לפריט קודם
@@ -1862,7 +1933,7 @@ const isClearListCommand = (t: string) => {
       try {
         holdActiveRef.current = false;
         recognitionRef.current?.stop?.();
-      } catch {
+      } catch (e) {
         // ignore
       }
     };
