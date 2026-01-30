@@ -1886,13 +1886,14 @@ const isClearListCommand = (t: string) => {
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <div className="flex justify-start mb-2" dir="ltr">
-            <button
-              onClick={shareListWhatsApp}
-              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
-              title="שתף רשימה בוואטסאפ"
-            >
-              <MessageCircle className="w-6 h-6" />
-            </button>
+           <button
+  onClick={shareListWhatsApp}
+  className="w-12 h-12 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
+  title="שתף רשימה בוואטסאפ"
+>
+  <MessageCircle className="w-6 h-6" />
+</button>
+
           </div>
 
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
