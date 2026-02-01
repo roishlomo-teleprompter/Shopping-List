@@ -17,6 +17,7 @@ import {
   Loader2,
   Mic,
   MicOff,
+  Calendar,
 } from "lucide-react";
 
 // Local icon: list + plus (works even if lucide doesn't include ListPlus)
@@ -832,6 +833,32 @@ const MainList: React.FC = () => {
 
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
+
+  // Calendar (Google Calendar template link)
+  const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [calendarDateTime, setCalendarDateTime] = useState<string>("");
+  const [calendarDurationMin, setCalendarDurationMin] = useState<number>(60);
+
+  const openGoogleCalendarTemplate = () => {
+    if (!calendarDateTime) {
+      toast("בחר תאריך ושעה לתזכורת");
+      return;
+    }
+    const start = new Date(calendarDateTime);
+    if (Number.isNaN(start.getTime())) {
+      toast("תאריך ושעה לא תקינים");
+      return;
+    }
+    const end = new Date(start.getTime() + Math.max(5, calendarDurationMin) * 60 * 1000);
+    const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
+    const dates = `${fmt(start)}/${fmt(end)}`;
+    const text = encodeURIComponent("תזכורת לביצוע קניות");
+    const details = encodeURIComponent("תזכורת כללית לביצוע קניות. פתח את האפליקציה כדי לראות את הרשימה.");
+    const ctz = encodeURIComponent("Asia/Jerusalem");
+    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&details=${details}&dates=${dates}&ctz=${ctz}`;
+    window.open(url, "_blank", "noopener,noreferrer");
+    setShowCalendarModal(false);
+  };
 
   const [inputValue, setInputValue] = useState("");
 
@@ -2376,18 +2403,8 @@ const isClearListCommand = (t: string) => {
       {/* Bottom area: Share button + bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
-          <div className="flex justify-start mb-2" dir="ltr">
-            <button
-              onClick={shareListWhatsApp}
-              className="w-14 h-14 rounded-full bg-emerald-500 text-white flex items-center justify-center shadow-lg shadow-emerald-200 active:scale-95 transition-transform"
-              title="שתף רשימה בוואטסאפ"
-            >
-              <MessageCircle className="w-6 h-6" />
-            </button>
-          </div>
-
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
-            <div className="relative flex items-center justify-between px-10 pt-9 pb-3">
+            <div className="relative grid grid-cols-4 items-end px-6 pt-9 pb-3">
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -2397,7 +2414,36 @@ const isClearListCommand = (t: string) => {
               >
                 <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
                 מועדפים
-         
+              </button>
+
+              <button
+                onClick={shareListWhatsApp}
+                className="flex flex-col items-center gap-1 text-[11px] font-black text-slate-400 hover:text-emerald-600 active:scale-95 transition-transform"
+                title="שתף רשימה בוואטסאפ"
+              >
+                <MessageCircle className="w-7 h-7" />
+                וואטסאפ
+              </button>
+
+              <button
+                onClick={() => setShowCalendarModal(true)}
+                className="flex flex-col items-center gap-1 text-[11px] font-black text-slate-400 hover:text-indigo-600 active:scale-95 transition-transform"
+                title="תזכורת ביומן"
+              >
+                <Calendar className="w-7 h-7" />
+                יומן
+              </button>
+
+              <button
+                onClick={() => setActiveTab("list")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title="רשימה"
+              >
+                <ListChecks className="w-7 h-7" />
+                רשימה
+              </button>
 
               {/* Hold-to-talk Voice button */}
               <button
@@ -2443,22 +2489,57 @@ const isClearListCommand = (t: string) => {
               >
                 {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
               </button>
-     </button>
-
-              <button
-                onClick={() => setActiveTab("list")}
-                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
-                }`}
-                title="רשימה"
-              >
-                <ListChecks className="w-7 h-7" />
-                רשימה
-              </button>
             </div>
           </footer>
         </div>
       </div>
+
+      {/* Calendar Modal */}
+      {showCalendarModal ? (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+            <div className="text-right">
+              <div className="text-lg font-black text-slate-800">תזכורת ביומן</div>
+              <div className="text-sm font-bold text-slate-400">נוסיף תזכורת כללית לביצוע קניות, בלי פירוט הפריטים.</div>
+            </div>
+
+            <div className="space-y-3">
+              <label className="block text-sm font-black text-slate-700">תאריך ושעה</label>
+              <input
+                type="datetime-local"
+                value={calendarDateTime}
+                onChange={(e) => setCalendarDateTime(e.target.value)}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-slate-800 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              />
+
+              <label className="block text-sm font-black text-slate-700">משך (דקות)</label>
+              <input
+                type="number"
+                min={5}
+                step={5}
+                value={calendarDurationMin}
+                onChange={(e) => setCalendarDurationMin(Number(e.target.value))}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-slate-800 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-200"
+              />
+            </div>
+
+            <div className="flex gap-3">
+              <button
+                onClick={() => setShowCalendarModal(false)}
+                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+              >
+                ביטול
+              </button>
+              <button
+                onClick={openGoogleCalendarTemplate}
+                className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white active:scale-95 transition-transform"
+              >
+                פתח ביומן
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
