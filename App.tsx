@@ -1463,17 +1463,36 @@ const hideSuggestion = (s: SuggestView) => {
   };
 
   const openGoogleCalendar = () => {
-    const url = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
+    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
 
-    // On mobile, navigating the same tab increases the chance the Calendar app opens.
     const ua = navigator.userAgent || "";
-    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+    const isAndroid = /Android/i.test(ua);
+    const isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-    if (isMobile) {
-      window.location.href = url;
-    } else {
-      window.open(url, "_blank", "noopener,noreferrer");
+    // Best-effort deep link to native Google Calendar app.
+    // If it fails (app not installed / browser blocks), fall back to the web URL.
+    if (isAndroid) {
+      const intentUrl =
+        webUrl.replace(/^https:\/\//i, "intent://") +
+        "#Intent;scheme=https;package=com.google.android.calendar;end";
+      window.location.href = intentUrl;
+      window.setTimeout(() => {
+        window.location.href = webUrl;
+      }, 700);
+      return;
     }
+
+    if (isIOS) {
+      // iOS deep-link support varies by browser/app installation.
+      // We try to open the app, then fall back to web.
+      window.location.href = "googlecalendar://";
+      window.setTimeout(() => {
+        window.location.href = webUrl;
+      }, 700);
+      return;
+    }
+
+    window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
 const shareListWhatsApp = () => {
