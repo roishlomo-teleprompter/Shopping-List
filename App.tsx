@@ -100,7 +100,7 @@ async function signInSmart() {
     try {
       await setPersistence(auth, browserLocalPersistence);
     } catch (e) {
-    return []
+    // ignore
   }
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
@@ -834,32 +834,6 @@ const MainList: React.FC = () => {
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
-  // Calendar (Google Calendar template link)
-  const [showCalendarModal, setShowCalendarModal] = useState(false);
-  const [calendarDateTime, setCalendarDateTime] = useState<string>("");
-  const [calendarDurationMin, setCalendarDurationMin] = useState<number>(60);
-
-  const openGoogleCalendarTemplate = () => {
-    if (!calendarDateTime) {
-      toast("בחר תאריך ושעה לתזכורת");
-      return;
-    }
-    const start = new Date(calendarDateTime);
-    if (Number.isNaN(start.getTime())) {
-      toast("תאריך ושעה לא תקינים");
-      return;
-    }
-    const end = new Date(start.getTime() + Math.max(5, calendarDurationMin) * 60 * 1000);
-    const fmt = (d: Date) => d.toISOString().replace(/[-:]/g, "").split(".")[0] + "Z";
-    const dates = `${fmt(start)}/${fmt(end)}`;
-    const text = encodeURIComponent("תזכורת לביצוע קניות");
-    const details = encodeURIComponent("תזכורת כללית לביצוע קניות. פתח את האפליקציה כדי לראות את הרשימה.");
-    const ctz = encodeURIComponent("Asia/Jerusalem");
-    const url = `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&details=${details}&dates=${dates}&ctz=${ctz}`;
-    window.open(url, "_blank", "noopener,noreferrer");
-    setShowCalendarModal(false);
-  };
-
   const [inputValue, setInputValue] = useState("");
 
 // Autocomplete state
@@ -876,6 +850,22 @@ useEffect(() => {
 
   const [isCopied, setIsCopied] = useState(false);
   const [showClearConfirm, setShowClearConfirm] = useState(false);
+const [showCalendarModal, setShowCalendarModal] = useState(false);
+  const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
+    // default: today at 18:00 (local), or next hour if past
+    const now = new Date();
+    const d = new Date(now);
+    d.setMinutes(0, 0, 0);
+    d.setHours(18);
+    if (d.getTime() < now.getTime()) {
+      d.setHours(now.getHours() + 1);
+    }
+    // datetime-local format: YYYY-MM-DDTHH:mm
+    const pad = (n: number) => String(n).padStart(2, "0");
+    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+  });
+  const [calendarDurationMin, setCalendarDurationMin] = useState<number>(60);
+
 
   const [authLoading, setAuthLoading] = useState(true);
   const [listLoading, setListLoading] = useState(false);
@@ -1126,7 +1116,6 @@ useEffect(() => {
       setListLoading(false);
     });
   }, []);
-
   useEffect(() => {
     if (!list?.id) return;
 
@@ -1443,7 +1432,7 @@ const hideSuggestion = (s: SuggestView) => {
         return;
       }
     } catch (e) {
-    return []
+    // ignore
   }
 
     await copyToClipboard(link);
@@ -1452,7 +1441,42 @@ const hideSuggestion = (s: SuggestView) => {
   };
 
   // WhatsApp share
-  const shareListWhatsApp = () => {
+  
+  const buildGoogleCalendarTemplateUrl = (startLocal: string, durationMin: number) => {
+    // startLocal: 'YYYY-MM-DDTHH:mm' (local time)
+    const [datePart, timePart] = startLocal.split("T");
+    const [y, mo, d] = datePart.split("-").map((x) => parseInt(x, 10));
+    const [hh, mm] = timePart.split(":").map((x) => parseInt(x, 10));
+    const start = new Date(y, mo - 1, d, hh, mm, 0, 0);
+    const end = new Date(start.getTime() + Math.max(15, durationMin) * 60_000);
+
+    const pad = (n: number) => String(n).padStart(2, "0");
+    const fmt = (dt: Date) =>
+      `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+
+    const dates = `${fmt(start)}/${fmt(end)}`;
+    const text = encodeURIComponent("תזכורת לביצוע קניות");
+    const details = encodeURIComponent("תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות");
+    const ctz = encodeURIComponent("Asia/Jerusalem");
+
+    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${encodeURIComponent(dates)}&details=${details}&ctz=${ctz}`;
+  };
+
+  const openGoogleCalendar = () => {
+    const url = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
+
+    // On mobile, navigating the same tab increases the chance the Calendar app opens.
+    const ua = navigator.userAgent || "";
+    const isMobile = /Android|iPhone|iPad|iPod/i.test(ua);
+
+    if (isMobile) {
+      window.location.href = url;
+    } else {
+      window.open(url, "_blank", "noopener,noreferrer");
+    }
+  };
+
+const shareListWhatsApp = () => {
     const title = list?.title || "הרשימה שלי";
     const active = items.filter((i) => !i.isPurchased);
 
@@ -1928,7 +1952,7 @@ const isClearListCommand = (t: string) => {
     try {
       recognitionRef.current?.stop?.();
     } catch (e) {
-    return []
+    // ignore
   }
 
     // חשוב: מחברים Final + Interim יחד
@@ -1966,13 +1990,6 @@ const isClearListCommand = (t: string) => {
     };
   }, []);
 
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
-        <Loader2 className="animate-spin text-indigo-600" />
-      </div>
-    );
-  }
 
   if (!user) {
     return (
@@ -1990,6 +2007,14 @@ const isClearListCommand = (t: string) => {
             התחבר עם גוגל
           </button>
         </div>
+      </div>
+    );
+  }
+
+  if (authLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
+        <Loader2 className="animate-spin text-indigo-600" />
       </div>
     );
   }
@@ -2400,11 +2425,11 @@ const isClearListCommand = (t: string) => {
         )}
       </main>
 
-      {/* Bottom area: Share button + bottom nav */}
+      {/* Bottom nav */}
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
-            <div className="relative grid grid-cols-4 items-end px-6 pt-9 pb-3">
+            <div className="relative flex items-center justify-between px-8 pt-9 pb-3">
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -2418,8 +2443,10 @@ const isClearListCommand = (t: string) => {
 
               <button
                 onClick={shareListWhatsApp}
-                className="flex flex-col items-center gap-1 text-[11px] font-black text-slate-400 hover:text-emerald-600 active:scale-95 transition-transform"
-                title="שתף רשימה בוואטסאפ"
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  "text-slate-300"
+                }`}
+                title="וואטסאפ"
               >
                 <MessageCircle className="w-7 h-7" />
                 וואטסאפ
@@ -2427,8 +2454,8 @@ const isClearListCommand = (t: string) => {
 
               <button
                 onClick={() => setShowCalendarModal(true)}
-                className="flex flex-col items-center gap-1 text-[11px] font-black text-slate-400 hover:text-indigo-600 active:scale-95 transition-transform"
-                title="תזכורת ביומן"
+                className={`flex flex-col items-center gap-1 text-[11px] font-black text-slate-300`}
+                title="יומן"
               >
                 <Calendar className="w-7 h-7" />
                 יומן
@@ -2496,46 +2523,66 @@ const isClearListCommand = (t: string) => {
 
       {/* Calendar Modal */}
       {showCalendarModal ? (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
-            <div className="text-right">
-              <div className="text-lg font-black text-slate-800">תזכורת ביומן</div>
-              <div className="text-sm font-bold text-slate-400">נוסיף תזכורת כללית לביצוע קניות, בלי פירוט הפריטים.</div>
-            </div>
+        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-6" dir="rtl">
+          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-6 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-right">
+                  <div className="text-xl font-black text-slate-800">תזמון קניות</div>
+                  <div className="text-sm font-bold text-slate-400">נוסיף תזכורת ביומן (בלי פריטי הרשימה)</div>
+                </div>
+                <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
+                  <Calendar className="w-5 h-5" />
+                </div>
+              </div>
 
-            <div className="space-y-3">
-              <label className="block text-sm font-black text-slate-700">תאריך ושעה</label>
-              <input
-                type="datetime-local"
-                value={calendarDateTime}
-                onChange={(e) => setCalendarDateTime(e.target.value)}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-slate-800 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              />
+              <div className="space-y-3">
+                <label className="block text-sm font-black text-slate-600">מתי נוח לך?</label>
+                <input
+                  type="datetime-local"
+                  value={calendarDateTime}
+                  onChange={(e) => setCalendarDateTime(e.target.value)}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                />
+              </div>
 
-              <label className="block text-sm font-black text-slate-700">משך (דקות)</label>
-              <input
-                type="number"
-                min={5}
-                step={5}
-                value={calendarDurationMin}
-                onChange={(e) => setCalendarDurationMin(Number(e.target.value))}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 text-slate-800 font-bold focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              />
-            </div>
+              <div className="space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="text-sm font-black text-slate-600">משך</span>
+                  <span className="text-sm font-black text-slate-500">{calendarDurationMin} דק׳</span>
+                </div>
+                <div className="grid grid-cols-4 gap-2" dir="ltr">
+                  {[30, 45, 60, 90].map((m) => (
+                    <button
+                      key={m}
+                      onClick={() => setCalendarDurationMin(m)}
+                      className={`py-2 rounded-2xl font-black text-sm ${
+                        calendarDurationMin === m ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"
+                      }`}
+                    >
+                      {m}
+                    </button>
+                  ))}
+                </div>
+              </div>
 
-            <div className="flex gap-3">
-              <button
-                onClick={() => setShowCalendarModal(false)}
-                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-              >
-                ביטול
-              </button>
-              <button
-                onClick={openGoogleCalendarTemplate}
-                className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white active:scale-95 transition-transform"
-              >
-                פתח ביומן
-              </button>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowCalendarModal(false)}
+                  className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCalendarModal(false);
+                    openGoogleCalendar();
+                  }}
+                  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+                >
+                  פתח ביומן
+                </button>
+              </div>
             </div>
           </div>
         </div>
