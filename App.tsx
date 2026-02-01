@@ -1467,31 +1467,44 @@ const hideSuggestion = (s: SuggestView) => {
 
     const ua = navigator.userAgent || "";
     const isAndroid = /Android/i.test(ua);
-    const isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-    // Best-effort deep link to native Google Calendar app.
-    // If it fails (app not installed / browser blocks), fall back to the web URL.
+    // Goal:
+    // 1) Open the PHONE'S default calendar app (e.g., Samsung Calendar) instead of Google Calendar web.
+    // 2) Skip any Google web intermediate UI.
+    //
+    // On Android we can deep-link an INSERT event Intent without forcing a package.
+    // If the user has a default calendar app set, it should open directly there.
     if (isAndroid) {
+      const startMs = new Date(calendarDateTime).getTime();
+      const endMs = startMs + Math.max(5, Number(calendarDurationMin || 60)) * 60 * 1000;
+
+      const title = "תזכורת לביצוע קניות";
+      const description = "תזכורת לביצוע קניות (ללא פירוט פריטים)";
+
+      const enc = encodeURIComponent;
+
       const intentUrl =
-        webUrl.replace(/^https:\/\//i, "intent://") +
-        "#Intent;scheme=https;package=com.google.android.calendar;end";
+        "intent://com.android.calendar/events#Intent" +
+        ";action=android.intent.action.INSERT" +
+        ";type=vnd.android.cursor.item/event" +
+        `;S.title=${enc(title)}` +
+        `;S.description=${enc(description)}` +
+        `;l.beginTime=${startMs}` +
+        `;l.endTime=${endMs}` +
+        ";end";
+
+      // Try native app
       window.location.href = intentUrl;
+
+      // Fallback to web if blocked
       window.setTimeout(() => {
         window.location.href = webUrl;
-      }, 700);
+      }, 900);
+
       return;
     }
 
-    if (isIOS) {
-      // iOS deep-link support varies by browser/app installation.
-      // We try to open the app, then fall back to web.
-      window.location.href = "googlecalendar://";
-      window.setTimeout(() => {
-        window.location.href = webUrl;
-      }, 700);
-      return;
-    }
-
+    // Desktop / non-Android: open Google Calendar web template
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
