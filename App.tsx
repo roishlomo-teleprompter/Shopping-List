@@ -1469,12 +1469,13 @@ const hideSuggestion = (s: SuggestView) => {
     const isAndroid = /Android/i.test(ua);
     const isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-    // Goal:
-    // - Prefer opening the phone's DEFAULT calendar app (e.g., Samsung Calendar) instead of Google Calendar web.
-    // - From a browser, you CANNOT bypass the OS/Chrome security handoff prompt in all cases.
-    //   The best we can do is a direct, user-initiated deep link into the native calendar INSERT intent.
+    // Note:
+    // From a browser, Chrome/Android may show an OS handoff confirmation ("Open with...").
+    // This prompt cannot always be removed programmatically.
     //
-    // Android: use an INSERT intent with scheme=content (no package) so Android routes to the default handler.
+    // Our best effort is to trigger the native "INSERT event" intent WITHOUT forcing Google Calendar,
+    // so Android routes it to the user's DEFAULT calendar app (e.g., Samsung Calendar).
+
     if (isAndroid) {
       const startMs = new Date(calendarDateTime).getTime();
       const endMs = startMs + Math.max(5, Number(calendarDurationMin || 60)) * 60 * 1000;
@@ -1484,25 +1485,25 @@ const hideSuggestion = (s: SuggestView) => {
 
       const enc = encodeURIComponent;
 
-      // content://com.android.calendar/events + ACTION_INSERT
-      // Not forcing a package allows Android to use the user's default calendar app.
+      // ACTION_INSERT with type=vnd.android.cursor.item/event is the most compatible deep link across vendors.
+      // No package is set, so the system should use the default calendar app.
       const intentUrl =
-        "intent://com.android.calendar/events#Intent" +
-        ";scheme=content" +
+        "intent:#Intent" +
         ";action=android.intent.action.INSERT" +
+        ";type=vnd.android.cursor.item/event" +
         `;S.title=${enc(title)}` +
         `;S.description=${enc(description)}` +
         `;l.beginTime=${startMs}` +
         `;l.endTime=${endMs}` +
         ";end";
 
-      // Must be triggered directly from the user's click to maximize success.
-      window.location.assign(intentUrl);
+      // Must be called directly from a user click.
+      window.location.href = intentUrl;
       return;
     }
 
-    // iOS: there is no reliable "insert event" deep link from the browser to the default calendar app.
-    // Best-effort: open Google Calendar web template.
+    // iOS: there is no reliable deep link from a browser to the default calendar app insert screen.
+    // Best effort: open Google Calendar web template.
     if (isIOS) {
       window.location.assign(webUrl);
       return;
@@ -2616,9 +2617,19 @@ const isClearListCommand = (t: string) => {
                   }}
                   className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
                 >
-                  פתח ביומן
+                  פתח ביומן בטלפון
                 </button>
               </div>
+
+              <button
+                onClick={() => {
+                  const url = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
+                  window.open(url, "_blank", "noopener,noreferrer");
+                }}
+                className="w-full mt-3 py-2 rounded-2xl font-bold text-indigo-700 bg-indigo-50"
+              >
+                לא נפתח? פתח ב-Web
+              </button>
             </div>
           </div>
         </div>
