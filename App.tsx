@@ -1462,54 +1462,59 @@ const hideSuggestion = (s: SuggestView) => {
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${encodeURIComponent(dates)}&details=${details}&ctz=${ctz}`;
   };
 
-  const openGoogleCalendar = () => {
-    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
-
+  const openCalendarApp = (target: "default" | "google" | "samsung") => {
+    // Android: try to open a local calendar app via Intent URL (Chrome feature).
+    // - "default": let Android route to the user's default calendar app
+    // - "google": force Google Calendar (if installed)
+    // - "samsung": force Samsung Calendar (if installed)
     const ua = navigator.userAgent || "";
     const isAndroid = /Android/i.test(ua);
     const isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-    // Note:
-    // From a browser, Chrome/Android may show an OS handoff confirmation ("Open with...").
-    // This prompt cannot always be removed programmatically.
-    //
-    // Our best effort is to trigger the native "INSERT event" intent WITHOUT forcing Google Calendar,
-    // so Android routes it to the user's DEFAULT calendar app (e.g., Samsung Calendar).
+    // Parse local datetime ('YYYY-MM-DDTHH:mm') and compute start/end in millis
+    const [datePart, timePart] = calendarDateTime.split("T");
+    const [y, mo, d] = datePart.split("-").map((x) => parseInt(x, 10));
+    const [hh, mm] = timePart.split(":").map((x) => parseInt(x, 10));
+    const start = new Date(y, mo - 1, d, hh, mm, 0, 0);
+    const end = new Date(start.getTime() + Math.max(15, calendarDurationMin) * 60_000);
+
+    const title = "תזכורת לביצוע קניות";
+    const description = "תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות";
+
+    // Web fallback (desktop and iOS browsers)
+    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
 
     if (isAndroid) {
-      const startMs = new Date(calendarDateTime).getTime();
-      const endMs = startMs + Math.max(5, Number(calendarDurationMin || 60)) * 60 * 1000;
+      const pkg =
+        target === "google"
+          ? "com.google.android.calendar"
+          : target === "samsung"
+            ? "com.samsung.android.calendar"
+            : null;
 
-      const title = "תזכורת לביצוע קניות";
-      const description = "תזכורת לביצוע קניות (ללא פירוט פריטים)";
-
-      const enc = encodeURIComponent;
-
-      // ACTION_INSERT with type=vnd.android.cursor.item/event is the most compatible deep link across vendors.
-      // No package is set, so the system should use the default calendar app.
-      const intentUrl =
-        "intent:#Intent" +
+      // Android "INSERT event" intent.
+      // Note: Chrome may still show a confirmation prompt - this is not suppressible from web code.
+      let intentUrl =
+        "intent://com.android.calendar/events" +
+        "#Intent" +
+        ";scheme=content" +
         ";action=android.intent.action.INSERT" +
         ";type=vnd.android.cursor.item/event" +
-        `;S.title=${enc(title)}` +
-        `;S.description=${enc(description)}` +
-        `;l.beginTime=${startMs}` +
-        `;l.endTime=${endMs}` +
-        ";end";
+        `;S.title=${encodeURIComponent(title)}` +
+        `;S.description=${encodeURIComponent(description)}` +
+        `;l.beginTime=${start.getTime()}` +
+        `;l.endTime=${end.getTime()}`;
 
-      // Must be called directly from a user click.
+      if (pkg) intentUrl += `;package=${pkg}`;
+
+      intentUrl += ";end";
+
       window.location.href = intentUrl;
       return;
     }
 
-    // iOS: there is no reliable deep link from a browser to the default calendar app insert screen.
+    // iOS: no reliable way to force the device's default calendar app from a browser.
     // Best effort: open Google Calendar web template.
-    if (isIOS) {
-      window.location.assign(webUrl);
-      return;
-    }
-
-    // Desktop / others: open Google Calendar web template
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -2603,33 +2608,52 @@ const isClearListCommand = (t: string) => {
                 </div>
               </div>
 
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowCalendarModal(false)}
-                  className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-                >
-                  ביטול
-                </button>
-                <button
-                  onClick={() => {
-                    setShowCalendarModal(false);
-                    openGoogleCalendar();
-                  }}
-                  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
-                >
-                  פתח ביומן בטלפון
-                </button>
-              </div>
+              <div className="space-y-3 pt-2">
+                <div className="flex gap-3">
+                  <button
+                    onClick={() => setShowCalendarModal(false)}
+                    className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+                  >
+                    ביטול
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCalendarModal(false);
+                      openCalendarApp("default");
+                    }}
+                    className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+                  >
+                    פתיחה ביומן ברירת מחדל
+                  </button>
+                </div>
 
-              <button
-                onClick={() => {
-                  const url = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
-                  window.open(url, "_blank", "noopener,noreferrer");
-                }}
-                className="w-full mt-3 py-2 rounded-2xl font-bold text-indigo-700 bg-indigo-50"
-              >
-                לא נפתח? פתח ב-Web
-              </button>
+                <div className="grid grid-cols-2 gap-3">
+                  <button
+                    onClick={() => {
+                      setShowCalendarModal(false);
+                      openCalendarApp("samsung");
+                    }}
+                    className="py-3 rounded-2xl font-black bg-slate-900 text-white"
+                    title="Samsung Calendar (אם מותקן)"
+                  >
+                    Samsung Calendar
+                  </button>
+                  <button
+                    onClick={() => {
+                      setShowCalendarModal(false);
+                      openCalendarApp("google");
+                    }}
+                    className="py-3 rounded-2xl font-black bg-slate-100 text-slate-800 border border-slate-200"
+                    title="Google Calendar (אם מותקן)"
+                  >
+                    Google Calendar
+                  </button>
+                </div>
+
+                <div className="text-xs font-bold text-slate-400 text-right">
+                  אם אחת האפליקציות לא מותקנת - Android עשוי להציג הודעה או לא לפתוח.
+                </div>
+              </div>
             </div>
           </div>
         </div>
