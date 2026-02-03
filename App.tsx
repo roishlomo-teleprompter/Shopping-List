@@ -62,6 +62,7 @@ import {
 } from "firebase/firestore";
 
 import { auth, db, googleProvider } from "./firebase.ts";
+import confetti from "canvas-confetti";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 /**
@@ -1059,6 +1060,7 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
+  const confettiFiredRef = useRef(false);
 
   useEffect(() => {
     latestListIdRef.current = list?.id ?? null;
@@ -1066,6 +1068,28 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
   useEffect(() => {
     latestItemsRef.current = items;
+  }, [items]);
+
+  useEffect(() => {
+    if (!items || items.length === 0) {
+      confettiFiredRef.current = false;
+      return;
+    }
+
+    const allPurchased = items.every((i) => i.isPurchased);
+
+    if (allPurchased && !confettiFiredRef.current) {
+      confettiFiredRef.current = true;
+      confetti({
+        particleCount: 140,
+        spread: 75,
+        origin: { y: 0.65 },
+      });
+    }
+
+    if (!allPurchased) {
+      confettiFiredRef.current = false;
+    }
   }, [items]);
 
   useEffect(() => {
