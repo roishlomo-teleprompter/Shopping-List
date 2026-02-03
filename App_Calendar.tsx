@@ -1462,59 +1462,36 @@ const hideSuggestion = (s: SuggestView) => {
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${encodeURIComponent(dates)}&details=${details}&ctz=${ctz}`;
   };
 
-  const openCalendarApp = (target: "default" | "google" | "samsung") => {
-    // Android: try to open a local calendar app via Intent URL (Chrome feature).
-    // - "default": let Android route to the user's default calendar app
-    // - "google": force Google Calendar (if installed)
-    // - "samsung": force Samsung Calendar (if installed)
+  const openGoogleCalendar = () => {
+    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
+
     const ua = navigator.userAgent || "";
     const isAndroid = /Android/i.test(ua);
     const isIOS = /iPhone|iPad|iPod/i.test(ua);
 
-    // Parse local datetime ('YYYY-MM-DDTHH:mm') and compute start/end in millis
-    const [datePart, timePart] = calendarDateTime.split("T");
-    const [y, mo, d] = datePart.split("-").map((x) => parseInt(x, 10));
-    const [hh, mm] = timePart.split(":").map((x) => parseInt(x, 10));
-    const start = new Date(y, mo - 1, d, hh, mm, 0, 0);
-    const end = new Date(start.getTime() + Math.max(15, calendarDurationMin) * 60_000);
-
-    const title = "תזכורת לביצוע קניות";
-    const description = "תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות";
-
-    // Web fallback (desktop and iOS browsers)
-    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
-
+    // Best-effort deep link to native Google Calendar app.
+    // If it fails (app not installed / browser blocks), fall back to the web URL.
     if (isAndroid) {
-      const pkg =
-        target === "google"
-          ? "com.google.android.calendar"
-          : target === "samsung"
-            ? "com.samsung.android.calendar"
-            : null;
-
-      // Android "INSERT event" intent.
-      // Note: Chrome may still show a confirmation prompt - this is not suppressible from web code.
-      let intentUrl =
-        "intent://com.android.calendar/events" +
-        "#Intent" +
-        ";scheme=content" +
-        ";action=android.intent.action.INSERT" +
-        ";type=vnd.android.cursor.item/event" +
-        `;S.title=${encodeURIComponent(title)}` +
-        `;S.description=${encodeURIComponent(description)}` +
-        `;l.beginTime=${start.getTime()}` +
-        `;l.endTime=${end.getTime()}`;
-
-      if (pkg) intentUrl += `;package=${pkg}`;
-
-      intentUrl += ";end";
-
+      const intentUrl =
+        webUrl.replace(/^https:\/\//i, "intent://") +
+        "#Intent;scheme=https;package=com.google.android.calendar;end";
       window.location.href = intentUrl;
+      window.setTimeout(() => {
+        window.location.href = webUrl;
+      }, 700);
       return;
     }
 
-    // iOS: no reliable way to force the device's default calendar app from a browser.
-    // Best effort: open Google Calendar web template.
+    if (isIOS) {
+      // iOS deep-link support varies by browser/app installation.
+      // We try to open the app, then fall back to web.
+      window.location.href = "googlecalendar://";
+      window.setTimeout(() => {
+        window.location.href = webUrl;
+      }, 700);
+      return;
+    }
+
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
@@ -2608,51 +2585,22 @@ const isClearListCommand = (t: string) => {
                 </div>
               </div>
 
-              <div className="space-y-3 pt-2">
-                <div className="flex gap-3">
-                  <button
-                    onClick={() => setShowCalendarModal(false)}
-                    className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-                  >
-                    ביטול
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowCalendarModal(false);
-                      openCalendarApp("default");
-                    }}
-                    className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
-                  >
-                    פתיחה ביומן ברירת מחדל
-                  </button>
-                </div>
-
-                <div className="grid grid-cols-2 gap-3">
-                  <button
-                    onClick={() => {
-                      setShowCalendarModal(false);
-                      openCalendarApp("samsung");
-                    }}
-                    className="py-3 rounded-2xl font-black bg-slate-900 text-white"
-                    title="Samsung Calendar (אם מותקן)"
-                  >
-                    Samsung Calendar
-                  </button>
-                  <button
-                    onClick={() => {
-                      setShowCalendarModal(false);
-                      openCalendarApp("google");
-                    }}
-                    className="py-3 rounded-2xl font-black bg-slate-100 text-slate-800 border border-slate-200"
-                    title="Google Calendar (אם מותקן)"
-                  >
-                    Google Calendar
-                  </button>
-                </div>
-
-                <div className="text-xs font-bold text-slate-400 text-right">
-                  אם אחת האפליקציות לא מותקנת - Android עשוי להציג הודעה או לא לפתוח.
-                </div>
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => setShowCalendarModal(false)}
+                  className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+                >
+                  ביטול
+                </button>
+                <button
+                  onClick={() => {
+                    setShowCalendarModal(false);
+                    openGoogleCalendar();
+                  }}
+                  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+                >
+                  פתח ביומן
+                </button>
               </div>
             </div>
           </div>
