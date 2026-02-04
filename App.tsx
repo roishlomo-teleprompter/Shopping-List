@@ -1182,7 +1182,20 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
     return s;
   }, [favorites]);
 
-  const activeItems = useMemo(
+  const favoritesUnique = useMemo(() => {
+    const seen = new Set<string>();
+    const out: FavoriteDoc[] = [];
+    for (const f of favorites) {
+      const key = normalize(f.name);
+      if (!key) continue;
+      if (seen.has(key)) continue;
+      seen.add(key);
+      out.push(f);
+    }
+    return out;
+  }, [favorites]);
+
+const activeItems = useMemo(
     () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
@@ -1222,8 +1235,8 @@ const suggestionList = useMemo(() => {
 
   return getAutocompleteSuggestions({
     query: inputValue,
-    favorites: favorites.map((f) => f.name),
-    items: items,
+    favorites: (favorites ?? []).map((f) => f.name),
+    items: items ?? [],
     history: historyRef.current,
     hiddenKeys: hidden,
     limit: 8,
@@ -1385,13 +1398,28 @@ const hideSuggestion = (s: SuggestView) => {
 
   const toggleFavorite = async (itemId: string) => {
     if (!list?.id) return;
+
     const favRef = doc(db, "lists", list.id, "favorites", itemId);
+
+    // If already favorite by id - remove
     if (favoritesById.has(itemId)) {
       await deleteDoc(favRef);
-    } else {
-      const item = items.find((i) => i.id === itemId);
-      await setDoc(favRef, { name: item?.name || "", createdAt: Date.now() });
+      return;
     }
+
+    const item = items.find((i) => i.id === itemId);
+    const itemName = String(item?.name || "");
+    const key = normalize(itemName);
+
+    // Prevent duplicates by normalized name (even if different itemId)
+    if (key) {
+      const existsByName = favorites.some((f) => normalize(f.name) === key);
+      if (existsByName) {
+        return;
+      }
+    }
+
+    await setDoc(favRef, { name: itemName, createdAt: Date.now() });
   };
 
   const removeFavorite = async (favId: string) => {
@@ -1784,12 +1812,7 @@ const isClearListCommand = (t: string) => {
       await addOrSetQuantity(p.name, p.qty);
     }
 
-    if (parsed.length === 1) {
-      const p = parsed[0];
-      setToast(p.qty > 1 ? `הוספתי: ${p.name} x${p.qty}` : `הוספתי: ${p.name}`);
-    } else {
-      setToast(`הוספתי ${parsed.length} פריטים`);
-    }
+    // intentionally no toast for "added items" via microphone
   };
 
   const ensureSpeechRecognition = () => {
@@ -1890,8 +1913,10 @@ const isClearListCommand = (t: string) => {
     rec.onresult = (event: any) => {
       try {
         let interimCombined = "";
-        for (let i = event.resultIndex; i < event.results.length; i++) {
-          const r = event.results[i];
+        const results = (event as any).results;
+        if (!results) return;
+        for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
+          const r = results[i];
           const best = r?.[0];
           const transcript = normalizeVoiceText(String(best?.transcript || ""));
           if (!transcript) continue;
@@ -2247,7 +2272,7 @@ const isClearListCommand = (t: string) => {
 ) : null}
             </form>
 
-            {items.length === 0 ? (
+            {(items?.length ?? 0) === 0 ? (
               <div className="text-center py-20 opacity-20">
                 <ShoppingCart className="w-20 h-20 mx-auto mb-4 stroke-1" />
                 <p className="text-lg font-bold">הרשימה ריקה</p>
@@ -2394,14 +2419,14 @@ const isClearListCommand = (t: string) => {
               <p className="text-sm text-slate-400 font-bold"><span className="font-semibold">פריטים שחוזרים לסל</span></p>
             </div>
 
-            {favorites.length === 0 ? (
+            {favoritesUnique.length === 0 ? (
               <div className="text-center py-20 opacity-20">
                 <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
                 <p className="font-bold">אין מועדפים עדיין</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {favorites.map((fav) => (
+                {favoritesUnique.map((fav) => (
                   <div
                     key={fav.id}
                     className="relative overflow-hidden rounded-2xl select-none"
