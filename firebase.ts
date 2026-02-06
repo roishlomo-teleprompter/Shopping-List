@@ -1,12 +1,19 @@
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
+import {
+  getAuth,
+  setPersistence,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  inMemoryPersistence,
+  GoogleAuthProvider,
+} from "firebase/auth";
 import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
-  apiKey: "AIzaSyCEUaqAGQBy_-tQEjnkNGYMXRk7YRaCAjI",
+  apiKey: "AIzaSyA6gk3B0uFG3y7v4jhCWb9zzlPSmX0CjdU",
   authDomain: "shopping-list-218bd.firebaseapp.com",
   projectId: "shopping-list-218bd",
-  storageBucket: "shopping-list-218bd.firebasestorage.app",
+  storageBucket: "shopping-list-218bd.appspot.com",
   messagingSenderId: "883804592996",
   appId: "1:883804592996:web:61b0bb28cd02ef3961b871",
 };
@@ -14,6 +21,18 @@ const firebaseConfig = {
 export const app = initializeApp(firebaseConfig);
 
 export const auth = getAuth(app);
+export const db = getFirestore(app);
 export const googleProvider = new GoogleAuthProvider();
 
-export const db = getFirestore(app);
+// חשוב: authReady מיוצא כי App.tsx מצפה לו
+export const authReady = (async () => {
+  try {
+    await setPersistence(auth, indexedDBLocalPersistence);
+  } catch {
+    try {
+      await setPersistence(auth, browserLocalPersistence);
+    } catch {
+      await setPersistence(auth, inMemoryPersistence);
+    }
+  }
+})();
