@@ -97,19 +97,20 @@ async function copyToClipboard(text: string) {
 }
 
 async function signInSmart() {
+  // Try popup first (best UX). If blocked/closed, fall back to redirect.
   try {
     try {
       await setPersistence(auth, browserLocalPersistence);
     } catch (e) {
-    // ignore
-  }
+      // ignore
+    }
     await signInWithPopup(auth, googleProvider);
   } catch (e: any) {
-    const code = e?.code as string | undefined;
+    const c = e?.code as string | undefined;
     if (
-      code === "auth/popup-blocked" ||
-      code === "auth/cancelled-popup-request" ||
-      code === "auth/popup-closed-by-user"
+      c === "auth/popup-blocked" ||
+      c === "auth/cancelled-popup-request" ||
+      c === "auth/popup-closed-by-user"
     ) {
       await signInWithRedirect(auth, googleProvider);
       return;
@@ -968,7 +969,9 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
       if (dx < 0) {
         await deleteItem(id); // swipe left
       } else {
-        await toggleFavorite(id); // swipe right
+        if (!favoritesById.has(id)) {
+          await toggleFavorite(id); // swipe right (add only)
+        }
       }
     } finally {
       window.setTimeout(() => {
