@@ -870,7 +870,8 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
 
   const [authLoading, setAuthLoading] = useState(true);
-  const [listLoading, setListLoading] = useState(false);
+    const [authInitialized, setAuthInitialized] = useState(false);
+const [listLoading, setListLoading] = useState(false);
 
   // Voice UI + state
   const [isListening, setIsListening] = useState(false);
@@ -1131,44 +1132,49 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
   useEffect(() => {
     return onAuthStateChanged(auth, async (u) => {
-      setUser(u);
-      setAuthLoading(false);
+          try {
 
-      if (!u) {
-        setList(null);
-        setItems([]);
-        setFavorites([]);
-        return;
-      }
+          setUser(u);
+          setAuthLoading(false);
 
-      setListLoading(true);
+          if (!u) {
+            setList(null);
+            setItems([]);
+            setFavorites([]);
+            return;
+          }
 
-      const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
-      const snap = await getDocs(q);
+          setListLoading(true);
 
-      if (snap.empty) {
-        const newListRef = doc(collection(db, "lists"));
-        const newList: ShoppingList = {
-          id: newListRef.id,
-          title: "הרשימה שלי",
-          ownerUid: u.uid,
-          sharedWith: [u.uid],
-          createdAt: Date.now(),
-          updatedAt: Date.now(),
-        };
+          const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
+          const snap = await getDocs(q);
 
-        await setDoc(newListRef, newList);
-        setList(newList);
-        localStorage.setItem("activeListId", newListRef.id);
-      } else {
-        const savedId = localStorage.getItem("activeListId");
-        const docToUse = savedId ? snap.docs.find((d) => d.id === savedId) ?? snap.docs[0] : snap.docs[0];
-        const data = docToUse.data() as ShoppingList;
-        setList({ ...data, id: docToUse.id });
-        localStorage.setItem("activeListId", docToUse.id);
-      }
+          if (snap.empty) {
+            const newListRef = doc(collection(db, "lists"));
+            const newList: ShoppingList = {
+              id: newListRef.id,
+              title: "הרשימה שלי",
+              ownerUid: u.uid,
+              sharedWith: [u.uid],
+              createdAt: Date.now(),
+              updatedAt: Date.now(),
+            };
 
-      setListLoading(false);
+            await setDoc(newListRef, newList);
+            setList(newList);
+            localStorage.setItem("activeListId", newListRef.id);
+          } else {
+            const savedId = localStorage.getItem("activeListId");
+            const docToUse = savedId ? snap.docs.find((d) => d.id === savedId) ?? snap.docs[0] : snap.docs[0];
+            const data = docToUse.data() as ShoppingList;
+            setList({ ...data, id: docToUse.id });
+            localStorage.setItem("activeListId", docToUse.id);
+          }
+
+          setListLoading(false);
+          } finally {
+            setAuthInitialized(true);
+          }
     });
   }, []);
   useEffect(() => {
@@ -2102,6 +2108,18 @@ const isClearListCommand = (t: string) => {
       }
     };
   }, []);
+  if (!authInitialized) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl"
+           style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Heebo", "Rubik", Arial' }}>
+        <div className="flex flex-col items-center gap-3 opacity-70">
+          <Loader2 className="w-10 h-10 animate-spin" />
+          <div className="font-bold text-slate-500">טוען...</div>
+        </div>
+      </div>
+    );
+  }
+
 
 
   if (!user) {
