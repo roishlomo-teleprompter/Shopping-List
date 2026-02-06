@@ -892,6 +892,7 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
   const swipeConsumedRef = useRef(false);
   const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+  const swipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const SWIPE_THRESHOLD_PX = 70;
   const SWIPE_MAX_SHIFT_PX = 110;
@@ -910,6 +911,7 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
     swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
     swipeLastRef.current = { x: e.clientX, y: e.clientY };
     setSwipeUi({ id, dx: 0 });
+    swipeVibratedRef.current[id] = false;
   };
 
   const onSwipePointerMove = (id: string) => (e: React.PointerEvent) => {
@@ -920,6 +922,18 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
     const dxRaw = e.clientX - s.x;
     const dx = Math.max(-SWIPE_MAX_SHIFT_PX, Math.min(SWIPE_MAX_SHIFT_PX, dxRaw));
+
+    const active = Math.abs(dxRaw) >= SWIPE_THRESHOLD_PX;
+
+    if (active && !swipeVibratedRef.current[id]) {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(15);
+      }
+      swipeVibratedRef.current[id] = true;
+    }
+    if (!active) {
+      swipeVibratedRef.current[id] = false;
+    }
 
     // Start capturing pointer only after we know this is a swipe (prevents breaking normal clicks)
     if (!swipeCaptureRef.current && Math.abs(dxRaw) > 10 && Math.abs(dxRaw) >= Math.abs(e.clientY - s.y)) {
@@ -966,11 +980,11 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
     swipeConsumedRef.current = true;
 
     try {
-      if (dx < 0) {
-        await deleteItem(id); // swipe left
+      if (dx > 0) {
+        await deleteItem(id); // swipe right
       } else {
         if (!favoritesById.has(id)) {
-          await toggleFavorite(id); // swipe right (add only)
+          await toggleFavorite(id); // swipe left (add only)
         }
       }
     } finally {
@@ -991,6 +1005,7 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
     swipeStartRef.current = { x: t.clientX, y: t.clientY, id, pointerId: -1 };
     swipeLastRef.current = { x: t.clientX, y: t.clientY };
     setSwipeUi({ id, dx: 0 });
+    swipeVibratedRef.current[id] = false;
   };
 
   const onSwipeTouchMove = (id: string) => (e: React.TouchEvent) => {
@@ -1004,6 +1019,17 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
     const dxRaw = t.clientX - s.x;
     const dyRaw = t.clientY - s.y;
+
+    const active = Math.abs(dxRaw) >= SWIPE_THRESHOLD_PX;
+    if (active && !swipeVibratedRef.current[id]) {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(15);
+      }
+      swipeVibratedRef.current[id] = true;
+    }
+    if (!active) {
+      swipeVibratedRef.current[id] = false;
+    }
 
     // Only treat as swipe if mostly horizontal
     if (Math.abs(dxRaw) < 6 || Math.abs(dxRaw) < Math.abs(dyRaw)) return;
@@ -1038,10 +1064,12 @@ const [showCalendarModal, setShowCalendarModal] = useState(false);
 
     swipeConsumedRef.current = true;
 
-    if (dxRaw < 0) {
+    if (dxRaw > 0) {
       await deleteItem(id);
     } else {
-      await toggleFavorite(id);
+      if (!favoritesById.has(id)) {
+        await toggleFavorite(id);
+      }
     }
 
     setSwipeUi({ id: null, dx: 0 });
@@ -1583,6 +1611,7 @@ const shareListWhatsApp = () => {
   const favSwipeLastRef = useRef<{ x: number; y: number } | null>(null);
   const favSwipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [favSwipeUi, setFavSwipeUi] = useState<{ id: string | null; dx: number; rawDx: number }>({ id: null, dx: 0, rawDx: 0 });
+  const favSwipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const FAV_SWIPE_THRESHOLD_PX = 60;
   const FAV_SWIPE_MAX_SHIFT_PX = 110;
@@ -1597,7 +1626,7 @@ const shareListWhatsApp = () => {
     );
 
     if (existing) {
-      await updateQty(existing.id, 1);
+      return;
     } else {
       const itemId = crypto.randomUUID();
       const newItem: ShoppingItem = {
@@ -1618,6 +1647,7 @@ const shareListWhatsApp = () => {
     favSwipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
     favSwipeLastRef.current = { x: e.clientX, y: e.clientY };
     setFavSwipeUi({ id, dx: 0, rawDx: 0 });
+    favSwipeVibratedRef.current[id] = false;
   };
 
   const onFavSwipePointerMove = (id: string) => (e: React.PointerEvent) => {
@@ -1628,6 +1658,18 @@ const shareListWhatsApp = () => {
 
     const dxRaw = e.clientX - s.x;
     const dyRaw = e.clientY - s.y;
+
+    const active = Math.abs(dxRaw) >= FAV_SWIPE_THRESHOLD_PX;
+
+    if (active && !favSwipeVibratedRef.current[id]) {
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(15);
+      }
+      favSwipeVibratedRef.current[id] = true;
+    }
+    if (!active) {
+      favSwipeVibratedRef.current[id] = false;
+    }
 
     // start capture only when it's clearly horizontal
     if (!favSwipeCaptureRef.current && Math.abs(dxRaw) > 10 && Math.abs(dyRaw) <= Math.abs(dxRaw) * 1.2) {
@@ -1676,12 +1718,12 @@ const shareListWhatsApp = () => {
     const fav = favorites.find((f) => f.id === id);
 
     if (dxRaw > 0) {
-      // swipe right -> add to list (or increment if exists)
-      if (fav) await addFavoriteToList(fav);
-    } else {
-      // swipe left -> remove from favorites ONLY
+      // swipe right -> remove from favorites
       await removeFavorite(id);
       setToast("הוסר מהמועדפים");
+    } else {
+      // swipe left -> add to list (or increment if exists)
+      if (fav) await addFavoriteToList(fav);
     }
   };
 
@@ -2299,22 +2341,73 @@ const isClearListCommand = (t: string) => {
                          style={{ touchAction: "pan-y" }}
 
                         >
-                      {/* Swipe background cue */}
-                      <div
-                        className={`absolute inset-0 ${
-                          swipeUi.id === item.id
-                            ? swipeUi.dx > 0
-                              ? "bg-emerald-50"
-                              : swipeUi.dx < 0
-                                ? "bg-rose-50"
-                                : "bg-transparent"
-                            : "bg-transparent"
-                        }`}
-                        style={{
-                          opacity:
-                            swipeUi.id === item.id ? Math.min(1, Math.abs(swipeUi.dx) / SWIPE_MAX_SHIFT_PX) : 0,
-                        }}
-                      />
+                      {/* Swipe cue (background strips + icons) */}
+                      <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+                        {/* Revealed background (never covers icons) */}
+                        <div
+                          className="absolute left-0 top-0 bottom-0 bg-rose-50"
+                          style={{
+                            width:
+                              swipeUi.id === item.id && swipeUi.dx > 0
+                                ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
+                                : 0,
+                            opacity: 0.9,
+                            zIndex: 0,
+                          }}
+                        />
+                        <div
+                          className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+                          style={{
+                            width:
+                              swipeUi.id === item.id && swipeUi.dx < 0
+                                ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
+                                : 0,
+                            opacity: 0.9,
+                            zIndex: 0,
+                          }}
+                        />
+
+                        {/* Icons: swipe RIGHT = delete (left side), swipe LEFT = add to favorites (right side) */}
+                        <div className="absolute inset-0 flex items-center justify-between px-4 flex-row-reverse">
+                          <div
+                            className="text-rose-600"
+                            style={{
+                              zIndex: 2,
+                              opacity:
+                                swipeUi.id === item.id && swipeUi.dx > 0
+                                  ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                                    ? 1
+                                    : 0.65
+                                  : 0,
+                              transform:
+                                swipeUi.id === item.id && swipeUi.dx > 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                                  ? "scale(1.15)"
+                                  : "scale(1)",                              transition: "transform 120ms ease, opacity 120ms ease",
+                            }}
+                          >
+                            <Trash2 className="w-6 h-6" />
+                          </div>
+
+                          <div
+                            className="text-emerald-600"
+                            style={{
+                              zIndex: 2,
+                              opacity:
+                                swipeUi.id === item.id && swipeUi.dx < 0
+                                  ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                                    ? 1
+                                    : 0.65
+                                  : 0,
+                              transform:
+                                swipeUi.id === item.id && swipeUi.dx < 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                                  ? "scale(1.15)"
+                                  : "scale(1)",                              transition: "transform 120ms ease, opacity 120ms ease",
+                            }}
+                          >
+                            <Star className="w-6 h-6" />
+                          </div>
+                        </div>
+                      </div>
 
                       {/* Foreground content (slides with finger/mouse) */}
                       <div
@@ -2360,19 +2453,7 @@ const isClearListCommand = (t: string) => {
                           </button>
                         </div>
                       </div>
-
-                      {/* Left / Right hint icons */}
-                      {swipeUi.id === item.id && swipeUi.dx > 12 ? (
-                        <div className="absolute inset-y-0 left-3 flex items-center text-emerald-600 pointer-events-none">
-                          <Star className="w-5 h-5 fill-emerald-600" />
-                        </div>
-                      ) : null}
-                      {swipeUi.id === item.id && swipeUi.dx < -12 ? (
-                        <div className="absolute inset-y-0 right-3 flex items-center text-rose-600 pointer-events-none">
-                          <Trash2 className="w-5 h-5" />
-                        </div>
-                      ) : null}
-                    </div>
+</div>
                   ))}
 
                   {purchasedItems.length > 0 ? (
@@ -2440,32 +2521,79 @@ const isClearListCommand = (t: string) => {
                     onPointerCancel={onFavSwipePointerCancel}
                     style={{ touchAction: "pan-y" }}
                   >
-                    {/* Swipe background */}
-                    <div
-                      className={`absolute inset-0 ${
-                        favSwipeUi.id === fav.id
-                          ? favSwipeUi.rawDx > 0
-                            ? "bg-emerald-50"
-                            : favSwipeUi.rawDx < 0
-                              ? "bg-rose-50"
-                              : "bg-transparent"
-                          : "bg-transparent"
-                      }`}
-                      style={{
-                        opacity: favSwipeUi.id === fav.id ? Math.min(1, Math.abs(favSwipeUi.rawDx) / FAV_SWIPE_MAX_SHIFT_PX) : 0,
-                      }}
-                    />
+                    {/* Swipe cue (background strips + icons) */}
+                    <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+                      {/* Revealed background (never covers icons) */}
+                      <div
+                        className="absolute left-0 top-0 bottom-0 bg-rose-50"
+                        style={{
+                          width:
+                            favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0
+                              ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX)
+                              : 0,
+                          opacity: 0.9,
+                          zIndex: 0,
+                        }}
+                      />
+                      <div
+                        className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+                        style={{
+                          width:
+                            favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0
+                              ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX)
+                              : 0,
+                          opacity: 0.9,
+                          zIndex: 0,
+                        }}
+                      />
 
-                    {/* Swipe icons: RIGHT swipe shows Add-to-list on LEFT, LEFT swipe shows Delete on RIGHT */}
-                    <div className="absolute inset-0 flex items-center justify-between px-4 pointer-events-none">
-                      {/* Swipe RIGHT (add to list) reveals LEFT side */}
-                      <div className="flex items-center gap-2 text-emerald-600">
-                        <ListPlusIcon className="w-6 h-6" />
-                      </div>
+                      {/* Icons: swipe RIGHT = remove favorite, swipe LEFT = add to list */}
+                      <div className="absolute inset-0 flex items-center justify-between px-4">
+                        {/* LEFT icon (revealed on swipe RIGHT) */}
+                        <div
+                          className="text-rose-600"
+                          style={{
+                            zIndex: 2,
+                            opacity:
+                              favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0
+                                ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                  ? 1
+                                  : 0.65
+                                : 0,
+                            transform:
+                              favSwipeUi.id === fav.id &&
+                              favSwipeUi.rawDx > 0 &&
+                              Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                ? "scale(1.15)"
+                                : "scale(1)",
+                            transition: "transform 120ms ease, opacity 120ms ease",
+                          }}
+                        >
+                          <Trash2 className="w-6 h-6" />
+                        </div>
 
-                      {/* Swipe LEFT (remove favorite) reveals RIGHT side */}
-                      <div className="flex items-center gap-2 text-rose-600">
-                        <Trash2 className="w-5 h-5" />
+                        {/* RIGHT icon (revealed on swipe LEFT) */}
+                        <div
+                          className="text-emerald-600"
+                          style={{
+                            zIndex: 2,
+                            opacity:
+                              favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0
+                                ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                  ? 1
+                                  : 0.65
+                                : 0,
+                            transform:
+                              favSwipeUi.id === fav.id &&
+                              favSwipeUi.rawDx < 0 &&
+                              Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                ? "scale(1.15)"
+                                : "scale(1)",
+                            transition: "transform 120ms ease, opacity 120ms ease",
+                          }}
+                        >
+                          <ListPlusIcon className="w-6 h-6" />
+                        </div>
                       </div>
                     </div>
 
@@ -2477,7 +2605,7 @@ const isClearListCommand = (t: string) => {
                         transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
                       }}
                     >
-                      <div className="flex items-center gap-2" />
+<div className="flex items-center gap-2" />
 
                       <div
                         className="flex-1 text-right font-bold text-slate-700 truncate px-3 text-base"
