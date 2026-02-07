@@ -2904,6 +2904,13 @@ const isClearListCommand = (t: string) => {
 // ---------------------------
 // App Router
 // ---------------------------
+
+// Backward compatibility: avoid runtime crash if older handlers call this helper
+// (Some previous builds referenced clearVoiceTimers but did not define it.)
+const clearVoiceTimers = () => {
+  // no-op on purpose
+};
+
 const App: React.FC = () => {
   return (
     <HashRouter>
