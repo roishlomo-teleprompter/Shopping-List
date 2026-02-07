@@ -2011,7 +2011,6 @@ const isClearListCommand = (t: string) => {
       }
 
       clearLocalTimers();
-      clearVoiceTimers();
       setIsListening(false);
       holdActiveRef.current = false;
 
