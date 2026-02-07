@@ -46,6 +46,7 @@ import {
 
 import {
   arrayUnion,
+  arrayRemove,
   collection,
   deleteDoc,
   deleteField,
@@ -855,6 +856,7 @@ useEffect(() => {
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
 const [showClearConfirm, setShowClearConfirm] = useState(false);
+const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
     // default: today at 18:00 (local), or next hour if past
@@ -1531,6 +1533,64 @@ const hideSuggestion = (s: SuggestView) => {
     setIsCopied(true);
     setTimeout(() => setIsCopied(false), 2000);
   };
+  const leaveCurrentList = async () => {
+    if (!user || !list?.id) return;
+
+    try {
+      const sharedWith: string[] = Array.isArray((list as any).sharedWith) ? (list as any).sharedWith : [];
+      const ownerUid = String((list as any).ownerUid || "");
+      const isOwner = ownerUid && ownerUid === user.uid;
+
+      // Owner cannot leave if there are other members.
+      if (isOwner && sharedWith.length > 1) {
+        setToast("אתה הבעלים של הרשימה. לפני עזיבה, הסר שיתופים או העבר בעלות.");
+        setShowLeaveConfirm(false);
+        return;
+      }
+
+      // If this is the only list, we can just create a new one after removal (or keep).
+      await updateDoc(doc(db, "lists", list.id), {
+        sharedWith: arrayRemove(user.uid),
+        updatedAt: Date.now(),
+      });
+
+      setShowLeaveConfirm(false);
+      setShareMenuOpen(false);
+      localStorage.removeItem("activeListId");
+
+      // Reload - pick another list or create a new private one
+      setListLoading(true);
+      const q = query(collection(db, "lists"), where("sharedWith", "array-contains", user.uid));
+      const snap = await getDocs(q);
+
+      if (snap.empty) {
+        const newListRef = doc(collection(db, "lists"));
+        const newList: ShoppingList = {
+          id: newListRef.id,
+          title: "הרשימה שלי",
+          ownerUid: user.uid,
+          sharedWith: [user.uid],
+          createdAt: Date.now(),
+          updatedAt: Date.now(),
+        };
+        await setDoc(newListRef, newList);
+        setList(newList);
+        localStorage.setItem("activeListId", newListRef.id);
+      } else {
+        const docToUse = snap.docs[0];
+        const data = docToUse.data() as ShoppingList;
+        setList({ ...data, id: docToUse.id });
+        localStorage.setItem("activeListId", docToUse.id);
+      }
+
+      setToast("עזבת את הרשימה");
+    } catch (e: any) {
+      console.error(e);
+      setToast("שגיאה בעזיבת הרשימה");
+    } finally {
+      setListLoading(false);
+    }
+  };
 
   // WhatsApp share
   
@@ -1932,11 +1992,6 @@ const isClearListCommand = (t: string) => {
       sessionTimer = null;
     };
 
-    // תאימות לאחור - בגרסאות קודמות קראו לזה clearVoiceTimers
-    const clearVoiceTimers = clearLocalTimers;
-    (window as any).clearVoiceTimers = clearVoiceTimers;
-
-
     const scheduleSilenceStop = () => {
       // עוצרים בגלל שקט רק אחרי שכבר קיבלנו לפחות תוצאה אחת
       if (!holdActiveRef.current) return;
@@ -2181,7 +2236,7 @@ const isClearListCommand = (t: string) => {
   return (
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
       {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 items-center justify-between border-b border-slate-100 relative grid grid-cols-3 items-center">
+      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-6 py-4 items-center justify-between border-b border-slate-100 relative grid grid-cols-[auto,1fr,auto] items-center">
         <div className="flex items-center gap-2 justify-start">
           
 <button onClick={() => setShowClearConfirm(true)} className="p-2 text-slate-400 hover:text-rose-500" title="נקה רשימה">
@@ -2191,7 +2246,7 @@ const isClearListCommand = (t: string) => {
           
         </div>
 
-        <h1 className="text-xl font-bold text-indigo-600 leading-none text-center justify-self-center w-full min-w-0 px-2 truncate">{list?.title || "הרשימה שלי"}</h1>
+        <h1 className="text-lg font-bold text-indigo-600 leading-tight text-center justify-self-center px-2 min-w-0 whitespace-normal break-words">{list?.title || "הרשימה שלי"}</h1>
 
         <div className="justify-self-end flex items-center gap-2">
           <div className="relative inline-flex items-center" ref={shareMenuRef}>
@@ -2900,6 +2955,31 @@ const isClearListCommand = (t: string) => {
       {toast ? (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
           {toast}
+        </div>
+      ) : null}
+      {/* Leave Confirm Modal */}
+      {showLeaveConfirm ? (
+        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
+          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+                <AlertCircle className="w-5 h-5" />
+              </div>
+              <div className="text-right">
+                <div className="text-lg font-black text-slate-800">לעזוב את הרשימה?</div>
+                <div className="text-sm font-bold text-slate-400">לא תוכל לראות או לערוך את הרשימה לאחר העזיבה (אלא אם יזמינו אותך שוב).</div>
+              </div>
+            </div>
+
+            <div className="flex gap-3">
+              <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
+                ביטול
+              </button>
+              <button onClick={leaveCurrentList} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
+                עזוב רשימה
+              </button>
+            </div>
+          </div>
         </div>
       ) : null}
     </div>
