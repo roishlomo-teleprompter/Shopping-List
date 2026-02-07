@@ -2179,8 +2179,13 @@ const isClearListCommand = (t: string) => {
     <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
-  <div className="flex items-center justify-between">
-    {/* שמאל - יציאה */}
+  <div className="flex items-center justify-between flex-row-reverse">
+    <div className="min-w-0">
+      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">Shopping-List</span>
+    </div>
+
+    <div className="flex items-center gap-2">
+      {/* שמאל - יציאה */}
     <button
       onClick={() => signOut(auth)}
       className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
@@ -2189,9 +2194,6 @@ const isClearListCommand = (t: string) => {
     >
       <LogOut className="w-4 h-4" />
     </button>
-
-    {/* ימין - סל אשפה, שיתוף, כותרת */}
-    <div className="flex items-center gap-3">
       <button
         onClick={() => setShowClearConfirm(true)}
         className="p-2 text-slate-400 hover:text-rose-500"
@@ -2200,7 +2202,6 @@ const isClearListCommand = (t: string) => {
       >
         <Trash2 className="w-5 h-5" />
       </button>
-
       <div className="relative inline-flex items-center" ref={shareMenuRef}>
         <button
           type="button"
@@ -2213,7 +2214,7 @@ const isClearListCommand = (t: string) => {
         </button>
 
         {shareMenuOpen ? (
-          <div className="absolute top-11 left-0 z-[80] w-64 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight">
+          <div className="absolute top-11 right-0 z-[80] w-72 max-w-[calc(100vw-1rem)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight">
             <button
               type="button"
               onClick={async () => {
@@ -2249,8 +2250,6 @@ const isClearListCommand = (t: string) => {
           </div>
         ) : null}
       </div>
-
-      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">Shopping-List</span>
     </div>
   </div>
 </header>
