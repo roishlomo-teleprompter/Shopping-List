@@ -2058,7 +2058,6 @@ const isClearListCommand = (t: string) => {
     } catch (e) {
       console.error(e);
       clearLocalTimers();
-      clearVoiceTimers();
       setIsListening(false);
       holdActiveRef.current = false;
       setToast("לא הצלחתי להתחיל האזנה");
