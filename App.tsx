@@ -1932,6 +1932,11 @@ const isClearListCommand = (t: string) => {
       sessionTimer = null;
     };
 
+    // תאימות לאחור - בגרסאות קודמות קראו לזה clearVoiceTimers
+    const clearVoiceTimers = clearLocalTimers;
+    (window as any).clearVoiceTimers = clearVoiceTimers;
+
+
     const scheduleSilenceStop = () => {
       // עוצרים בגלל שקט רק אחרי שכבר קיבלנו לפחות תוצאה אחת
       if (!holdActiveRef.current) return;
@@ -2186,7 +2191,7 @@ const isClearListCommand = (t: string) => {
           
         </div>
 
-        <h1 className="text-xl font-bold text-indigo-600 leading-none text-center justify-self-center whitespace-nowrap">{list?.title || "הרשימה שלי"}</h1>
+        <h1 className="text-xl font-bold text-indigo-600 leading-none text-center justify-self-center w-full min-w-0 px-2 truncate">{list?.title || "הרשימה שלי"}</h1>
 
         <div className="justify-self-end flex items-center gap-2">
           <div className="relative inline-flex items-center" ref={shareMenuRef}>
@@ -2904,13 +2909,6 @@ const isClearListCommand = (t: string) => {
 // ---------------------------
 // App Router
 // ---------------------------
-
-// Backward compatibility: avoid runtime crash if older handlers call this helper
-// (Some previous builds referenced clearVoiceTimers but did not define it.)
-const clearVoiceTimers = () => {
-  // no-op on purpose
-};
-
 const App: React.FC = () => {
   return (
     <HashRouter>
