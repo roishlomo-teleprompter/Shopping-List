@@ -851,7 +851,10 @@ useEffect(() => {
 
 
   const [isCopied, setIsCopied] = useState(false);
-  const [showClearConfirm, setShowClearConfirm] = useState(false);
+  
+  const [shareMenuOpen, setShareMenuOpen] = useState(false);
+  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+const [showClearConfirm, setShowClearConfirm] = useState(false);
 const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
     // default: today at 18:00 (local), or next hour if past
@@ -2108,6 +2111,20 @@ const isClearListCommand = (t: string) => {
       }
     };
   }, []);
+
+  useEffect(() => {
+    const onDocPointerDown_shareMenu = (e: PointerEvent) => {
+      if (!shareMenuOpen) return;
+      const el = shareMenuRef.current;
+      if (!el) return;
+      if (e.target && el.contains(e.target as Node)) return;
+      setShareMenuOpen(false);
+    };
+    document.addEventListener("pointerdown", onDocPointerDown_shareMenu);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown_shareMenu);
+  }, [shareMenuOpen]);
+
+
   if (!authInitialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl"
@@ -2168,20 +2185,66 @@ const isClearListCommand = (t: string) => {
             <Trash2 className="w-5 h-5" />
           </button>
 
-          <button onClick={shareInviteLinkSystem} className="p-2 text-slate-400 hover:text-indigo-600" title="הזמן חבר">
-            {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
-          </button>
+          
         </div>
 
         <h1 className="text-xl font-bold text-indigo-600 leading-none text-center justify-self-center whitespace-nowrap">{list?.title || "הרשימה שלי"}</h1>
 
-        <button
+        <div className="justify-self-end flex items-center gap-2">
+          <div className="relative inline-flex items-center" ref={shareMenuRef}>
+<button onClick={shareInviteLinkSystem} className="p-2 text-slate-400 hover:text-indigo-600" title="הזמן חבר">
+            {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
+          </button>
+  <button
+    type="button"
+    onClick={() => setShareMenuOpen((v) => !v)}
+    className="p-1 text-slate-400 hover:text-indigo-600"
+    title="אפשרויות"
+    aria-label="אפשרויות שיתוף"
+  >
+    <svg className="w-4 h-4" viewBox="0 0 20 20" fill="currentColor" aria-hidden="true">
+      <path fillRule="evenodd" d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 10.94l3.71-3.71a.75.75 0 1 1 1.06 1.06l-4.24 4.24a.75.75 0 0 1-1.06 0L5.21 8.29a.75.75 0 0 1 .02-1.08z" clipRule="evenodd" />
+    </svg>
+  </button>
+
+  {shareMenuOpen ? (
+    <div className="absolute top-10 left-0 z-[80] w-44 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight">
+      <button
+        type="button"
+        onClick={async () => {
+          setShareMenuOpen(false);
+          await shareInviteLinkSystem();
+        }}
+        className="w-full text-right px-4 py-2 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+      >
+        <Share2 className="w-4 h-4 text-slate-500" />
+        <span className="font-semibold text-[15px] leading-none">שתף</span>
+
+      </button>
+
+      <button
+        type="button"
+        onClick={() => {
+          setShareMenuOpen(false);
+          setShowLeaveConfirm(true);
+        }}
+        className="w-full text-right px-4 py-2 text-rose-700 hover:bg-rose-50 flex items-center gap-2"
+      >
+        <AlertCircle className="w-4 h-4 text-rose-600" />
+        <span className="font-semibold text-[15px] leading-none">עזוב רשימה</span>
+
+      </button>
+    </div>
+  ) : null}
+</div>
+          <button
           onClick={() => signOut(auth)}
           className="justify-self-end w-9 h-9 min-w-0 p-0 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
           title="התנתק"
         >
           <LogOut className="w-4 h-4" />
         </button>
+        </div>
       </header>
 
       {/* Voice hint */}
@@ -2518,7 +2581,7 @@ const isClearListCommand = (t: string) => {
           <div className="space-y-6">
             <div className="text-right">
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">מועדפים</h2>
-              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold">פריטים שחוזרים לסל</span></p>
+              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold text-[15px] leading-none">פריטים שחוזרים לסל</span></p>
             </div>
 
             {favoritesUnique.length === 0 ? (
