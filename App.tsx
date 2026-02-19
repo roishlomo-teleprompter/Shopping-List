@@ -46,7 +46,6 @@ import {
 
 import {
   arrayUnion,
-  arrayRemove,
   collection,
   deleteDoc,
   deleteField,
@@ -855,31 +854,7 @@ useEffect(() => {
   
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const shareMenuRef = useRef<HTMLDivElement | null>(null);
-  const leaveSharedList = async () => {
-    if (!user || !list?.id) return;
-    // Allow leaving only if this is not your own list
-    if (list?.ownerUid && user.uid === list.ownerUid) {
-      setToast("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה");
-      setShowLeaveConfirm(false);
-      return;
-    }
-    try {
-      await updateDoc(doc(db, "lists", list.id), {
-        sharedWith: arrayRemove(user.uid),
-      });
-      localStorage.removeItem("activeListId");
-      setShowLeaveConfirm(false);
-      setShareMenuOpen(false);
-      setToast("התנתקת מרשימת הקניות המשותפת");
-    } catch (e) {
-      console.error(e);
-      setShowLeaveConfirm(false);
-      setToast("שגיאה בהתנתקות מהרשימה");
-    }
-  };
-
 const [showClearConfirm, setShowClearConfirm] = useState(false);
-const [showLeaveConfirm, setShowLeaveConfirm] = useState(false);
 const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
     // default: today at 18:00 (local), or next hour if past
@@ -2206,25 +2181,30 @@ const isClearListCommand = (t: string) => {
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
   <div className="flex items-center justify-between">
     {/* שמאל - יציאה */}
-    <button
-      onClick={() => signOut(auth)}
-      className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
-      title="יציאה"
-      aria-label="יציאה"
-    >
-      <LogOut className="w-4 h-4" />
-    </button>
+    <div className="flex items-center gap-2">
+  <button
+        onClick={() => signOut(auth)}
+        className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
+        title="יציאה"
+        aria-label="יציאה"
+      >
+        <LogOut className="w-4 h-4" />
+      </button>
+
+  <button
+          onClick={() => setShowClearConfirm(true)}
+          className="p-2 text-slate-400 hover:text-rose-500"
+          title="נקה רשימה"
+          aria-label="נקה רשימה"
+        >
+          <Trash2 className="w-5 h-5" />
+        </button>
+</div>
 
     {/* ימין - סל אשפה, שיתוף, כותרת */}
     <div className="flex items-center gap-3">
-      <button
-        onClick={() => setShowClearConfirm(true)}
-        className="p-2 text-slate-400 hover:text-rose-500"
-        title="נקה רשימה"
-        aria-label="נקה רשימה"
-      >
-        <Trash2 className="w-5 h-5" />
-      </button>
+
+      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">Shopping-List</span>
 
       <div className="relative inline-flex items-center" ref={shareMenuRef}>
         <button
@@ -2248,7 +2228,7 @@ const isClearListCommand = (t: string) => {
               className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
             >
               <Share2 className="w-4 h-4 text-slate-500" />
-              <span className="font-semibold text-[15px] leading-tight whitespace-normal break-words text-right">שתף רשימת קניות</span>
+              <span className="font-semibold text-[15px] leading-none">שתף רשימת קניות</span>
             </button>
 
             <button
@@ -2269,13 +2249,12 @@ const isClearListCommand = (t: string) => {
               }`}
             >
               <AlertCircle className={`w-4 h-4 ${user && list?.ownerUid && user.uid !== list.ownerUid ? "text-rose-600" : "text-slate-400"}`} />
-              <span className="font-semibold text-[15px] leading-tight whitespace-normal break-words text-right">התנתק מרשימת קניות משותפת</span>
+              <span className="font-semibold text-[15px] leading-none">התנתק מרשימת קניות משותפת</span>
             </button>
           </div>
         ) : null}
       </div>
 
-      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">Shopping-List</span>
     </div>
   </div>
 </header>
@@ -2372,7 +2351,7 @@ const isClearListCommand = (t: string) => {
 
               {isSuggestOpen && inputValue.trim() && suggestionList.length > 0 ? (
   <div
-    className="absolute right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden w-[280px] max-w-[calc(100vw-16px)]"
+    className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden"
     dir="rtl"
     onMouseDown={(e) => {
       // Prevent input blur before click
@@ -2442,7 +2421,7 @@ const isClearListCommand = (t: string) => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      className="relative overflow-hidden flex items-center justify-between p-3 bg-white rounded-2xl border border-slate-100 shadow-sm select-none"
+                      className="relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none"
                       dir="rtl"
                       onPointerDown={onSwipePointerDown(item.id)}
                       onPointerMove={onSwipePointerMove(item.id)}
@@ -2525,7 +2504,7 @@ const isClearListCommand = (t: string) => {
 
                       {/* Foreground content (slides with finger/mouse) */}
                       <div
-                        className="relative z-10 flex items-center justify-between w-full"
+                        className="relative z-10 flex items-center justify-between w-full p-3 bg-white rounded-2xl"
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
                           transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
@@ -2896,36 +2875,6 @@ const isClearListCommand = (t: string) => {
                   פתח ביומן
                 </button>
               </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
-
-
-      {/* Leave Shared List Confirm Modal */}
-      {showLeaveConfirm ? (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
-                <AlertCircle className="w-5 h-5" />
-              </div>
-              <div className="text-right">
-                <div className="text-lg font-black text-slate-800">להתנתק מהרשימה המשותפת?</div>
-                <div className="text-sm font-bold text-slate-400">הפעולה תסיר אותך מהרשימה המשותפת.</div>
-              </div>
-            </div>
-
-            <div className="flex gap-3">
-              <button onClick={() => setShowLeaveConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
-                ביטול
-              </button>
-              <button
-                onClick={leaveSharedList}
-                className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white"
-              >
-                התנתק
-              </button>
             </div>
           </div>
         </div>
