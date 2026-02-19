@@ -833,6 +833,16 @@ const MainList: React.FC = () => {
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
+  // UI-only cues
+  const [favLeavingIds, setFavLeavingIds] = useState<Set<string>>(() => new Set()); // kept for backward compatibility (not used for delete flash)
+  const [favoriteFlashIds, setFavoriteFlashIds] = useState<Set<string>>(() => new Set());
+  const [listFlashIds, setListFlashIds] = useState<Set<string>>(() => new Set());
+  const [favToListFlashIds, setFavToListFlashIds] = useState<Set<string>>(() => new Set());
+  const [deleteFlashIds, setDeleteFlashIds] = useState<Set<string>>(() => new Set());
+  const [favDeleteFlashIds, setFavDeleteFlashIds] = useState<Set<string>>(() => new Set());
+  const pendingEnterIdsRef = useRef<Set<string>>(new Set());
+  const [enterAnim, setEnterAnim] = useState<Record<string, "from" | "to">>({});
+
 
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
@@ -849,6 +859,33 @@ const blurCloseTimerRef = useRef<number | null>(null);
 useEffect(() => {
   historyRef.current = loadItemHistory();
 }, []);
+
+
+useEffect(() => {
+  if (pendingEnterIdsRef.current.size === 0) return;
+
+  const pending = Array.from(pendingEnterIdsRef.current);
+  for (const id of pending) {
+    const it = items.find((x) => x.id === id && !x.isPurchased);
+    if (!it) continue;
+
+    pendingEnterIdsRef.current.delete(id);
+
+    setEnterAnim((prev) => ({ ...prev, [id]: "from" }));
+    // Next frame -> transition to visible
+    requestAnimationFrame(() => {
+      setEnterAnim((prev) => ({ ...prev, [id]: "to" }));
+    });
+
+    window.setTimeout(() => {
+      setEnterAnim((prev) => {
+        const next = { ...prev };
+        delete (next as any)[id];
+        return next;
+      });
+    }, 260);
+  }
+}, [items]);
 
 
   const [isCopied, setIsCopied] = useState(false);
@@ -986,7 +1023,7 @@ const [listLoading, setListLoading] = useState(false);
 
     try {
       if (dx > 0) {
-        await deleteItem(id); // swipe right
+        deleteItemWithFlash(id); // swipe right
       } else {
         if (!favoritesById.has(id)) {
           await toggleFavorite(id); // swipe left (add only)
@@ -1070,7 +1107,7 @@ const [listLoading, setListLoading] = useState(false);
     swipeConsumedRef.current = true;
 
     if (dxRaw > 0) {
-      await deleteItem(id);
+      deleteItemWithFlash(id);
     } else {
       if (!favoritesById.has(id)) {
         await toggleFavorite(id);
@@ -1465,6 +1502,27 @@ const hideSuggestion = (s: SuggestView) => {
     await deleteDoc(doc(db, "lists", list.id, "items", id));
   };
 
+  const deleteItemWithFlash = (id: string) => {
+    if (!list?.id) return;
+    if (deleteFlashIds.has(id)) return;
+
+    setDeleteFlashIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+
+    window.setTimeout(() => {
+      void deleteItem(id).finally(() => {
+        setDeleteFlashIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      });
+    }, 240);
+  };
+
   const toggleFavorite = async (itemId: string) => {
     if (!list?.id) return;
 
@@ -1489,12 +1547,48 @@ const hideSuggestion = (s: SuggestView) => {
     }
 
     await setDoc(favRef, { name: itemName, createdAt: Date.now() });
+
+    // Visual cue: item was added to favorites (no text)
+    setFavoriteFlashIds((prev) => {
+      const next = new Set(prev);
+      next.add(itemId);
+      return next;
+    });
+    window.setTimeout(() => {
+      setFavoriteFlashIds((prev) => {
+        const next = new Set(prev);
+        next.delete(itemId);
+        return next;
+      });
+    }, 260);
   };
 
   const removeFavorite = async (favId: string) => {
     if (!list?.id) return;
     await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
   };
+
+  const removeFavoriteWithFlash = (favId: string) => {
+    if (!list?.id) return;
+    if (favDeleteFlashIds.has(favId)) return;
+
+    setFavDeleteFlashIds((prev) => {
+      const next = new Set(prev);
+      next.add(favId);
+      return next;
+    });
+
+    window.setTimeout(() => {
+      void removeFavorite(favId).finally(() => {
+        setFavDeleteFlashIds((prev) => {
+          const next = new Set(prev);
+          next.delete(favId);
+          return next;
+        });
+      });
+    }, 240);
+  };
+
 
   const clearListServer = async () => {
     const listId = latestListIdRef.current || list?.id;
@@ -1655,28 +1749,60 @@ const shareListWhatsApp = () => {
   const FAV_SWIPE_MAX_SHIFT_PX = 110;
 
   const addFavoriteToList = async (fav: { id: string; name: string }) => {
-    if (!list?.id) return;
+    if (!list?.id) return { targetId: null as string | null, created: false };
+
+    // Visual cue on the favorites card: item was moved to the main list (no text)
+    setFavToListFlashIds((prev) => {
+      const next = new Set(prev);
+      next.add(fav.id);
+      return next;
+    });
+    window.setTimeout(() => {
+      setFavToListFlashIds((prev) => {
+        const next = new Set(prev);
+        next.delete(fav.id);
+        return next;
+      });
+    }, 260);
 
     const favKey = normalizeItemName(fav.name);
 
-    const existing = items.find(
-      (i) => !i.isPurchased && normalizeItemName(i.name) === favKey
-    );
+    const existing = items.find((i) => !i.isPurchased && normalizeItemName(i.name) === favKey);
 
     if (existing) {
-      return;
-    } else {
-      const itemId = crypto.randomUUID();
-      const newItem: ShoppingItem = {
-        id: itemId,
-        name: fav.name,
-        quantity: 1,
-        isPurchased: false,
-        isFavorite: false,
-        createdAt: Date.now(),
-      };
-      await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+      // Visual cue on the existing row in the main list (no text)
+      setListFlashIds((prev) => {
+        const next = new Set(prev);
+        next.add(existing.id);
+        return next;
+      });
+      window.setTimeout(() => {
+        setListFlashIds((prev) => {
+          const next = new Set(prev);
+          next.delete(existing.id);
+          return next;
+        });
+      }, 260);
+
+      return { targetId: existing.id, created: false };
     }
+
+    const itemId = crypto.randomUUID();
+    const newItem: ShoppingItem = {
+      id: itemId,
+      name: fav.name,
+      quantity: 1,
+      isPurchased: false,
+      isFavorite: false,
+      createdAt: Date.now(),
+    };
+
+    // Queue enter animation for when Firestore pushes the new item into state
+    pendingEnterIdsRef.current.add(itemId);
+
+    await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+
+    return { targetId: itemId, created: true };
   };
 
   const onFavSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
@@ -1757,8 +1883,7 @@ const shareListWhatsApp = () => {
 
     if (dxRaw > 0) {
       // swipe right -> remove from favorites
-      await removeFavorite(id);
-      setToast("הוסר מהמועדפים");
+      removeFavoriteWithFlash(id);
     } else {
       // swipe left -> add to list (or increment if exists)
       if (fav) await addFavoriteToList(fav);
@@ -1846,7 +1971,7 @@ const isClearListCommand = (t: string) => {
         setToast("לא מצאתי פריט למחיקה");
         return;
       }
-      await deleteItem(item.id);
+      deleteItemWithFlash(item.id);
       setToast(`מחקתי: ${item.name}`);
       return;
     }
@@ -2450,7 +2575,13 @@ const isClearListCommand = (t: string) => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${leavingIds.has(item.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
+                      className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
+                        leavingIds.has(item.id)
+                          ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
+                          : enterAnim[item.id] === "from"
+                            ? "opacity-0 translate-y-1 scale-[0.99]"
+                            : "opacity-100 translate-y-0 scale-100"
+                      }`}
                       dir="rtl"
                       onPointerDown={onSwipePointerDown(item.id)}
                       onPointerMove={onSwipePointerMove(item.id)}
@@ -2533,7 +2664,7 @@ const isClearListCommand = (t: string) => {
 
                       {/* Foreground content (slides with finger/mouse) */}
                       <div
-                        className="relative z-10 flex items-center justify-between w-full p-3 bg-white rounded-2xl"
+                        className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
                           transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
@@ -2544,6 +2675,7 @@ const isClearListCommand = (t: string) => {
                           style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                           onClick={() => {
                             if (swipeConsumedRef.current) return;
+                            if (deleteFlashIds.has(item.id)) return;
                             markPurchasedWithAnimation(item.id);
                           }}
                         >
@@ -2554,9 +2686,9 @@ const isClearListCommand = (t: string) => {
                           className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
                           data-noswipe="true"
                         >
-                          <button disabled={leavingIds.has(item.id)}
+                          <button disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
                             onClick={() => updateQty(item.id, -1)}
-                            className={`p-1 text-slate-400 ${leavingIds.has(item.id) ? "opacity-40 cursor-not-allowed" : ""}`}
+                            className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
                             title="הפחת"
                             data-noswipe="true"
                           >
@@ -2565,9 +2697,9 @@ const isClearListCommand = (t: string) => {
 
                           <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
 
-                          <button disabled={leavingIds.has(item.id)}
+                          <button disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
                             onClick={() => updateQty(item.id, 1)}
-                            className={`p-1 text-slate-400 ${leavingIds.has(item.id) ? "opacity-40 cursor-not-allowed" : ""}`}
+                            className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
                             title="הוסף"
                             data-noswipe="true"
                           >
@@ -2585,7 +2717,7 @@ const isClearListCommand = (t: string) => {
                       {purchasedItems.map((item) => (
                         <div
                           key={item.id}
-                          className="flex items-center justify-between p-3 bg-slate-100/50 rounded-2xl opacity-60 grayscale transition-all"
+                          className={`flex items-center justify-between p-3 ${deleteFlashIds.has(item.id) ? "bg-rose-50" : "bg-slate-100/50"} rounded-2xl opacity-60 grayscale transition-all`}
                           dir="rtl"
                         ><div className="flex items-center justify-between w-full">
       <div
@@ -2607,7 +2739,7 @@ const isClearListCommand = (t: string) => {
         </span>
       </div>
 
-      <button onClick={() => deleteItem(item.id)} className="p-2 text-slate-300" title="מחק">
+      <button onClick={() => deleteItemWithFlash(item.id)} className="p-2 text-slate-300" title="מחק">
         <Trash2 className="w-4 h-4" />
       </button>
     </div></div>
@@ -2635,7 +2767,7 @@ const isClearListCommand = (t: string) => {
                 {favoritesUnique.map((fav) => (
                   <div
                     key={fav.id}
-                    className="relative overflow-hidden rounded-2xl select-none"
+                    className={`relative overflow-hidden rounded-2xl select-none transition-all duration-200 ease-out ${favDeleteFlashIds.has(fav.id) ? "pointer-events-none" : ""} ${favLeavingIds.has(fav.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
                     dir="ltr"
                     onPointerDown={onFavSwipePointerDown(fav.id)}
                     onPointerMove={onFavSwipePointerMove(fav.id)}
@@ -2721,7 +2853,7 @@ const isClearListCommand = (t: string) => {
 
                     {/* Foreground card */}
                     <div
-                      className="relative z-10 flex items-center justify-between p-4 bg-white rounded-2xl border border-slate-100 shadow-sm"
+                      className={`relative z-10 flex items-center justify-between p-4 rounded-2xl border border-slate-100 shadow-sm transition-colors ${favDeleteFlashIds.has(fav.id) ? "bg-rose-50" : favToListFlashIds.has(fav.id) ? "bg-emerald-100" : "bg-white"}`}
                       style={{
                         transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
                         transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
