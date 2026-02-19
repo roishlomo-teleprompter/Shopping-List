@@ -832,6 +832,7 @@ const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
 
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
@@ -1409,6 +1410,34 @@ const hideSuggestion = (s: SuggestView) => {
       purchasedAt: isNowPurchased ? Date.now() : null,
     });
   };
+
+  const LEAVE_MS = 240;
+
+  const markPurchasedWithAnimation = (id: string) => {
+    const item = items.find((i) => i.id === id);
+    // Animate only when the item is leaving the active list (not when restoring from 'purchased')
+    if (!item || item.isPurchased) {
+      void togglePurchased(id);
+      return;
+    }
+
+    setLeavingIds((prev) => {
+      const next = new Set(prev);
+      next.add(id);
+      return next;
+    });
+
+    window.setTimeout(() => {
+      void togglePurchased(id).finally(() => {
+        setLeavingIds((prev) => {
+          const next = new Set(prev);
+          next.delete(id);
+          return next;
+        });
+      });
+    }, LEAVE_MS);
+  };
+
 
   const updateQty = async (id: string, delta: number) => {
     if (!list?.id) return;
@@ -2421,7 +2450,7 @@ const isClearListCommand = (t: string) => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      className="relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none"
+                      className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${leavingIds.has(item.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
                       dir="rtl"
                       onPointerDown={onSwipePointerDown(item.id)}
                       onPointerMove={onSwipePointerMove(item.id)}
@@ -2515,7 +2544,7 @@ const isClearListCommand = (t: string) => {
                           style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                           onClick={() => {
                             if (swipeConsumedRef.current) return;
-                            togglePurchased(item.id);
+                            markPurchasedWithAnimation(item.id);
                           }}
                         >
                           {item.name}
@@ -2525,9 +2554,9 @@ const isClearListCommand = (t: string) => {
                           className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
                           data-noswipe="true"
                         >
-                          <button
+                          <button disabled={leavingIds.has(item.id)}
                             onClick={() => updateQty(item.id, -1)}
-                            className="p-1 text-slate-400"
+                            className={`p-1 text-slate-400 ${leavingIds.has(item.id) ? "opacity-40 cursor-not-allowed" : ""}`}
                             title="הפחת"
                             data-noswipe="true"
                           >
@@ -2536,9 +2565,9 @@ const isClearListCommand = (t: string) => {
 
                           <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
 
-                          <button
+                          <button disabled={leavingIds.has(item.id)}
                             onClick={() => updateQty(item.id, 1)}
-                            className="p-1 text-slate-400"
+                            className={`p-1 text-slate-400 ${leavingIds.has(item.id) ? "opacity-40 cursor-not-allowed" : ""}`}
                             title="הוסף"
                             data-noswipe="true"
                           >
