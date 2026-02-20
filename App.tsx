@@ -1751,20 +1751,6 @@ const shareListWhatsApp = () => {
   const addFavoriteToList = async (fav: { id: string; name: string }) => {
     if (!list?.id) return { targetId: null as string | null, created: false };
 
-    // Visual cue on the favorites card: item was moved to the main list (no text)
-    setFavToListFlashIds((prev) => {
-      const next = new Set(prev);
-      next.add(fav.id);
-      return next;
-    });
-    window.setTimeout(() => {
-      setFavToListFlashIds((prev) => {
-        const next = new Set(prev);
-        next.delete(fav.id);
-        return next;
-      });
-    }, 260);
-
     const favKey = normalizeItemName(fav.name);
 
     const existing = items.find((i) => !i.isPurchased && normalizeItemName(i.name) === favKey);
@@ -1786,6 +1772,21 @@ const shareListWhatsApp = () => {
 
       return { targetId: existing.id, created: false };
     }
+
+
+    // Visual cue on the favorites card: item was moved to the main list (no text)
+    setFavToListFlashIds((prev) => {
+      const next = new Set(prev);
+      next.add(fav.id);
+      return next;
+    });
+    window.setTimeout(() => {
+      setFavToListFlashIds((prev) => {
+        const next = new Set(prev);
+        next.delete(fav.id);
+        return next;
+      });
+    }, 260);
 
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
