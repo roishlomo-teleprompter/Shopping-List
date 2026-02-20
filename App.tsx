@@ -926,6 +926,39 @@ const [listLoading, setListLoading] = useState(false);
   const lastInterimRef = useRef<string>("");
   const startGuardRef = useRef<boolean>(false);
 
+  // Auto-clear "שמענו" line shortly after listening ends (no manual refresh)
+  const HEARD_CLEAR_MS = 1800;
+  const heardClearTimerRef = useRef<number | null>(null);
+
+
+  useEffect(() => {
+    // Clear "שמענו: ..." automatically shortly after listening ends
+    if (!lastHeard) return;
+
+    // While listening - don't schedule clearing
+    if (isListening) {
+      if (heardClearTimerRef.current) {
+        window.clearTimeout(heardClearTimerRef.current);
+        heardClearTimerRef.current = null;
+      }
+      return;
+    }
+
+    if (heardClearTimerRef.current) window.clearTimeout(heardClearTimerRef.current);
+    heardClearTimerRef.current = window.setTimeout(() => {
+      setLastHeard("");
+      heardClearTimerRef.current = null;
+    }, HEARD_CLEAR_MS);
+
+    return () => {
+      if (heardClearTimerRef.current) {
+        window.clearTimeout(heardClearTimerRef.current);
+        heardClearTimerRef.current = null;
+      }
+    };
+  }, [lastHeard, isListening]);
+
+
   // ---------------------------
   // Swipe gestures (active items): swipe left = delete, swipe right = favorite
   // Works on desktop (mouse drag) and mobile (touch).
