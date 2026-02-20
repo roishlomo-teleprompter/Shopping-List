@@ -18,6 +18,7 @@ import {
   Mic,
   MicOff,
   Calendar,
+  Languages,
 } from "lucide-react";
 
 // Local icon: list + plus (works even if lucide doesn't include ListPlus)
@@ -828,8 +829,243 @@ function getAutocompleteSuggestions(opts: {
     });
 }
 
+type AppLang = "he" | "en" | "ru" | "ar";
+
+const APP_LANG_STORAGE_KEY = "shoppingListLang";
+
+const detectDeviceLang = (): AppLang => {
+  try {
+    const navLang = (navigator.language || "").toLowerCase();
+    if (navLang.startsWith("he") || navLang.startsWith("iw")) return "he";
+    if (navLang.startsWith("ru")) return "ru";
+    if (navLang.startsWith("ar")) return "ar";
+    return "en";
+  } catch {
+    return "he";
+  }
+};
+
+const SPEECH_LANG_BY_APP_LANG: Record<AppLang, string> = {
+  he: "he-IL",
+  en: "en-US",
+  ru: "ru-RU",
+  ar: "ar-SA",
+};
+
+const I18N: Record<AppLang, Record<string, string>> = {
+  he: {
+    "הרשימה ריקה": "הרשימה ריקה",
+    "התחבר עם גוגל": "התחבר עם גוגל",
+    "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
+    "הרשימה שלי חכמה": "הרשימה שלי חכמה",
+    "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
+    "וואטסאפ": "וואטסאפ",
+    "שפה": "שפה",
+    "יציאה": "יציאה",
+    "נקה רשימה": "נקה רשימה",
+    "מועדפים": "מועדפים",
+    "פריטים שחוזרים לסל": "פריטים שחוזרים לסל",
+    "אין מועדפים עדיין": "אין מועדפים עדיין",
+    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע",
+    "מקשיב עכשיו - דבר ושחרר כדי לבצע": "מקשיב עכשיו - דבר ושחרר כדי לבצע",
+    "שמענו:": "שמענו:",
+    "דוגמאות:": "דוגמאות:",
+    "דבר עכשיו - שחרר כדי לבצע": "דבר עכשיו - שחרר כדי לבצע",
+    "צריך להתחבר לפני פקודות קוליות": "צריך להתחבר לפני פקודות קוליות",
+    "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.",
+      "מה להוסיף לרשימה?": "מה להוסיף לרשימה?",
+      "רשימה": "רשימה",
+      "יומן": "יומן",
+      "שיתוף": "שיתוף",
+      "שתף רשימת קניות": "שתף רשימת קניות",
+      "קישור לרשימה": "קישור לרשימה",
+      "קישור הצטרפות להרשימה שלי": "קישור הצטרפות להרשימה שלי",
+      "לנקות את כל הרשימה?": "לנקות את כל הרשימה?",
+      "הפעולה תמחק את כל הפריטים מהרשימה.": "הפעולה תמחק את כל הפריטים מהרשימה.",
+      "ביטול": "ביטול",
+      "מחק הכל": "מחק הכל",
+  },
+  en: {
+    "הרשימה ריקה": "The list is empty",
+    "התחבר עם גוגל": "Sign in with Google",
+    "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "To use the list and invite friends, please sign in with Google.",
+    "הרשימה שלי חכמה": "My Smart List",
+    "התנתק מרשימת קניות משותפת": "Leave shared list",
+    "וואטסאפ": "WhatsApp",
+    "שפה": "Language",
+    "יציאה": "Sign out",
+    "נקה רשימה": "Clear list",
+    "מועדפים": "Favorites",
+    "פריטים שחוזרים לסל": "Items that return to the cart",
+    "אין מועדפים עדיין": "No favorites yet",
+    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "Voice commands: hold the mic, release to run",
+    "מקשיב עכשיו - דבר ושחרר כדי לבצע": "Listening now - speak and release to run",
+    "שמענו:": "Heard:",
+    "דוגמאות:": "Examples:",
+    "דבר עכשיו - שחרר כדי לבצע": "Speak now - release to run",
+    "צריך להתחבר לפני פקודות קוליות": "Please sign in before voice commands",
+    "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Your browser does not support speech recognition. Try Chrome or Edge.",
+      "מה להוסיף לרשימה?": "What to add to the list?",
+      "רשימה": "List",
+      "יומן": "Calendar",
+      "שיתוף": "Share",
+      "שתף רשימת קניות": "Share shopping list",
+      "קישור לרשימה": "List link",
+      "קישור הצטרפות להרשימה שלי": "Join link to my list",
+      "לנקות את כל הרשימה?": "Clear the entire list?",
+      "הפעולה תמחק את כל הפריטים מהרשימה.": "This will delete all items from the list.",
+      "ביטול": "Cancel",
+      "מחק הכל": "Delete all",
+  
+    "הרשימה נמחקה": "List cleared",
+    "לא מצאתי פריט למחיקה": "Could not find an item to delete",
+    "לא מצאתי פריט לסימון": "Could not find an item to mark",
+    "לא מצאתי פריט להגדלה": "Could not find an item to increase",
+    "לא מצאתי פריט להקטנה": "Could not find an item to decrease",
+    "עוצר בגלל משפט ארוך מדי - מבצע...": "Stopping due to a very long phrase - running...",
+    "המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)": "Microphone is unavailable (another app may be using it)",
+    "לא הצלחתי להתחיל האזנה": "Could not start listening",
+    "לא נקלט קול - נסה שוב": "No audio captured - try again",
+    "מבצע...": "Running...",
+    "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "You can disconnect only from a shared list you do not own",
+    "שגיאה": "Error",
+},
+  ru: {
+    "הרשימה ריקה": "Список пуст",
+    "התחבר עם גוגל": "Войти через Google",
+    "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "Чтобы пользоваться списком и приглашать друзей, войдите через Google.",
+    "הרשימה שלי חכמה": "Мой умный список",
+    "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
+    "וואטסאפ": "WhatsApp",
+    "שפה": "Язык",
+    "יציאה": "Выйти",
+    "נקה רשימה": "Очистить список",
+    "מועדפים": "Избранное",
+    "פריטים שחוזרים לסל": "Товары возвращаются в корзину",
+    "אין מועדפים עדיין": "Пока нет избранного",
+    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "Голосовые команды: удерживайте микрофон, отпустите чтобы выполнить",
+    "מקשיב עכשיו - דבר ושחרר כדי לבצע": "Слушаю - говорите и отпустите чтобы выполнить",
+    "שמענו:": "Распознано:",
+    "דוגמאות:": "Примеры:",
+    "דבר עכשיו - שחרר כדי לבצע": "Говорите - отпустите чтобы выполнить",
+    "צריך להתחבר לפני פקודות קוליות": "Войдите в аккаунт для голосовых команд",
+    "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Ваш браузер не поддерживает распознавание речи. Попробуйте Chrome или Edge.",
+      "מה להוסיף לרשימה?": "Что добавить в список?",
+      "רשימה": "Список",
+      "יומן": "Календарь",
+      "שיתוף": "Поделиться",
+      "שתף רשימת קניות": "Поделиться списком покупок",
+      "קישור לרשימה": "Ссылка на список",
+      "קישור הצטרפות להרשימה שלי": "Ссылка для присоединения к моему списку",
+      "לנקות את כל הרשימה?": "Очистить весь список?",
+      "הפעולה תמחק את כל הפריטים מהרשימה.": "Это удалит все элементы из списка.",
+      "ביטול": "Отмена",
+      "מחק הכל": "Удалить всё",
+  
+    "הרשימה נמחקה": "Список очищен",
+    "לא מצאתי פריט למחיקה": "Не нашёл элемент для удаления",
+    "לא מצאתי פריט לסימון": "Не нашёл элемент для отметки",
+    "לא מצאתי פריט להגדלה": "Не нашёл элемент для увеличения",
+    "לא מצאתי פריט להקטנה": "Не нашёл элемент для уменьшения",
+    "עוצר בגלל משפט ארוך מדי - מבצע...": "Останавливаю из-за слишком длинной фразы - выполняю...",
+    "המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)": "Микрофон недоступен (возможно, его использует другое приложение)",
+    "לא הצלחתי להתחיל האזנה": "Не удалось начать прослушивание",
+    "לא נקלט קול - נסה שוב": "Звук не распознан - попробуйте ещё раз",
+    "מבצע...": "Выполняю...",
+    "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "Можно отключиться только от общего списка, владельцем которого вы не являетесь",
+    "שגיאה": "Ошибка",
+},
+  ar: {
+    "הרשימה ריקה": "القائمة فارغة",
+    "התחבר עם גוגל": "تسجيل الدخول عبر Google",
+    "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "لاستخدام القائمة ودعوة الأصدقاء، يرجى تسجيل الدخول عبر Google.",
+    "הרשימה שלי חכמה": "قائمتي الذكية",
+    "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
+    "וואטסאפ": "واتساب",
+    "שפה": "اللغة",
+    "יציאה": "تسجيل الخروج",
+    "נקה רשימה": "مسح القائمة",
+    "מועדפים": "المفضلة",
+    "פריטים שחוזרים לסל": "عناصر تعود إلى السلة",
+    "אין מועדפים עדיין": "لا توجد مفضلة بعد",
+    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "أوامر صوتية: اضغط مطولا على الميكروفون ثم اترك للتنفيذ",
+    "מקשיב עכשיו - דבר ושחרר כדי לבצע": "يستمع الآن - تحدث واترك للتنفيذ",
+    "שמענו:": "سُمِع:",
+    "דוגמאות:": "أمثلة:",
+    "דבר עכשיו - שחרר כדי לבצע": "تحدث الآن - اترك للتنفيذ",
+    "צריך להתחבר לפני פקודות קוליות": "يرجى تسجيل الدخول قبل الأوامر الصوتية",
+    "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "متصفحك لا يدعم التعرف على الكلام. جرّب Chrome أو Edge.",
+      "מה להוסיף לרשימה?": "ماذا تريد أن تضيف إلى القائمة؟",
+      "רשימה": "القائمة",
+      "יומן": "التقويم",
+      "שיתוף": "مشاركة",
+      "שתף רשימת קניות": "مشاركة قائمة التسوق",
+      "קישור לרשימה": "رابط القائمة",
+      "קישור הצטרפות להרשימה שלי": "رابط الانضمام إلى قائمتي",
+      "לנקות את כל הרשימה?": "مسح القائمة بالكامل؟",
+      "הפעולה תמחק את כל הפריטים מהרשימה.": "سيتم حذف جميع العناصر من القائمة.",
+      "ביטול": "إلغاء",
+      "מחק הכל": "حذف الكل",
+  
+    "הרשימה נמחקה": "تم مسح القائمة",
+    "לא מצאתי פריט למחיקה": "لم أجد عنصرًا للحذف",
+    "לא מצאתי פריט לסימון": "لم أجد عنصرًا للتحديد",
+    "לא מצאתי פריט להגדלה": "لم أجد عنصرًا للزيادة",
+    "לא מצאתי פריט להקטנה": "لم أجد عنصرًا للتقليل",
+    "עוצר בגלל משפט ארוך מדי - מבצע...": "توقف بسبب عبارة طويلة جدًا - جاري التنفيذ...",
+    "המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)": "الميكروفون غير متاح (قد يكون تطبيق آخر يستخدمه)",
+    "לא הצלחתי להתחיל האזנה": "لم أستطع بدء الاستماع",
+    "לא נקלט קול - נסה שוב": "لم يتم التقاط صوت - حاول مرة أخرى",
+    "מבצע...": "جاري التنفيذ...",
+    "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "يمكنك قطع الاتصال فقط عن قائمة مشتركة لست مالكها",
+    "שגיאה": "خطأ",
+},
+};
+
+const getVoiceExamplesText = (lang: AppLang) => {
+  switch (lang) {
+    case "en":
+      return '"eggs tomato bell pepper two cucumbers" | "two cucumbers" | "clear list"';
+    case "ru":
+      return '"яйца помидор перец два огурца" | "два огурца" | "очистить список"';
+    case "ar":
+      return '"بيض طماطم فلفل خيارين" | "خيارين" | "امسح القائمة"';
+    case "he":
+    default:
+      return '"ביצים עגבניה גמבה שתי מלפפונים" | "מלפפונים שתיים" | "מחק רשימה"';
+  }
+};
+
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
+
+const [lang, setLang] = useState<AppLang>(() => {
+  try {
+    const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+    if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+    return detectDeviceLang();
+  } catch {
+    return detectDeviceLang();
+  }
+});
+
+useEffect(() => {
+  try {
+    localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
+  } catch {
+    // ignore
+  }
+}, [lang]);
+
+const t = useMemo(() => {
+  const dict = I18N[lang] || I18N.he;
+  return (key: string) => dict[key] ?? I18N.he[key] ?? key;
+}, [lang]);
+
+const speechLang = useMemo(() => SPEECH_LANG_BY_APP_LANG[lang] ?? "he-IL", [lang]);
+
+const [langMenuOpen, setLangMenuOpen] = useState(false);
+const langMenuRef = useRef<HTMLDivElement | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
@@ -1673,8 +1909,8 @@ const hideSuggestion = (s: SuggestView) => {
       if (typeof navigator !== "undefined" && "share" in navigator) {
         // @ts-ignore
         await navigator.share({
-          title: "קישור לרשימה",
-          text: "קישור הצטרפות להרשימה שלי",
+          title: t("קישור לרשימה"),
+          text: t("קישור הצטרפות להרשימה שלי"),
           url: link,
         });
         return;
@@ -1993,7 +2229,7 @@ const isClearListCommand = (t: string) => {
     // Clear list
     if (isClearListCommand(text)) {
       await clearListServer();
-      setToast("הרשימה נמחקה");
+      setToast(t("הרשימה נמחקה"));
       return;
     }
 
@@ -2002,7 +2238,7 @@ const isClearListCommand = (t: string) => {
       const name = text.replace(/^(מחק|תמחק|תמחוק|תמחקי)\s+/, "").trim();
       const item = findItemByName(name);
       if (!item) {
-        setToast("לא מצאתי פריט למחיקה");
+        setToast(t("לא מצאתי פריט למחיקה"));
         return;
       }
       deleteItemWithFlash(item.id);
@@ -2016,7 +2252,7 @@ const isClearListCommand = (t: string) => {
       const name = buyMatch[2].trim();
       const item = findItemByName(name);
       if (!item) {
-        setToast("לא מצאתי פריט לסימון");
+        setToast(t("לא מצאתי פריט לסימון"));
         return;
       }
       if (!item.isPurchased) await togglePurchased(item.id);
@@ -2029,7 +2265,7 @@ const isClearListCommand = (t: string) => {
     if (incMatch) {
       const name = incMatch[2].trim();
       const item = findItemByName(name);
-      if (!item) return setToast("לא מצאתי פריט להגדלה");
+      if (!item) return setToast(t("לא מצאתי פריט להגדלה"));
       await updateQty(item.id, 1);
       return setToast(`הגדלתי: ${item.name}`);
     }
@@ -2038,7 +2274,7 @@ const isClearListCommand = (t: string) => {
     if (decMatch) {
       const name = decMatch[2].trim();
       const item = findItemByName(name);
-      if (!item) return setToast("לא מצאתי פריט להקטנה");
+      if (!item) return setToast(t("לא מצאתי פריט להקטנה"));
       await updateQty(item.id, -1);
       return setToast(`הקטנתי: ${item.name}`);
     }
@@ -2066,12 +2302,12 @@ const isClearListCommand = (t: string) => {
   const startHoldListening = () => {
     const SR = ensureSpeechRecognition();
     if (!SR) {
-      alert("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.");
+      alert(t("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge."));
       return;
     }
 
     if (!user) {
-      setToast("צריך להתחבר לפני פקודות קוליות");
+      setToast(t("צריך להתחבר לפני פקודות קוליות"));
       signInSmart();
       return;
     }
@@ -2083,7 +2319,7 @@ const isClearListCommand = (t: string) => {
     holdActiveRef.current = true;
     setLastHeard("");
     setIsListening(true);
-    setToast("דבר עכשיו - שחרר כדי לבצע");
+    setToast(t("דבר עכשיו - שחרר כדי לבצע"));
 
     if (recognitionRef.current) {
       try {
@@ -2097,7 +2333,7 @@ const isClearListCommand = (t: string) => {
     const rec = new SR();
     recognitionRef.current = rec;
 
-    rec.lang = "he-IL";
+    rec.lang = speechLang;
     rec.interimResults = true;
     rec.maxAlternatives = 1;
     rec.continuous = true;
@@ -2135,7 +2371,7 @@ const isClearListCommand = (t: string) => {
 
     sessionTimer = window.setTimeout(() => {
       if (!holdActiveRef.current) return;
-      setToast("עוצר בגלל משפט ארוך מדי - מבצע...");
+      setToast(t("עוצר בגלל משפט ארוך מדי - מבצע..."));
       stopHoldListening();
     }, MAX_SESSION_MS);
 
@@ -2206,7 +2442,7 @@ const isClearListCommand = (t: string) => {
       if (err === "not-allowed" || err === "service-not-allowed") {
         alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
       } else if (err === "audio-capture") {
-        setToast("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)");
+        setToast(t("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)"));
       } else {
         setToast(`שגיאת מיקרופון: ${err || "unknown"}`);
       }
@@ -2249,7 +2485,7 @@ const isClearListCommand = (t: string) => {
       clearVoiceTimers();
       setIsListening(false);
       holdActiveRef.current = false;
-      setToast("לא הצלחתי להתחיל האזנה");
+      setToast(t("לא הצלחתי להתחיל האזנה"));
     }
   };
 
@@ -2275,16 +2511,16 @@ const isClearListCommand = (t: string) => {
     lastInterimRef.current = "";
 
     if (!combined) {
-      setToast("לא נקלט קול - נסה שוב");
+      setToast(t("לא נקלט קול - נסה שוב"));
       return;
     }
 
-    setToast("מבצע...");
+    setToast(t("מבצע..."));
     try {
       await executeVoiceText(combined);
     } catch (e: any) {
       console.error(e);
-      setToast(`שגיאה: ${String(e?.message || e || "")}`);
+      setToast(`${t("שגיאה")}: ${String(e?.message || e || "")}`);
     }
   };
 
@@ -2313,6 +2549,19 @@ const isClearListCommand = (t: string) => {
   }, [shareMenuOpen]);
 
 
+useEffect(() => {
+  const onDocPointerDown_langMenu = (e: PointerEvent) => {
+    if (!langMenuOpen) return;
+    const el = langMenuRef.current;
+    if (!el) return;
+    if (e.target && el.contains(e.target as Node)) return;
+    setLangMenuOpen(false);
+  };
+  document.addEventListener("pointerdown", onDocPointerDown_langMenu);
+  return () => document.removeEventListener("pointerdown", onDocPointerDown_langMenu);
+}, [langMenuOpen]);
+
+
   if (!authInitialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl"
@@ -2331,8 +2580,8 @@ const isClearListCommand = (t: string) => {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
-          <h1 className="text-2xl font-black text-slate-800">הרשימה שלי חכמה</h1>
-          <p className="text-slate-500 font-bold">כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.</p>
+          <h1 className="text-2xl font-black text-slate-800">{t("הרשימה שלי חכמה")}</h1>
+          <p className="text-slate-500 font-bold">{t("כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.")}</p>
           <button
             onClick={async () => {
               await signInSmart();
@@ -2340,7 +2589,7 @@ const isClearListCommand = (t: string) => {
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
             <LogIn className="w-4 h-4" />
-            התחבר עם גוגל
+            {t("התחבר עם גוגל")}
           </button>
         </div>
       </div>
@@ -2373,17 +2622,56 @@ const isClearListCommand = (t: string) => {
   <button
         onClick={() => signOut(auth)}
         className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
-        title="יציאה"
-        aria-label="יציאה"
+        title={t("יציאה")}
+        aria-label={t("יציאה")}
       >
         <LogOut className="w-4 h-4" />
       </button>
 
+  
+<div className="relative" ref={langMenuRef}>
   <button
+    type="button"
+    onClick={() => setLangMenuOpen((v) => !v)}
+    className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
+    title={t("שפה")}
+    aria-label={t("שפה")}
+  >
+    <Languages className="w-4 h-4" />
+  </button>
+
+  {langMenuOpen ? (
+    <div className="absolute right-0 mt-2 w-44 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[14px] leading-tight z-[80]">
+      {([
+        { code: "he" as AppLang, label: "עברית" },
+        { code: "en" as AppLang, label: "English" },
+        { code: "ru" as AppLang, label: "Русский" },
+        { code: "ar" as AppLang, label: "العربية" },
+      ] as const).map((opt) => (
+        <button
+          key={opt.code}
+          type="button"
+          onClick={() => {
+            setLang(opt.code);
+            setLangMenuOpen(false);
+          }}
+          className={`w-full px-4 py-2 flex items-center justify-between hover:bg-slate-50 ${
+            lang === opt.code ? "font-black text-slate-900" : "font-bold text-slate-600"
+          }`}
+        >
+          <span>{opt.label}</span>
+          {lang === opt.code ? <Check className="w-4 h-4 text-emerald-500" /> : null}
+        </button>
+      ))}
+    </div>
+  ) : null}
+</div>
+
+<button
           onClick={() => setShowClearConfirm(true)}
           className="p-2 text-slate-400 hover:text-rose-500"
-          title="נקה רשימה"
-          aria-label="נקה רשימה"
+          title={t("נקה רשימה")}
+          aria-label={t("נקה רשימה")}
         >
           <Trash2 className="w-5 h-5" />
         </button>
@@ -2399,8 +2687,8 @@ const isClearListCommand = (t: string) => {
           type="button"
           onClick={() => setShareMenuOpen((v) => !v)}
           className="p-2 text-slate-400 hover:text-indigo-600"
-          title="שיתוף"
-          aria-label="שיתוף"
+          title={t("שיתוף")}
+          aria-label={t("שיתוף")}
         >
           {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
         </button>
@@ -2416,7 +2704,7 @@ const isClearListCommand = (t: string) => {
               className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
             >
               <Share2 className="w-4 h-4 text-slate-500" />
-              <span className="font-semibold text-[15px] leading-none">שתף רשימת קניות</span>
+              <span className="font-semibold text-[15px] leading-none">{t("שתף רשימת קניות")}</span>
             </button>
 
             <button
@@ -2425,7 +2713,7 @@ const isClearListCommand = (t: string) => {
                 const canLeave = !!(user && list?.ownerUid && user.uid !== list.ownerUid);
                 setShareMenuOpen(false);
                 if (!canLeave) {
-                  setToast("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה");
+                  setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
                   return;
                 }
                 setShowLeaveConfirm(true);
@@ -2437,7 +2725,7 @@ const isClearListCommand = (t: string) => {
               }`}
             >
               <AlertCircle className={`w-4 h-4 ${user && list?.ownerUid && user.uid !== list.ownerUid ? "text-rose-600" : "text-slate-400"}`} />
-              <span className="font-semibold text-[15px] leading-none">התנתק מרשימת קניות משותפת</span>
+              <span className="font-semibold text-[15px] leading-none">{t("התנתק מרשימת קניות משותפת")}</span>
             </button>
           </div>
         ) : null}
@@ -2451,15 +2739,15 @@ const isClearListCommand = (t: string) => {
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
-            {isListening ? "מקשיב עכשיו - דבר ושחרר כדי לבצע" : "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע"}
+            {isListening ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע") : t("פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע")}
           </div>
           {lastHeard ? (
             <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
-              שמענו: {lastHeard}
+              {t("שמענו:")} {lastHeard}
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
-            דוגמאות: "ביצים עגבניה גמבה שתי מלפפונים" | "מלפפונים שתיים" | "מחק רשימה"
+            {t("דוגמאות:")} {getVoiceExamplesText(lang)}
           </div>
         </div>
       </div>
@@ -2524,7 +2812,7 @@ const isClearListCommand = (t: string) => {
                   setInputValue(e.target.value);                  openSuggestions();
                   setActiveSuggestIndex(-1);
                 }}
-                placeholder="מה להוסיף לרשימה?"
+                placeholder={t("מה להוסיף לרשימה?")}
                 className="w-full p-4 pr-12 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
                 dir="rtl"
               />
@@ -2601,7 +2889,7 @@ const isClearListCommand = (t: string) => {
             {(items?.length ?? 0) === 0 ? (
               <div className="text-center py-20 opacity-20">
                 <ShoppingCart className="w-20 h-20 mx-auto mb-4 stroke-1" />
-                <p className="text-lg font-bold">הרשימה ריקה</p>
+                <p className="text-lg font-bold">{t("הרשימה ריקה")}</p>
               </div>
             ) : (
               <div className="space-y-4">
@@ -2787,14 +3075,14 @@ const isClearListCommand = (t: string) => {
         ) : (
           <div className="space-y-6">
             <div className="text-right">
-              <h2 className="text-2xl font-black text-slate-800 tracking-tight">מועדפים</h2>
-              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold text-[15px] leading-none">פריטים שחוזרים לסל</span></p>
+              <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
+              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span></p>
             </div>
 
             {favoritesUnique.length === 0 ? (
               <div className="text-center py-20 opacity-20">
                 <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
-                <p className="font-bold">אין מועדפים עדיין</p>
+                <p className="font-bold">{t("אין מועדפים עדיין")}</p>
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
@@ -2922,10 +3210,10 @@ const isClearListCommand = (t: string) => {
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
                   activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
                 }`}
-                title="מועדפים"
+                title={t("מועדפים")}
               >
                 <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
-                מועדפים
+                {t("מועדפים")}
               </button>
 
               <button
@@ -2933,19 +3221,19 @@ const isClearListCommand = (t: string) => {
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
                   "text-slate-300"
                 }`}
-                title="וואטסאפ"
+                title={t("וואטסאפ")}
               >
                 <MessageCircle className="w-7 h-7" />
-                וואטסאפ
+                {t("וואטסאפ")}
               </button>
 
               <button
                 onClick={() => setShowCalendarModal(true)}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black text-slate-300`}
-                title="יומן"
+                title={t("יומן")}
               >
                 <Calendar className="w-7 h-7" />
-                יומן
+                {t("יומן")}
               </button>
 
               <button
@@ -2953,10 +3241,10 @@ const isClearListCommand = (t: string) => {
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
                   activeTab === "list" ? "text-indigo-600" : "text-slate-300"
                 }`}
-                title="רשימה"
+                title={t("רשימה")}
               >
                 <ListChecks className="w-7 h-7" />
-                רשימה
+                {t("רשימה")}
               </button>
 
               {/* Hold-to-talk Voice button */}
@@ -3084,17 +3372,17 @@ const isClearListCommand = (t: string) => {
                 <AlertCircle className="w-5 h-5" />
               </div>
               <div className="text-right">
-                <div className="text-lg font-black text-slate-800">לנקות את כל הרשימה?</div>
-                <div className="text-sm font-bold text-slate-400">הפעולה תמחק את כל הפריטים מהרשימה.</div>
+                <div className="text-lg font-black text-slate-800">{t("לנקות את כל הרשימה?")}</div>
+                <div className="text-sm font-bold text-slate-400">{t("הפעולה תמחק את כל הפריטים מהרשימה.")}</div>
               </div>
             </div>
 
             <div className="flex gap-3">
               <button onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
-                ביטול
+                {t("ביטול")}
               </button>
               <button onClick={clearListServer} className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white">
-                מחק הכל
+                {t("מחק הכל")}
               </button>
             </div>
           </div>
