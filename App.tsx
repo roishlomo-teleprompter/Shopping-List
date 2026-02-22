@@ -875,6 +875,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.",
       "מה להוסיף לרשימה?": "מה להוסיף לרשימה?",
       "רשימה": "רשימה",
+    "נקנו": "נקנו",
       "יומן": "יומן",
       "שיתוף": "שיתוף",
       "שתף רשימת קניות": "שתף רשימת קניות",
@@ -907,6 +908,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Your browser does not support speech recognition. Try Chrome or Edge.",
       "מה להוסיף לרשימה?": "What to add to the list?",
       "רשימה": "List",
+    "נקנו": "Bought",
       "יומן": "Calendar",
       "שיתוף": "Share",
       "שתף רשימת קניות": "Share shopping list",
@@ -952,6 +954,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Ваш браузер не поддерживает распознавание речи. Попробуйте Chrome или Edge.",
       "מה להוסיף לרשימה?": "Что добавить в список?",
       "רשימה": "Список",
+    "נקנו": "Куплено",
       "יומן": "Календарь",
       "שיתוף": "Поделиться",
       "שתף רשימת קניות": "Поделиться списком покупок",
@@ -997,6 +1000,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "متصفحك لا يدعم التعرف على الكلام. جرّب Chrome أو Edge.",
       "מה להוסיף לרשימה?": "ماذا تريد أن تضيف إلى القائمة؟",
       "רשימה": "القائمة",
+    "נקנו": "تم الشراء",
       "יומן": "التقويم",
       "שיתוף": "مشاركة",
       "שתף רשימת קניות": "مشاركة قائمة التسوق",
@@ -2206,55 +2210,60 @@ const shareListWhatsApp = () => {
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
-const isClearListCommand = (t: string) => {
-  // The incoming text is already normalized (lowercased, trimmed).
-  // We key off the selected UI language so users can say the command naturally
-  // in that language, without affecting other voice parsing logic.
-  const txt = t;
+const isClearListCommand = (t: string, lang: AppLang) => {
+  const text = (t || "").trim();
 
-  // Hebrew
-  const heRegex =
-    /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/;
+  switch (lang) {
+    case "en": {
+      // Examples: "clear the list", "clear list", "delete all", "remove all items", "empty the list"
+      const enPatterns: RegExp[] = [
+        /^clear( the)? list$/,
+        /^empty( the)? list$/,
+        /\b(clear|empty)\b.*\b(list)\b/,
+        /\b(delete|remove)\b.*\b(all|everything|all items|items)\b/,
+        /\b(delete|remove)\b.*\b(list)\b/,
+      ];
+      return enPatterns.some((p) => p.test(text));
+    }
 
-  // English
-  const enRegex =
-    /^(clear|delete|remove|empty)\s*(the\s*)?(list|shopping\s*list|all(\s*items)?)$/;
+    case "ru": {
+      // Examples: "очистить список", "удалить список", "удалить все"
+      const ruPatterns: RegExp[] = [
+        /^очист(ить)?\s+спис(ок|ка)$/,
+        /^удал(ить)?\s+спис(ок|ка)$/,
+        /^удал(ить)?\s+все$/,
+        /^очист(ить)?\s+все$/,
+        /\b(очист(ить)?|удал(ить)?|стер(еть)?|убер(и|ите))\b.*\b(спис(ок|ка))\b/,
+        /\b(удал(ить)?|очист(ить)?)\b.*\b(все)\b/,
+      ];
+      return ruPatterns.some((p) => p.test(text));
+    }
 
-  // Russian (basic)
-  const ruRegex =
-    /^(очист(ить|и)\s*(список)?|удал(ить|и)\s*(список)?|удал(ить|и)\s*все|очист(ить|и)\s*все)$/;
+    case "ar": {
+      // Examples: "امسح القائمة", "احذف القائمة", "احذف الكل", "امسح الكل"
+      const arPatterns: RegExp[] = [
+        /^(امسح|احذف)\s+(القائمة)$/,
+        /^(امسح|احذف)\s+(الكل)$/,
+        /\b(امسح|احذف|افرغ)\b.*\b(القائمة)\b/,
+        /\b(امسح|احذف)\b.*\b(الكل)\b/,
+      ];
+      return arPatterns.some((p) => p.test(text));
+    }
 
-  // Arabic (basic)
-  const arRegex =
-    /^(امسح\s*(القائمة)?|احذف\s*(القائمة)?|احذف\s*الكل|امسح\s*الكل)$/;
+    case "he":
+    default: {
+      const hePatterns: RegExp[] = [
+        /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/,
+        /^(מחק|רחק|מרחק)$/,
+      ];
 
-  if (lang === "en") {
-    return (
-      enRegex.test(txt) ||
-      txt.includes("clear the list") ||
-      txt.includes("clear list") ||
-      txt.includes("delete the list") ||
-      txt.includes("delete list") ||
-      (txt.includes("remove") && txt.includes("all") && (txt.includes("items") || txt.includes("list"))) ||
-      (txt.includes("delete") && txt.includes("all"))
-    );
+      return (
+        hePatterns.some((p) => p.test(text)) ||
+        (text.includes("מחק") && text.includes("הכל") && (text.includes("רשימה") || text.includes("הרשימה"))) ||
+        (text.includes("למחוק") && (text.includes("רשימה") || text.includes("הרשימה")))
+      );
+    }
   }
-
-  if (lang === "ru") {
-    return ruRegex.test(txt) || (txt.includes("удал") && (txt.includes("все") || txt.includes("список")));
-  }
-
-  if (lang === "ar") {
-    return arRegex.test(txt) || (txt.includes("احذف") && (txt.includes("القائمة") || txt.includes("الكل")));
-  }
-
-  // default: Hebrew (and also acts as a fallback)
-  return (
-    heRegex.test(txt) ||
-    /^(מחק|רחק|מרחק)$/.test(txt) ||
-    (txt.includes("מחק") && txt.includes("הכל") && (txt.includes("רשימה") || txt.includes("הרשימה"))) ||
-    (txt.includes("למחוק") && (txt.includes("רשימה") || txt.includes("הרשימה")))
-  );
 };
 
 
@@ -2263,11 +2272,11 @@ const isClearListCommand = (t: string) => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) return;
 
-    const text = normalize(raw);
+    const text = normalize(normalizeVoiceText(raw));
     if (!text) return;
 
     // Clear list
-    if (isClearListCommand(text)) {
+    if (isClearListCommand(text, lang)) {
       await clearListServer();
       setToast(t("הרשימה נמחקה"));
       return;
@@ -3083,7 +3092,7 @@ useEffect(() => {
 
                   {purchasedItems.length > 0 ? (
                     <div className="space-y-2 pt-4 border-t border-slate-200">
-                      <h3 className="text-lg font-bold text-slate-700 text-right mb-2">נקנו ({purchasedItems.length})</h3>
+                      <h3 className="text-lg font-bold text-slate-700 text-right mb-2">{t("נקנו")} ({purchasedItems.length})</h3>
 
                       {purchasedItems.map((item) => (
                         <div
