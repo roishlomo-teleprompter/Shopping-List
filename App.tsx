@@ -2207,16 +2207,56 @@ const shareListWhatsApp = () => {
   };
 
 const isClearListCommand = (t: string) => {
-  const clearRegex =
+  // The incoming text is already normalized (lowercased, trimmed).
+  // We key off the selected UI language so users can say the command naturally
+  // in that language, without affecting other voice parsing logic.
+  const txt = t;
+
+  // Hebrew
+  const heRegex =
     /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/;
 
+  // English
+  const enRegex =
+    /^(clear|delete|remove|empty)\s*(the\s*)?(list|shopping\s*list|all(\s*items)?)$/;
+
+  // Russian (basic)
+  const ruRegex =
+    /^(очист(ить|и)\s*(список)?|удал(ить|и)\s*(список)?|удал(ить|и)\s*все|очист(ить|и)\s*все)$/;
+
+  // Arabic (basic)
+  const arRegex =
+    /^(امسح\s*(القائمة)?|احذف\s*(القائمة)?|احذف\s*الكل|امسح\s*الكل)$/;
+
+  if (lang === "en") {
+    return (
+      enRegex.test(txt) ||
+      txt.includes("clear the list") ||
+      txt.includes("clear list") ||
+      txt.includes("delete the list") ||
+      txt.includes("delete list") ||
+      (txt.includes("remove") && txt.includes("all") && (txt.includes("items") || txt.includes("list"))) ||
+      (txt.includes("delete") && txt.includes("all"))
+    );
+  }
+
+  if (lang === "ru") {
+    return ruRegex.test(txt) || (txt.includes("удал") && (txt.includes("все") || txt.includes("список")));
+  }
+
+  if (lang === "ar") {
+    return arRegex.test(txt) || (txt.includes("احذف") && (txt.includes("القائمة") || txt.includes("الكل")));
+  }
+
+  // default: Hebrew (and also acts as a fallback)
   return (
-    clearRegex.test(t) ||
-    /^(מחק|רחק|מרחק)$/.test(t) ||
-    (t.includes("מחק") && t.includes("הכל") && (t.includes("רשימה") || t.includes("הרשימה"))) ||
-    (t.includes("למחוק") && (t.includes("רשימה") || t.includes("הרשימה")))
+    heRegex.test(txt) ||
+    /^(מחק|רחק|מרחק)$/.test(txt) ||
+    (txt.includes("מחק") && txt.includes("הכל") && (txt.includes("רשימה") || txt.includes("הרשימה"))) ||
+    (txt.includes("למחוק") && (txt.includes("רשימה") || txt.includes("הרשימה")))
   );
 };
+
 
 
   const executeVoiceText = async (raw: string) => {
