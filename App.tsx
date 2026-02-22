@@ -2356,6 +2356,15 @@ const isClearListCommand = (t: string) => {
       sessionTimer = null;
     };
 
+
+    // Clear timers related to voice UI (e.g. auto-clear of "שמענו")
+    const clearVoiceTimers = () => {
+      if (heardClearTimerRef.current != null) {
+        window.clearTimeout(heardClearTimerRef.current);
+        heardClearTimerRef.current = null;
+      }
+    };
+
     const scheduleSilenceStop = () => {
       // עוצרים בגלל שקט רק אחרי שכבר קיבלנו לפחות תוצאה אחת
       if (!holdActiveRef.current) return;
