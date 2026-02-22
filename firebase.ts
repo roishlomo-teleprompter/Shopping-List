@@ -11,7 +11,7 @@ import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA6gk3B0uFG3y7v4jhCWb9zzlPSmX0CjdU",
-  authDomain: "shopping-list-218bd.firebaseapp.com",
+  authDomain: "myeasylist.app",
   projectId: "shopping-list-218bd",
   storageBucket: "shopping-list-218bd.appspot.com",
   messagingSenderId: "883804592996",
