@@ -1983,61 +1983,56 @@ const hideSuggestion = (s: SuggestView) => {
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
-const shareListWhatsApp = () => {
-    const title = list?.title || "הרשימה שלי";
-    const active = items.filter((i) => !i.isPurchased);
+	const shareListWhatsApp = () => {
+	    const active = items.filter((i) => !i.isPurchased);
 
     const RLE = "\u202B";
     const PDF = "\u202C";
     const LRI = "\u2066";
     const PDI = "\u2069";
 
-    const lines =
-      active.length > 0
-        ? active
-            .map((i) => {
-              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
-              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
-            })
-            .join("\n")
-        : `${RLE}(הרשימה כרגע ריקה)${PDF}`;
+	    const lines =
+	      active.length > 0
+	        ? active
+	            .map((i) => {
+	              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+	              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
+	            })
+	            .join("\n")
+	        : `${RLE}(${t("הרשימה ריקה")})${PDF}`;
 
-    const getActiveLangForShare = (): AppLang => {
-      try {
-        const htmlLang = (document?.documentElement?.lang || "").toLowerCase();
-        const pick = (v: string) => {
-          const s = (v || "").toLowerCase();
-          if (s.startsWith("he") || s.startsWith("iw")) return "he";
-          if (s.startsWith("en")) return "en";
-          if (s.startsWith("ru")) return "ru";
-          if (s.startsWith("ar")) return "ar";
-          return null;
-        };
-        const fromHtml = pick(htmlLang);
-        if (fromHtml) return fromHtml;
+	    // Use the current app language state (most reliable)
+	    const shareLang: AppLang = (lang === "he" || lang === "en" || lang === "ru" || lang === "ar") ? lang : "he";
 
-        // Fallback: try common localStorage keys (if present)
-        const keys = ["lang", "language", "appLang", "appLanguage", "selectedLanguage", "uiLang", APP_LANG_STORAGE_KEY, "shoppingListLang"];
-        for (const k of keys) {
-          const v = localStorage.getItem(k) || "";
-          const fromLs = pick(v);
-          if (fromLs) return fromLs;
-        }
-      } catch {}
-      return "he";
-    };
+	    const defaultTitleByLang: Record<AppLang, string> = {
+	      he: "הרשימה שלי",
+	      en: "My list",
+	      ru: "Мой список",
+	      ar: "قائمتي",
+	    };
 
+	    // If the list title is the app's default title (in any language), localize it to the currently selected language.
+    const rawTitle = (list?.title || "").trim();
+    const titleIsDefault =
+      rawTitle === defaultTitleByLang.he ||
+      rawTitle === defaultTitleByLang.en ||
+      rawTitle === defaultTitleByLang.ru ||
+      rawTitle === defaultTitleByLang.ar;
+
+    const title = rawTitle
+      ? (titleIsDefault ? defaultTitleByLang[shareLang] : rawTitle)
+      : defaultTitleByLang[shareLang];
     const header = `*${title}:*`;
 
-    const footerByLang: Record<AppLang, string> = {
-      he: "נשלח מרשימת הקניות שלי 🛒",
-      en: "Sent from My Easy List 🛒",
-      ru: "Отправлено из My Easy List 🛒",
-      ar: "تم الإرسال من My Easy List 🛒",
-    };
+	    // Footer text must be localized and clean (no broken characters)
+	    const footerByLang: Record<AppLang, string> = {
+	      he: "נשלח מרשימת הקניות שלי 🛒",
+	      en: "Sent from My Easy List 🛒",
+	      ru: "Отправлено из My Easy List 🛒",
+	      ar: "تم الإرسال من My Easy List 🛒",
+	    };
 
-    const shareLang = getActiveLangForShare();
-    const footer = footerByLang[shareLang] || footerByLang.he;
+	    const footer = footerByLang[shareLang] || footerByLang.he;
     const text = `${header}
 
 ${lines}
