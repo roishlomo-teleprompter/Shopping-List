@@ -33,6 +33,13 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Prepare docs from dist
+        run: |
+          rm -rf docs
+          mkdir docs
+          cp -R dist/* docs/
+          date -u +"%Y-%m-%d %H:%M:%S UTC" > docs/version.txt
+
       - name: Upload Pages artifact (docs)
         uses: actions/upload-pages-artifact@v3
         with:
