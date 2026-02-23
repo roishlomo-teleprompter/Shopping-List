@@ -39,7 +39,18 @@ jobs:
           mkdir docs
           cp -R dist/* docs/
           date -u +"%Y-%m-%d %H:%M:%S UTC" > docs/version.txt
-
+      - name: Prepare docs from dist
+        run: |
+          rm -rf docs
+          mkdir docs
+          cp -R dist/* docs/
+          date -u +"%Y-%m-%d %H:%M:%S UTC" > docs/version.txt
+          echo "---- DOCS ROOT ----"
+          ls -la docs
+          echo "---- DOCS ASSETS ----"
+          ls -la docs/assets || true
+          echo "---- VERSION ----"
+          cat docs/version.txt || true
       - name: Upload Pages artifact (docs)
         uses: actions/upload-pages-artifact@v3
         with:
