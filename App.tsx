@@ -1983,35 +1983,62 @@ const hideSuggestion = (s: SuggestView) => {
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
-	const shareListWhatsApp = () => {
-	    const active = items.filter((i) => !i.isPurchased);
+const shareListWhatsApp = () => {
+    const active = items.filter((i) => !i.isPurchased);
 
     const RLE = "\u202B";
     const PDF = "\u202C";
     const LRI = "\u2066";
     const PDI = "\u2069";
 
-	    const lines =
-	      active.length > 0
-	        ? active
-	            .map((i) => {
-	              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
-	              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
-	            })
-	            .join("\n")
-	        : `${RLE}(${t("הרשימה ריקה")})${PDF}`;
+    const pickLang = (v: string): AppLang | null => {
+      const s = (v || "").toLowerCase();
+      if (s.startsWith("he") || s.startsWith("iw")) return "he";
+      if (s.startsWith("en")) return "en";
+      if (s.startsWith("ru")) return "ru";
+      if (s.startsWith("ar")) return "ar";
+      return null;
+    };
 
-	    // Use the current app language state (most reliable)
-	    const shareLang: AppLang = (lang === "he" || lang === "en" || lang === "ru" || lang === "ar") ? lang : "he";
+    // IMPORTANT: In production our <html lang="..."> may stay "he".
+    // Therefore we prefer localStorage/state over documentElement.lang.
+    const resolveShareLang = (): AppLang => {
+      try {
+        const keys = [
+          APP_LANG_STORAGE_KEY,
+          "appLang",
+          "appLanguage",
+          "selectedLanguage",
+          "uiLang",
+          "lang",
+          "language",
+          "shoppingListLang",
+        ];
+        for (const k of keys) {
+          const v = localStorage.getItem(k) || "";
+          const fromLs = pickLang(v);
+          if (fromLs) return fromLs;
+        }
+      } catch {}
 
-	    const defaultTitleByLang: Record<AppLang, string> = {
-	      he: "הרשימה שלי",
-	      en: "My list",
-	      ru: "Мой список",
-	      ar: "قائمتي",
-	    };
+      const fromState = pickLang(String(lang));
+      if (fromState) return fromState;
 
-	    // If the list title is the app's default title (in any language), localize it to the currently selected language.
+      const fromHtml = pickLang(String(document?.documentElement?.lang || ""));
+      if (fromHtml) return fromHtml;
+
+      return "he";
+    };
+
+    const shareLang = resolveShareLang();
+
+    const defaultTitleByLang: Record<AppLang, string> = {
+      he: "הרשימה שלי",
+      en: "My list",
+      ru: "Мой список",
+      ar: "قائمتي",
+    };
+
     const rawTitle = (list?.title || "").trim();
     const titleIsDefault =
       rawTitle === defaultTitleByLang.he ||
@@ -2022,17 +2049,35 @@ const hideSuggestion = (s: SuggestView) => {
     const title = rawTitle
       ? (titleIsDefault ? defaultTitleByLang[shareLang] : rawTitle)
       : defaultTitleByLang[shareLang];
+
     const header = `*${title}:*`;
 
-	    // Footer text must be localized and clean (no broken characters)
-	    const footerByLang: Record<AppLang, string> = {
-	      he: "נשלח מרשימת הקניות שלי 🛒",
-	      en: "Sent from My Easy List 🛒",
-	      ru: "Отправлено из My Easy List 🛒",
-	      ar: "تم الإرسال من My Easy List 🛒",
-	    };
+    const emptyByLang: Record<AppLang, string> = {
+      he: "(הרשימה כרגע ריקה)",
+      en: "(List is empty)",
+      ru: "(Список пуст)",
+      ar: "(القائمة فارغة)",
+    };
 
-	    const footer = footerByLang[shareLang] || footerByLang.he;
+    const lines =
+      active.length > 0
+        ? active
+            .map((i) => {
+              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
+            })
+            .join("\n")
+        : `${RLE}${emptyByLang[shareLang]}${PDF}`;
+
+    const footerByLang: Record<AppLang, string> = {
+      he: "נשלח מרשימת הקניות שלי 🛒",
+      en: "Sent from My Easy List 🛒",
+      ru: "Отправлено из My Easy List 🛒",
+      ar: "تم الإرسال من My Easy List 🛒",
+    };
+
+    const footer = footerByLang[shareLang] || footerByLang.he;
+
     const text = `${header}
 
 ${lines}
@@ -2040,6 +2085,7 @@ ${lines}
 ${footer}`;
     openWhatsApp(text);
   };
+
 
 
   // ---------------------------
