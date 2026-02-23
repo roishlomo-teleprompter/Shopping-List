@@ -2002,9 +2002,47 @@ const shareListWhatsApp = () => {
             .join("\n")
         : `${RLE}(הרשימה כרגע ריקה)${PDF}`;
 
+    const getActiveLangForShare = (): AppLang => {
+      try {
+        const htmlLang = (document?.documentElement?.lang || "").toLowerCase();
+        const pick = (v: string) => {
+          const s = (v || "").toLowerCase();
+          if (s.startsWith("he") || s.startsWith("iw")) return "he";
+          if (s.startsWith("en")) return "en";
+          if (s.startsWith("ru")) return "ru";
+          if (s.startsWith("ar")) return "ar";
+          return null;
+        };
+        const fromHtml = pick(htmlLang);
+        if (fromHtml) return fromHtml;
+
+        // Fallback: try common localStorage keys (if present)
+        const keys = ["lang", "language", "appLang", "appLanguage", "selectedLanguage", "uiLang", APP_LANG_STORAGE_KEY, "shoppingListLang"];
+        for (const k of keys) {
+          const v = localStorage.getItem(k) || "";
+          const fromLs = pick(v);
+          if (fromLs) return fromLs;
+        }
+      } catch {}
+      return "he";
+    };
+
     const header = `*${title}:*`;
-    const footer = `נשלח מהרשימה החכמה 🛒`;
-    const text = `${header}\n\n${lines}\n\n${footer}`;
+
+    const footerByLang: Record<AppLang, string> = {
+      he: "נשלח מרשימת הקניות שלי 🛒",
+      en: "Sent from My Easy List 🛒",
+      ru: "Отправлено из My Easy List 🛒",
+      ar: "تم الإرسال من My Easy List 🛒",
+    };
+
+    const shareLang = getActiveLangForShare();
+    const footer = footerByLang[shareLang] || footerByLang.he;
+    const text = `${header}
+
+${lines}
+
+${footer}`;
     openWhatsApp(text);
   };
 
@@ -2211,7 +2249,12 @@ const shareListWhatsApp = () => {
   };
 
 const isClearListCommand = (t: string, lang: AppLang) => {
-  const text = (t || "").trim();
+  const rawText = (t || "").trim();
+  const text = rawText
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
   switch (lang) {
     case "en": {
