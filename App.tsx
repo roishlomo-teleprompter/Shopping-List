@@ -1056,6 +1056,8 @@ const [lang, setLang] = useState<AppLang>(() => {
 useEffect(() => {
   try {
     localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
+    // Backward-compat/debug key
+    localStorage.setItem("appLang", lang);
   } catch {
     // ignore
   }
@@ -1983,62 +1985,50 @@ const hideSuggestion = (s: SuggestView) => {
     window.open(webUrl, "_blank", "noopener,noreferrer");
   };
 
-const shareListWhatsApp = () => {
-    const active = items.filter((i) => !i.isPurchased);
+	const shareListWhatsApp = () => {
+	    const active = items.filter((i) => !i.isPurchased);
 
     const RLE = "\u202B";
     const PDF = "\u202C";
     const LRI = "\u2066";
     const PDI = "\u2069";
 
-    const pickLang = (v: string): AppLang | null => {
-      const s = (v || "").toLowerCase();
-      if (s.startsWith("he") || s.startsWith("iw")) return "he";
-      if (s.startsWith("en")) return "en";
-      if (s.startsWith("ru")) return "ru";
-      if (s.startsWith("ar")) return "ar";
-      return null;
-    };
+	    const lines =
+	      active.length > 0
+	        ? active
+	            .map((i) => {
+	              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+	              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
+	            })
+	            .join("\n")
+	        : `${RLE}(${t("הרשימה ריקה")})${PDF}`;
 
-    // IMPORTANT: In production our <html lang="..."> may stay "he".
-    // Therefore we prefer localStorage/state over documentElement.lang.
-    const resolveShareLang = (): AppLang => {
+	    // Resolve share language (production-safe): prefer persisted selection, then state, then fallback.
+    const allowed: AppLang[] = ["he", "en", "ru", "ar"];
+    const persisted = (() => {
       try {
-        const keys = [
-          APP_LANG_STORAGE_KEY,
-          "appLang",
-          "appLanguage",
-          "selectedLanguage",
-          "uiLang",
-          "lang",
-          "language",
-          "shoppingListLang",
-        ];
-        for (const k of keys) {
-          const v = localStorage.getItem(k) || "";
-          const fromLs = pickLang(v);
-          if (fromLs) return fromLs;
-        }
-      } catch {}
+        // Current app key
+        const v1 = localStorage.getItem(APP_LANG_STORAGE_KEY);
+        if (v1 && allowed.includes(v1 as AppLang)) return v1 as AppLang;
+        // Backward-compat key (older builds)
+        const v2 = localStorage.getItem("appLang");
+        if (v2 && allowed.includes(v2 as AppLang)) return v2 as AppLang;
+      } catch {
+        // ignore
+      }
+      return null;
+    })();
 
-      const fromState = pickLang(String(lang));
-      if (fromState) return fromState;
+    const shareLang: AppLang = (persisted || (allowed.includes(lang as AppLang) ? (lang as AppLang) : "he"));
 
-      const fromHtml = pickLang(String(document?.documentElement?.lang || ""));
-      if (fromHtml) return fromHtml;
+	    const defaultTitleByLang: Record<AppLang, string> = {
+	      he: "הרשימה שלי",
+	      en: "My list",
+	      ru: "Мой список",
+	      ar: "قائمتي",
+	    };
 
-      return "he";
-    };
-
-    const shareLang = resolveShareLang();
-
-    const defaultTitleByLang: Record<AppLang, string> = {
-      he: "הרשימה שלי",
-      en: "My list",
-      ru: "Мой список",
-      ar: "قائمتي",
-    };
-
+	    // If the list title is the app's default title (in any language), localize it to the currently selected language.
     const rawTitle = (list?.title || "").trim();
     const titleIsDefault =
       rawTitle === defaultTitleByLang.he ||
@@ -2049,35 +2039,17 @@ const shareListWhatsApp = () => {
     const title = rawTitle
       ? (titleIsDefault ? defaultTitleByLang[shareLang] : rawTitle)
       : defaultTitleByLang[shareLang];
-
     const header = `*${title}:*`;
 
-    const emptyByLang: Record<AppLang, string> = {
-      he: "(הרשימה כרגע ריקה)",
-      en: "(List is empty)",
-      ru: "(Список пуст)",
-      ar: "(القائمة فارغة)",
-    };
+	    // Footer text must be localized and clean (no broken characters)
+	    const footerByLang: Record<AppLang, string> = {
+	      he: "נשלח מרשימת הקניות שלי 🛒",
+	      en: "Sent from My Easy List 🛒",
+	      ru: "Отправлено из My Easy List 🛒",
+	      ar: "تم الإرسال من My Easy List 🛒",
+	    };
 
-    const lines =
-      active.length > 0
-        ? active
-            .map((i) => {
-              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
-              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
-            })
-            .join("\n")
-        : `${RLE}${emptyByLang[shareLang]}${PDF}`;
-
-    const footerByLang: Record<AppLang, string> = {
-      he: "נשלח מרשימת הקניות שלי 🛒",
-      en: "Sent from My Easy List 🛒",
-      ru: "Отправлено из My Easy List 🛒",
-      ar: "تم الإرسال من My Easy List 🛒",
-    };
-
-    const footer = footerByLang[shareLang] || footerByLang.he;
-
+	    const footer = footerByLang[shareLang] || footerByLang.he;
     const text = `${header}
 
 ${lines}
@@ -2085,7 +2057,6 @@ ${lines}
 ${footer}`;
     openWhatsApp(text);
   };
-
 
 
   // ---------------------------
