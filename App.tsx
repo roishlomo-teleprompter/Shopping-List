@@ -2817,7 +2817,7 @@ useEffect(() => {
     {/* ימין - סל אשפה, שיתוף, כותרת */}
     <div className="flex items-center gap-3">
 
-      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List555</span>
+      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List</span>
 
       <div className="relative inline-flex items-center" ref={shareMenuRef}>
         <button
