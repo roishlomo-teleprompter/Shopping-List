@@ -2140,8 +2140,8 @@ const shareListWhatsApp = () => {
     const footerByLang: Record<AppLang, string> = {
       he: "נשלח מרשימת הקניות שלי 🛒",
       en: "Sent from My Easy List 🛒",
-      ru: "Отправлено из My Easy List 🛒",
-      ar: "تم الإرسال من My Easy List 🛒",
+      ru: "Отправлено из приложения My Easy List 🛒",
+      ar: "تم الإرسال من قائمة التسوق 🛒",
     };
 
     const footer = footerByLang[shareLang] || footerByLang.he;
