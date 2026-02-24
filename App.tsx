@@ -833,6 +833,70 @@ type AppLang = "he" | "en" | "ru" | "ar";
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
 
+
+const reminderI18n: Record<string, { 
+  reminderTitle: string;
+  scheduleTitle: string;
+  addToCalendar: string;
+  whenConvenient: string;
+  duration: string;
+  minutes: string;
+  openCalendar: string;
+  cancel: string;
+  eventTitle: string;
+  eventDetails: string;
+}> = {
+  he: {
+    reminderTitle: "תזכורת לביצוע קניות",
+    scheduleTitle: "תזמון קניות",
+    addToCalendar: "נוסיף תזכורת ביומן (בלי פריטי הרשימה)",
+    whenConvenient: "מתי נוח לך?",
+    duration: "משך",
+    minutes: "דק׳",
+    openCalendar: "פתח ביומן",
+    cancel: "ביטול",
+    eventTitle: "תזכורת לביצוע קניות",
+    eventDetails: "תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות",
+  },
+  en: {
+    reminderTitle: "Shopping Reminder",
+    scheduleTitle: "Schedule Shopping",
+    addToCalendar: "We'll add a calendar reminder (without list items)",
+    whenConvenient: "When is it convenient?",
+    duration: "Duration",
+    minutes: "min",
+    openCalendar: "Open in Calendar",
+    cancel: "Cancel",
+    eventTitle: "Shopping Reminder",
+    eventDetails: "Shopping reminder - open your shopping list app",
+  },
+  ru: {
+    reminderTitle: "Напоминание о покупках",
+    scheduleTitle: "Запланировать покупки",
+    addToCalendar: "Добавим напоминание в календарь (без позиций списка)",
+    whenConvenient: "Когда вам удобно?",
+    duration: "Продолжительность",
+    minutes: "мин",
+    openCalendar: "Открыть в календаре",
+    cancel: "Отмена",
+    eventTitle: "Напоминание о покупках",
+    eventDetails: "Напоминание о покупках - откройте приложение списка покупок",
+  },
+  ar: {
+    reminderTitle: "تذكير بالتسوق",
+    scheduleTitle: "جدولة التسوق",
+    addToCalendar: "سنضيف تذكيرًا في التقويم (بدون عناصر القائمة)",
+    whenConvenient: "متى يناسبك؟",
+    duration: "المدة",
+    minutes: "دقيقة",
+    openCalendar: "فتح في التقويم",
+    cancel: "إلغاء",
+    eventTitle: "تذكير بالتسوق",
+    eventDetails: "تذكير بالتسوق - افتح تطبيق قائمة التسوق",
+  },
+};
+
+
 const detectDeviceLang = (): AppLang => {
   try {
     const navLang = (navigator.language || "").toLowerCase();
@@ -1052,6 +1116,10 @@ const [lang, setLang] = useState<AppLang>(() => {
     return detectDeviceLang();
   }
 });
+
+  // Reminder modal translations must follow the app-selected language
+  const tReminder = useMemo(() => reminderI18n[lang] ?? reminderI18n.he, [lang]);
+
 
 useEffect(() => {
   try {
@@ -1943,8 +2011,8 @@ const hideSuggestion = (s: SuggestView) => {
       `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
 
     const dates = `${fmt(start)}/${fmt(end)}`;
-    const text = encodeURIComponent("תזכורת לביצוע קניות");
-    const details = encodeURIComponent("תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות");
+    const text = encodeURIComponent(tReminder.eventTitle);
+    const details = encodeURIComponent(tReminder.eventDetails);
     const ctz = encodeURIComponent("Asia/Jerusalem");
 
     return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${encodeURIComponent(dates)}&details=${details}&ctz=${ctz}`;
@@ -2026,6 +2094,11 @@ const shareListWhatsApp = () => {
     };
 
     const shareLang = getActiveLangForShare();
+
+    const reminderLang = (localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang) || shareLang;
+    const tReminder = reminderI18n[reminderLang] ?? reminderI18n.he;
+    const Treminder = tReminder;
+    (globalThis as any).Treminder = tReminder;
 
     const defaultTitleByLang: Record<AppLang, string> = {
       he: "הרשימה שלי",
@@ -3440,8 +3513,8 @@ useEffect(() => {
             <div className="p-6 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div className="text-right">
-                  <div className="text-xl font-black text-slate-800">תזמון קניות</div>
-                  <div className="text-sm font-bold text-slate-400">נוסיף תזכורת ביומן (בלי פריטי הרשימה)</div>
+                  <div className="text-xl font-black text-slate-800">{tReminder.scheduleTitle}</div>
+                  <div className="text-sm font-bold text-slate-400">{tReminder.addToCalendar}</div>
                 </div>
                 <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
                   <Calendar className="w-5 h-5" />
@@ -3449,7 +3522,7 @@ useEffect(() => {
               </div>
 
               <div className="space-y-3">
-                <label className="block text-sm font-black text-slate-600">מתי נוח לך?</label>
+                <label className="block text-sm font-black text-slate-600">{tReminder.whenConvenient}</label>
                 <input
                   type="datetime-local"
                   value={calendarDateTime}
@@ -3460,8 +3533,8 @@ useEffect(() => {
 
               <div className="space-y-3">
                 <div className="flex items-center justify-between">
-                  <span className="text-sm font-black text-slate-600">משך</span>
-                  <span className="text-sm font-black text-slate-500">{calendarDurationMin} דק׳</span>
+                  <span className="text-sm font-black text-slate-600">{tReminder.duration}</span>
+                  <span className="text-sm font-black text-slate-500">{calendarDurationMin} {tReminder.minutes}</span>
                 </div>
                 <div className="grid grid-cols-4 gap-2" dir="ltr">
                   {[30, 45, 60, 90].map((m) => (
@@ -3483,7 +3556,7 @@ useEffect(() => {
                   onClick={() => setShowCalendarModal(false)}
                   className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
                 >
-                  ביטול
+                  {tReminder.cancel}
                 </button>
                 <button
                   onClick={() => {
@@ -3492,7 +3565,7 @@ useEffect(() => {
                   }}
                   className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
                 >
-                  פתח ביומן
+                  {tReminder.openCalendar}
                 </button>
               </div>
             </div>
