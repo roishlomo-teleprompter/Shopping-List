@@ -2847,7 +2847,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           if (!transcript) continue;
 
           if (r.isFinal) {
-            transcriptBufferRef.current.push(transcript);
+            transcriptBufferRef.current[i] = transcript;
             lastInterimRef.current = "";
           } else {
             interimCombined = transcript;
@@ -2951,7 +2951,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     // allow final events to flush
     await new Promise((r) => setTimeout(r, 220));
 
-    const finalText = transcriptBufferRef.current.join(" ").trim();
+    const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
@@ -3129,7 +3129,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           if (!transcript) continue;
 
           if (r.isFinal) {
-            transcriptBufferRef.current.push(transcript);
+            transcriptBufferRef.current[i] = transcript;
             lastInterimRef.current = "";
           } else {
             interimCombined = transcript;
@@ -3232,7 +3232,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
 
     // חשוב: מחברים Final + Interim יחד
     // זה מונע מצב כמו: "שתי" ב-final ו-"מלפפונים" ב-interim שנדבקים בטעות לפריט קודם
-    const finalText = transcriptBufferRef.current.join(" ").trim();
+    const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
