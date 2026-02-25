@@ -949,6 +949,22 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "הפעולה תמחק את כל הפריטים מהרשימה.": "הפעולה תמחק את כל הפריטים מהרשימה.",
       "ביטול": "ביטול",
       "מחק הכל": "מחק הכל",
+  
+    "מקליט": "מקליט",
+  
+    "לחץ לסיום": "לחץ לסיום",
+  
+    "לחץ כדי לדבר": "לחץ כדי לדבר",
+  
+    "מעבד": "מעבד…",
+  
+    "בדיקה לפני שליחה": "בדיקה לפני שליחה",
+  
+    "אפשר לערוך או לבטל": "אפשר לערוך או לבטל",
+  
+    "מה אמרת?": "מה אמרת?",
+  
+    "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
   },
   en: {
     "הרשימה ריקה": "The list is empty",
@@ -995,7 +1011,31 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "Running...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "You can disconnect only from a shared list you do not own",
     "שגיאה": "Error",
-},
+
+    "מקליט": "Recording",
+  
+    "לחץ לסיום": "Tap to stop",
+  
+    "לחץ כדי לדבר": "Tap to speak",
+  
+    "מעבד": "Processing…",
+  
+    "בדיקה לפני שליחה": "Review before sending",
+  
+    "אפשר לערוך או לבטל": "You can edit or cancel",
+  
+    "מה אמרת?": "What did you say?",
+  
+    "שלח": "Send",
+  
+    "בוצע. ניתן לבטל למשך 3 שניות": "Done. You can undo for 3 seconds",
+  
+    "בטל": "Undo",
+  
+    "בוטל": "Undone",
+  
+    "בוצע": "Done",
+  },
   ru: {
     "הרשימה ריקה": "Список пуст",
     "התחבר עם גוגל": "Войти через Google",
@@ -1041,7 +1081,31 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "Выполняю...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "Можно отключиться только от общего списка, владельцем которого вы не являетесь",
     "שגיאה": "Ошибка",
-},
+
+    "מקליט": "Запись",
+  
+    "לחץ לסיום": "Нажмите, чтобы остановить",
+  
+    "לחץ כדי לדבר": "Нажмите, чтобы говорить",
+  
+    "מעבד": "Обработка…",
+  
+    "בדיקה לפני שליחה": "Проверка перед отправкой",
+  
+    "אפשר לערוך או לבטל": "Можно отредактировать или отменить",
+  
+    "מה אמרת?": "Что вы сказали?",
+  
+    "שלח": "Отправить",
+  
+    "בוצע. ניתן לבטל למשך 3 שניות": "Готово. Можно отменить в течение 3 секунд",
+  
+    "בטל": "Отменить",
+  
+    "בוטל": "Отменено",
+  
+    "בוצע": "Готово",
+  },
   ar: {
     "הרשימה ריקה": "القائمة فارغة",
     "התחבר עם גוגל": "تسجيل الدخول عبر Google",
@@ -1087,7 +1151,31 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "جاري التنفيذ...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "يمكنك قطع الاتصال فقط عن قائمة مشتركة لست مالكها",
     "שגיאה": "خطأ",
-},
+
+    "מקליט": "جارٍ التسجيل",
+  
+    "לחץ לסיום": "اضغط للإيقاف",
+  
+    "לחץ כדי לדבר": "اضغط للتحدث",
+  
+    "מעבד": "جارٍ المعالجة…",
+  
+    "בדיקה לפני שליחה": "مراجعة قبل الإرسال",
+  
+    "אפשר לערוך או לבטל": "يمكنك التعديل أو الإلغاء",
+  
+    "מה אמרת?": "ماذا قلت؟",
+  
+    "שלח": "إرسال",
+  
+    "בוצע. ניתן לבטל למשך 3 שניות": "تم. يمكنك التراجع خلال 3 ثوانٍ",
+  
+    "בטל": "تراجع",
+  
+    "בוטל": "تم التراجع",
+  
+    "בוצע": "تم",
+  },
 };
 
 const getVoiceExamplesText = (lang: AppLang) => {
@@ -1227,6 +1315,18 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
+  // Voice (tap-to-record) UI state
+  type VoiceUiState = "idle" | "recording" | "processing" | "review";
+  const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
+  const [voiceSeconds, setVoiceSeconds] = useState(0);
+  const [voiceDraft, setVoiceDraft] = useState<string>("");
+  const voiceTimerRef = useRef<number | null>(null);
+
+  const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
+  const undoToastTimerRef = useRef<number | null>(null);
+
+  const tapActiveRef = useRef<boolean>(false);
+  const noiseStreamRef = useRef<MediaStream | null>(null);
 
   const recognitionRef = useRef<any>(null);
   const holdActiveRef = useRef<boolean>(false);
@@ -2499,6 +2599,419 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     if (!SR) return null;
     return SR;
   };
+  const formatMmSs = (s: number) => {
+    const mm = String(Math.floor(s / 60)).padStart(2, "0");
+    const ss = String(Math.floor(s % 60)).padStart(2, "0");
+    return `${mm}:${ss}`;
+  };
+
+  const startVoiceTimer = () => {
+    if (voiceTimerRef.current != null) window.clearInterval(voiceTimerRef.current);
+    setVoiceSeconds(0);
+    voiceTimerRef.current = window.setInterval(() => {
+      setVoiceSeconds((x) => x + 1);
+    }, 1000);
+  };
+
+  const stopVoiceTimer = () => {
+    if (voiceTimerRef.current != null) window.clearInterval(voiceTimerRef.current);
+    voiceTimerRef.current = null;
+  };
+
+  const requestNoiseSuppressedMic = async () => {
+    try {
+      if (!navigator?.mediaDevices?.getUserMedia) return;
+      // Best-effort: request a stream with noise suppression.
+      // SpeechRecognition still controls capture, but this often "warms" permissions and helps on some devices.
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          noiseSuppression: true,
+          echoCancellation: true,
+          autoGainControl: true,
+        } as any,
+      });
+      noiseStreamRef.current = stream;
+    } catch (e) {
+      // ignore (permissions may be handled by SpeechRecognition)
+    }
+  };
+
+  const stopNoiseSuppressedMic = () => {
+    try {
+      noiseStreamRef.current?.getTracks?.().forEach((t) => t.stop());
+    } catch (e) {}
+    noiseStreamRef.current = null;
+  };
+
+  type VoiceUndoAction =
+    | { type: "delete_item"; id: string }
+    | { type: "restore_qty"; id: string; prevQty: number };
+
+  const runUndoActions = async (actions: VoiceUndoAction[]) => {
+    const listId = latestListIdRef.current || list?.id;
+    if (!listId) return;
+    for (const a of actions) {
+      try {
+        if (a.type === "delete_item") {
+          await deleteDoc(doc(db, "lists", listId, "items", a.id));
+        } else if (a.type === "restore_qty") {
+          await updateDoc(doc(db, "lists", listId, "items", a.id), { quantity: a.prevQty });
+        }
+      } catch (e) {
+        // ignore single-action failures
+      }
+    }
+  };
+
+  // Voice execution with optional undo support (undo is implemented for "add items" path only)
+  const executeVoiceTextWithUndo = async (raw: string): Promise<VoiceUndoAction[]> => {
+    const listId = latestListIdRef.current || list?.id;
+    if (!listId) return [];
+
+    const text = normalize(normalizeVoiceText(raw));
+    if (!text) return [];
+
+    // Clear list / delete / mark purchased / qty changes - no undo (too risky without a full snapshot)
+    if (isClearListCommand(text, lang)) {
+      await clearListServer();
+      setToast(t("הרשימה נמחקה"));
+      return [];
+    }
+
+    if (/^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(text)) {
+      const name = text.replace(/^(מחק|תמחק|תמחוק|תמחקי)\s+/, "").trim();
+      const item = findItemByName(name);
+      if (!item) {
+        setToast(t("לא מצאתי פריט למחיקה"));
+        return [];
+      }
+      deleteItemWithFlash(item.id);
+      setToast(`מחקתי: ${item.name}`);
+      return [];
+    }
+
+    const buyMatch = text.match(/^(סמן|תסמן|תסמני)\s+(.+)\s+(נקנה|כנקנה|נקנתה)$/);
+    if (buyMatch) {
+      const name = buyMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) {
+        setToast(t("לא מצאתי פריט לסימון"));
+        return [];
+      }
+      if (!item.isPurchased) await togglePurchased(item.id);
+      setToast(`סימנתי נקנה: ${item.name}`);
+      return [];
+    }
+
+    const incMatch = text.match(/^(הגדל|תגדיל|תגדילי)\s+(.+)$/);
+    if (incMatch) {
+      const name = incMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) return (setToast(t("לא מצאתי פריט להגדלה")), []);
+      await updateQty(item.id, 1);
+      setToast(`הגדלתי: ${item.name}`);
+      return [];
+    }
+
+    const decMatch = text.match(/^(הקטן|תקטין|תקטיני)\s+(.+)$/);
+    if (decMatch) {
+      const name = decMatch[2].trim();
+      const item = findItemByName(name);
+      if (!item) return (setToast(t("לא מצאתי פריט להקטנה")), []);
+      await updateQty(item.id, -1);
+      setToast(`הקטנתי: ${item.name}`);
+      return [];
+    }
+
+    // ADD: with or without "הוסף"
+    const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
+    const payload = addPrefix ? addPrefix[2] : text;
+
+    const parsed = parseItemsFromText(payload);
+    if (parsed.length === 0) return [];
+
+    const actions: VoiceUndoAction[] = [];
+
+    const itemsNow = latestItemsRef.current || items;
+
+    for (const p of parsed) {
+      const name = (p.name || "").trim();
+      if (!name) continue;
+
+      const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      if (existing) {
+        const prevQty = existing.quantity;
+        await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: p.qty });
+        actions.push({ type: "restore_qty", id: existing.id, prevQty });
+      } else {
+        const itemId = crypto.randomUUID();
+        const newItem: ShoppingItem = {
+          id: itemId,
+          name,
+          quantity: p.qty,
+          isPurchased: false,
+          isFavorite: false,
+          createdAt: Date.now(),
+        };
+        await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
+        actions.push({ type: "delete_item", id: itemId });
+      }
+    }
+
+    return actions;
+  };
+
+  const startTapListening = async () => {
+    const SR = ensureSpeechRecognition();
+    if (!SR) {
+      alert(t("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge."));
+      return;
+    }
+
+    if (!user) {
+      setToast(t("צריך להתחבר לפני פקודות קוליות"));
+      signInSmart();
+      return;
+    }
+
+    await requestNoiseSuppressedMic();
+
+    transcriptBufferRef.current = [];
+    lastInterimRef.current = "";
+    startGuardRef.current = false;
+
+    tapActiveRef.current = true;
+    setVoiceDraft("");
+    setLastHeard("");
+    setIsListening(true);
+    setVoiceUi("recording");
+    startVoiceTimer();
+
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(10);
+    }
+
+    if (recognitionRef.current) {
+      try {
+        recognitionRef.current.stop();
+      } catch (e) {}
+      recognitionRef.current = null;
+    }
+
+    const rec = new SR();
+    recognitionRef.current = rec;
+
+    rec.lang = speechLang;
+    rec.interimResults = true;
+    rec.maxAlternatives = 1;
+    rec.continuous = true;
+
+    let hadAnyResult = false;
+    let lastResultAt = Date.now();
+
+    const SILENCE_MS = 3000;
+    let silenceTimer: number | null = null;
+
+    const clearLocalTimers = () => {
+      if (silenceTimer != null) window.clearTimeout(silenceTimer);
+      silenceTimer = null;
+    };
+
+    const scheduleSilenceStop = () => {
+      if (!tapActiveRef.current) return;
+      if (!hadAnyResult) return;
+
+      if (silenceTimer != null) window.clearTimeout(silenceTimer);
+      silenceTimer = window.setTimeout(() => {
+        if (!tapActiveRef.current) return;
+        const dt = Date.now() - lastResultAt;
+        if (dt >= SILENCE_MS) stopTapListening();
+      }, SILENCE_MS + 50);
+    };
+
+    rec.onresult = (event: any) => {
+      try {
+        let interimCombined = "";
+        const results = (event as any).results;
+        if (!results) return;
+        for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
+          const r = results[i];
+          const best = r?.[0];
+          const transcript = normalizeVoiceText(String(best?.transcript || ""));
+          if (!transcript) continue;
+
+          if (r.isFinal) {
+            transcriptBufferRef.current.push(transcript);
+            lastInterimRef.current = "";
+          } else {
+            interimCombined = transcript;
+            lastInterimRef.current = transcript;
+          }
+        }
+
+        const last =
+          interimCombined ||
+          (transcriptBufferRef.current.length
+            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
+            : "");
+
+        if (last) setLastHeard(last);
+
+        hadAnyResult = true;
+        lastResultAt = Date.now();
+        scheduleSilenceStop();
+      } catch (e) {}
+    };
+
+    rec.onerror = (e: any) => {
+      const err = String(e?.error || "");
+      console.warn("Speech error:", err, e);
+
+      if (err === "no-speech") return;
+
+      clearLocalTimers();
+      stopVoiceTimer();
+      stopNoiseSuppressedMic();
+      setIsListening(false);
+      setVoiceUi("idle");
+      tapActiveRef.current = false;
+
+      if (err === "not-allowed" || err === "service-not-allowed") {
+        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+      } else if (err === "audio-capture") {
+        setToast(t("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)"));
+      } else {
+        setToast(`שגיאת מיקרופון: ${err || "unknown"}`);
+      }
+    };
+
+    rec.onend = () => {
+      clearLocalTimers();
+
+      // If user is still recording, try to restart (Chrome sometimes ends spontaneously)
+      if (!tapActiveRef.current) return;
+
+      if (startGuardRef.current) return;
+      startGuardRef.current = true;
+
+      setTimeout(() => {
+        if (!tapActiveRef.current) {
+          startGuardRef.current = false;
+          return;
+        }
+        try {
+          rec.start();
+        } catch (e) {
+          // ignore
+        } finally {
+          startGuardRef.current = false;
+        }
+      }, 180);
+    };
+
+    try {
+      rec.start();
+      scheduleSilenceStop();
+    } catch (e) {
+      console.error(e);
+      clearLocalTimers();
+      stopVoiceTimer();
+      stopNoiseSuppressedMic();
+      setIsListening(false);
+      setVoiceUi("idle");
+      tapActiveRef.current = false;
+      setToast(t("לא הצלחתי להתחיל האזנה"));
+    }
+  };
+
+  const stopTapListening = async () => {
+    if (!tapActiveRef.current) return;
+
+    tapActiveRef.current = false;
+    setIsListening(false);
+    setVoiceUi("processing");
+    stopVoiceTimer();
+
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(20);
+    }
+
+    try {
+      recognitionRef.current?.stop?.();
+    } catch (e) {}
+
+    stopNoiseSuppressedMic();
+
+    // allow final events to flush
+    await new Promise((r) => setTimeout(r, 220));
+
+    const finalText = transcriptBufferRef.current.join(" ").trim();
+    const interimText = (lastInterimRef.current || "").trim();
+    const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
+
+    transcriptBufferRef.current = [];
+    lastInterimRef.current = "";
+
+    if (!combined) {
+      setVoiceUi("idle");
+      setToast(t("לא נקלט קול - נסה שוב"));
+      return;
+    }
+
+    setVoiceDraft(combined);
+    setVoiceUi("review");
+  };
+
+  const confirmVoiceDraft = async () => {
+    const draft = voiceDraft.trim();
+    if (!draft) {
+      setVoiceUi("idle");
+      return;
+    }
+
+    setVoiceUi("processing");
+
+    try {
+      const actions = await executeVoiceTextWithUndo(draft);
+
+      setVoiceUi("idle");
+      setVoiceDraft("");
+
+      // Undo (3 seconds) - only when we have reversible actions (add items path)
+      if (actions.length > 0) {
+        if (undoToastTimerRef.current != null) window.clearTimeout(undoToastTimerRef.current);
+
+        setUndoToast({
+          msg: t(t("בוצע. ניתן לבטל למשך 3 שניות")),
+          undoLabel: t("בטל"),
+          onUndo: async () => {
+            await runUndoActions(actions);
+            setUndoToast(null);
+            if (undoToastTimerRef.current != null) window.clearTimeout(undoToastTimerRef.current);
+            undoToastTimerRef.current = null;
+            setToast(t("בוטל"));
+          },
+        });
+
+        undoToastTimerRef.current = window.setTimeout(() => {
+          setUndoToast(null);
+          undoToastTimerRef.current = null;
+        }, 3000);
+      } else {
+        // For non-undoable voice actions
+        setToast(t("בוצע"));
+      }
+    } catch (e: any) {
+      console.error(e);
+      setVoiceUi("idle");
+      setToast(`${t("שגיאה")}: ${String(e?.message || e || "")}`);
+    }
+  };
+
+  const cancelVoiceDraft = () => {
+    setVoiceDraft("");
+    setVoiceUi("idle");
+  };
 
   const startHoldListening = () => {
     const SR = ensureSpeechRecognition();
@@ -3457,50 +3970,42 @@ useEffect(() => {
                 {t("רשימה")}
               </button>
 
-              {/* Hold-to-talk Voice button */}
-              <button
-                onPointerDown={(e) => {
-                  e.preventDefault();
-                  startHoldListening();
-                }}
-                onPointerUp={(e) => {
-                  e.preventDefault();
-                  stopHoldListening();
-                }}
-                onPointerCancel={(e) => {
-                  e.preventDefault();
-                  stopHoldListening();
-                }}
-                onPointerLeave={(e) => {
-                  if (holdActiveRef.current) {
+              {/* Voice button (tap-to-record) */}
+              <div className="absolute left-1/2 -translate-x-1/2 -top-10 flex flex-col items-center gap-2">
+                {voiceUi === "recording" ? (
+                  <div className="px-3 py-1 rounded-full bg-black/80 text-white text-[12px] font-black flex items-center gap-2">
+                    <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    {t(t("מקליט"))} {formatMmSs(voiceSeconds)}
+                  </div>
+                ) : null}
+
+                <button
+                  onClick={(e) => {
                     e.preventDefault();
-                    stopHoldListening();
+                    if (voiceUi === "processing" || voiceUi === "review") return;
+                    if (voiceUi === "idle") startTapListening();
+                    else if (voiceUi === "recording") stopTapListening();
+                  }}
+                  className={`w-16 h-16 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
+                    voiceUi === "recording" ? "bg-rose-500 text-white" : "bg-indigo-600 text-white hover:bg-indigo-700"
+                  } ${voiceUi === "processing" ? "opacity-60 pointer-events-none" : ""}`}
+                  title={
+                    voiceUi === "recording"
+                      ? t(t("לחץ לסיום"))
+                      : voiceUi === "processing"
+                      ? t(t("מעבד"))
+                      : t(t("לחץ כדי לדבר"))
                   }
-                }}
-                onTouchStart={(e) => {
-                  e.preventDefault();
-                  startHoldListening();
-                }}
-                onTouchEnd={(e) => {
-                  e.preventDefault();
-                  stopHoldListening();
-                }}
-                onMouseDown={(e) => {
-                  e.preventDefault();
-                  startHoldListening();
-                }}
-                onMouseUp={(e) => {
-                  e.preventDefault();
-                  stopHoldListening();
-                }}
-                style={{ touchAction: "none" }}
-                className={`absolute left-1/2 -translate-x-1/2 -top-8 w-16 h-16 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
-                  isListening ? "bg-rose-500 text-white animate-pulse" : "bg-indigo-600 text-white hover:bg-indigo-700"
-                }`}
-                title={isListening ? "דבר עכשיו - שחרר כדי לבצע" : "לחץ והחזק כדי לדבר"}
-              >
-                {isListening ? <MicOff className="w-7 h-7" /> : <Mic className="w-7 h-7" />}
-              </button>
+                >
+                  {voiceUi === "processing" ? (
+                    <Loader2 className="w-7 h-7 animate-spin" />
+                  ) : voiceUi === "recording" ? (
+                    <MicOff className="w-7 h-7" />
+                  ) : (
+                    <Mic className="w-7 h-7" />
+                  )}
+                </button>
+              </div>
             </div>
           </footer>
         </div>
@@ -3599,6 +4104,59 @@ useEffect(() => {
         </div>
       ) : null}
 
+      {/* Voice Review Modal */}
+      {voiceUi === "review" ? (
+        <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-6" dir="rtl">
+          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
+            <div className="p-6 space-y-4">
+              <div className="flex items-start justify-between gap-3">
+                <div className="text-right">
+                  <div className="text-xl font-black text-slate-800">{t(t("בדיקה לפני שליחה"))}</div>
+                  <div className="text-sm font-bold text-slate-400">{t(t("אפשר לערוך או לבטל"))}</div>
+                </div>
+                <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
+                  <Mic className="w-5 h-5" />
+                </div>
+              </div>
+
+              <textarea
+                value={voiceDraft}
+                onChange={(e) => setVoiceDraft(e.target.value)}
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                placeholder={t(t("מה אמרת?"))}
+              />
+
+              <div className="flex gap-3 pt-2">
+                <button
+                  onClick={() => cancelVoiceDraft()}
+                  className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+                >
+                  {t("ביטול")}
+                </button>
+                <button
+                  onClick={() => confirmVoiceDraft()}
+                  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+                >
+                  {t("שלח")}
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {undoToast ? (
+        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50 flex items-center gap-3">
+          <span className="font-bold text-[13px]">{undoToast.msg}</span>
+          <button
+            onClick={undoToast.onUndo}
+            className="px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 font-black text-[13px]"
+          >
+            {undoToast.undoLabel}
+          </button>
+        </div>
+      ) : null}
       {toast ? (
         <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
           {toast}
