@@ -2951,7 +2951,41 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     // allow final events to flush
     await new Promise((r) => setTimeout(r, 220));
 
-    const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
+    const chunks = transcriptBufferRef.current.filter(Boolean);
+const mergeChunks = (parts: string[]) => {
+  let acc = "";
+  for (const raw of parts) {
+    const c = String(raw || "").trim();
+    if (!c) continue;
+    if (!acc) {
+      acc = c;
+      continue;
+    }
+    const a = acc.trim();
+    // If recognizer returns cumulative text, prefer the longer one
+    if (c.startsWith(a)) {
+      acc = c;
+      continue;
+    }
+    if (a.startsWith(c)) {
+      continue;
+    }
+    // Try to stitch by overlap (end of acc matches start of c)
+    const maxOverlap = Math.min(a.length, c.length, 60);
+    let stitched = false;
+    for (let k = maxOverlap; k >= 10; k--) {
+      if (a.slice(-k) === c.slice(0, k)) {
+        acc = a + c.slice(k);
+        stitched = true;
+        break;
+      }
+    }
+    if (!stitched) acc = a + " " + c;
+  }
+  return acc.replace(/\s+/g, " ").trim();
+};
+const finalText = mergeChunks(chunks);
+
     const interimText = (lastInterimRef.current || "").trim();
     const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
