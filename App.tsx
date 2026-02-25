@@ -2622,7 +2622,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     try {
       if (!navigator?.mediaDevices?.getUserMedia) return;
       // Best-effort: request a stream with noise suppression.
-      // SpeechRecognition still controls capture, but this often "warms" permissions and helps on some devices.
+      // Important (mobile): do NOT keep the stream open - it can block SpeechRecognition from accessing the mic.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           noiseSuppression: true,
@@ -2630,7 +2630,13 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           autoGainControl: true,
         } as any,
       });
-      noiseStreamRef.current = stream;
+
+      // Immediately release the mic. This only "warms" the permission prompt.
+      try {
+        stream.getTracks?.().forEach((t) => t.stop());
+      } catch (e) {}
+
+      noiseStreamRef.current = null;
     } catch (e) {
       // ignore (permissions may be handled by SpeechRecognition)
     }
