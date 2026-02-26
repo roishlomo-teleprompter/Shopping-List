@@ -921,7 +921,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה ריקה": "הרשימה ריקה",
     "התחבר עם גוגל": "התחבר עם גוגל",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
-    "הרשימה שלי חכמה": "רשימת הקניות שלי",
+    "הרשימה שלי חכמה": "הרשימה שלי חכמה",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
     "וואטסאפ": "וואטסאפ",
     "שפה": "שפה",
@@ -970,7 +970,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה ריקה": "The list is empty",
     "התחבר עם גוגל": "Sign in with Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "To use the list and invite friends, please sign in with Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי חכמה": "My Smart List",
     "התנתק מרשימת קניות משותפת": "Leave shared list",
     "וואטסאפ": "WhatsApp",
     "שפה": "Language",
@@ -1040,7 +1040,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה ריקה": "Список пуст",
     "התחבר עם גוגל": "Войти через Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "Чтобы пользоваться списком и приглашать друзей, войдите через Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי חכמה": "Мой умный список",
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
     "וואטסאפ": "WhatsApp",
     "שפה": "Язык",
@@ -1110,7 +1110,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה ריקה": "القائمة فارغة",
     "התחבר עם גוגל": "تسجيل الدخول عبر Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "لاستخدام القائمة ودعوة الأصدقاء، يرجى تسجيل الدخول عبر Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי חכמה": "قائمتي الذكية",
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
     "וואטסאפ": "واتساب",
     "שפה": "اللغة",
@@ -2622,7 +2622,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     try {
       if (!navigator?.mediaDevices?.getUserMedia) return;
       // Best-effort: request a stream with noise suppression.
-      // SpeechRecognition still controls capture, but this often "warms" permissions and helps on some devices.
+      // Important (mobile): do NOT keep the stream open - it can block SpeechRecognition from accessing the mic.
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: {
           noiseSuppression: true,
@@ -2630,7 +2630,13 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           autoGainControl: true,
         } as any,
       });
-      noiseStreamRef.current = stream;
+
+      // Immediately release the mic. This only "warms" the permission prompt.
+      try {
+        stream.getTracks?.().forEach((t) => t.stop());
+      } catch (e) {}
+
+      noiseStreamRef.current = null;
     } catch (e) {
       // ignore (permissions may be handled by SpeechRecognition)
     }
@@ -2841,7 +2847,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           if (!transcript) continue;
 
           if (r.isFinal) {
-            transcriptBufferRef.current.push(transcript);
+            transcriptBufferRef.current[i] = transcript;
             lastInterimRef.current = "";
           } else {
             interimCombined = transcript;
@@ -2945,7 +2951,41 @@ const isClearListCommand = (t: string, lang: AppLang) => {
     // allow final events to flush
     await new Promise((r) => setTimeout(r, 220));
 
-    const finalText = transcriptBufferRef.current.join(" ").trim();
+    const chunks = transcriptBufferRef.current.filter(Boolean);
+const mergeChunks = (parts: string[]) => {
+  let acc = "";
+  for (const raw of parts) {
+    const c = String(raw || "").trim();
+    if (!c) continue;
+    if (!acc) {
+      acc = c;
+      continue;
+    }
+    const a = acc.trim();
+    // If recognizer returns cumulative text, prefer the longer one
+    if (c.startsWith(a)) {
+      acc = c;
+      continue;
+    }
+    if (a.startsWith(c)) {
+      continue;
+    }
+    // Try to stitch by overlap (end of acc matches start of c)
+    const maxOverlap = Math.min(a.length, c.length, 60);
+    let stitched = false;
+    for (let k = maxOverlap; k >= 10; k--) {
+      if (a.slice(-k) === c.slice(0, k)) {
+        acc = a + c.slice(k);
+        stitched = true;
+        break;
+      }
+    }
+    if (!stitched) acc = a + " " + c;
+  }
+  return acc.replace(/\s+/g, " ").trim();
+};
+const finalText = mergeChunks(chunks);
+
     const interimText = (lastInterimRef.current || "").trim();
     const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
@@ -3123,7 +3163,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
           if (!transcript) continue;
 
           if (r.isFinal) {
-            transcriptBufferRef.current.push(transcript);
+            transcriptBufferRef.current[i] = transcript;
             lastInterimRef.current = "";
           } else {
             interimCombined = transcript;
@@ -3226,7 +3266,7 @@ const isClearListCommand = (t: string, lang: AppLang) => {
 
     // חשוב: מחברים Final + Interim יחד
     // זה מונע מצב כמו: "שתי" ב-final ו-"מלפפונים" ב-interim שנדבקים בטעות לפריט קודם
-    const finalText = transcriptBufferRef.current.join(" ").trim();
+    const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
     const interimText = (lastInterimRef.current || "").trim();
     const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
 
