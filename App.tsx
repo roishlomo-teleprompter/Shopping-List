@@ -1759,11 +1759,11 @@ const activeItems = useMemo(
       swipeHintTimersRef.current = [];
 
       setSwipeHintMode(true);
-      setSwipeUi({ id: first.id, dx: 90 });
+      setSwipeUi({ id: first.id, dx: 76 });
 
       // Slower, clearer demo: right (trash) -> center -> left (star) -> center
       const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 650);
-      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -90 }), 1150);
+      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -76 }), 1150);
       const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 1800);
       const t4 = window.setTimeout(() => {
         setSwipeUi({ id: null, dx: 0 });
