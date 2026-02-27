@@ -1375,6 +1375,15 @@ const [listLoading, setListLoading] = useState(false);
   const swipeConsumedRef = useRef(false);
   const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+  const [swipeHintMode, setSwipeHintMode] = useState(false);
+  const swipeHintTimersRef = useRef<number[]>([]);
+
+  useEffect(() => {
+    return () => {
+      swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
+      swipeHintTimersRef.current = [];
+    };
+  }, []);
   const swipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const SWIPE_THRESHOLD_PX = 70;
@@ -1389,6 +1398,12 @@ const [listLoading, setListLoading] = useState(false);
 
   const onSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
     if (isNoSwipeTarget(e.target)) return;
+
+    // If a hint animation is running, stop it immediately when the user starts interacting
+    if (swipeHintMode) {
+      setSwipeHintMode(false);
+      setSwipeUi({ id: null, dx: 0 });
+    }
 
         swipeConsumedRef.current = false;
     swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
@@ -1718,6 +1733,45 @@ const activeItems = useMemo(
     () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
+
+  // ---------------------------
+  // One-time hint per "first item added" (active list goes from 0 -> 1)
+  // This is UI-only and does not trigger any delete/favorite actions.
+  const prevActiveCountRef = useRef<number>(0);
+
+  useEffect(() => {
+    const curr = activeItems.length;
+    const prev = prevActiveCountRef.current;
+
+    // Always update for next tick
+    prevActiveCountRef.current = curr;
+
+    // Run every time the active list becomes non-empty from empty
+    if (prev === 0 && curr === 1) {
+      const first = activeItems[0];
+      if (!first) return;
+
+      // Don't override real swipes
+      if (swipeStartRef.current) return;
+
+      // Clear any previous hint timers
+      swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
+      swipeHintTimersRef.current = [];
+
+      setSwipeHintMode(true);
+      setSwipeUi({ id: first.id, dx: 90 });
+
+      const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 260);
+      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -90 }), 520);
+      const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 780);
+      const t4 = window.setTimeout(() => {
+        setSwipeUi({ id: null, dx: 0 });
+        setSwipeHintMode(false);
+      }, 1040);
+
+      swipeHintTimersRef.current.push(t1, t2, t3, t4);
+    }
+  }, [activeItems.length, activeItems[0]?.id]);
 
   const purchasedItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
@@ -3752,7 +3806,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 220ms ease-in-out" : "none") : "transform 120ms ease-out",
                         }}
                       >
                         <div
