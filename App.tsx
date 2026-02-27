@@ -454,6 +454,13 @@ function mergeCompounds(tokens: string[]): string[] {
 
     // never merge quantity tokens
     if (a && b && !isQtyToken(a) && !isQtyToken(b)) {
+      // Special: merge standalone Hebrew preposition 'ל' with next word ("ל אמא" -> "לאמא")
+      if (a === "ל") {
+        out.push(`ל${b}`);
+        i += 2;
+        continue;
+      }
+
       const pair = `${a} ${b}`;
       const bNorm = stripHe(b);
       const pairNorm = `${a} ${bNorm}`;
@@ -567,9 +574,12 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     // if next is qty, wait (suffix qty) or prefix qty handling will flush
     if (isQtyToken(nxt)) continue;
 
+    // Keep common Hebrew "ל..." attachments as part of the same item ("טבליות למדיח", "מתנה לאמא")
+    if (nxt === "ל" || (nxt && nxt.startsWith("ל") && nxt.length > 1)) continue;
+
     // otherwise flush after each word/phrase - this splits "ביצים חלב עגבניה"
     flush();
-  }
+}
 
   if (nameParts.length > 0) flush();
 
