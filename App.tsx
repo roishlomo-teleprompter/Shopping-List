@@ -1761,13 +1761,14 @@ const activeItems = useMemo(
       setSwipeHintMode(true);
       setSwipeUi({ id: first.id, dx: 90 });
 
-      const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 260);
-      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -90 }), 520);
-      const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 780);
+      // Slower, clearer demo: right (trash) -> center -> left (star) -> center
+      const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 650);
+      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -90 }), 1150);
+      const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 1800);
       const t4 = window.setTimeout(() => {
         setSwipeUi({ id: null, dx: 0 });
         setSwipeHintMode(false);
-      }, 1040);
+      }, 2150);
 
       swipeHintTimersRef.current.push(t1, t2, t3, t4);
     }
@@ -3806,7 +3807,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 220ms ease-in-out" : "none") : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 420ms ease-in-out" : "none") : "transform 120ms ease-out",
                         }}
                       >
                         <div
