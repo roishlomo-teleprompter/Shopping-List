@@ -484,26 +484,76 @@ function mergeCompounds(tokens: string[]): string[] {
     i += 1;
   }
 
+
+
+const normalizeToken = (s: string) => normalize((s || "").trim());
+
+// Words that typically JOIN phrases (do not split items) across supported languages.
+// This helps keep descriptions together: "גבינה של כבשים", "oil with garlic", "чай с лимоном", "زيت مع زعتر".
+const PHRASE_CONNECTORS = new Set<string>([
+  // Hebrew
+  "של", "עם", "בלי", "ל",
+  // English
+  "of", "with", "for", "to", "without",
+  // Russian
+  "с", "со", "для", "без", "к",
+  // Arabic
+  "مع", "من", "بدون", "ل",
+]);
+
+// Common adjectives (very small, safe list) for better multi-word items across languages.
+// Examples: "גזר גדול", "big apples", "большой огурец", "تفاح كبير".
+const COMMON_ADJ = new Set<string>([
+  // English
+  "big","large","small","fresh","new","red","green","yellow","white","black","sweet",
+  // Russian
+  "большой","большая","большие","маленький","маленькая","маленькие","свежий","свежая","свежие","красный","красная","красные","зеленый","зеленая","зеленые","желтый","желтая","желтые","белый","белая","белые","черный","черная","черные",
+  // Arabic
+  "كبير","كبيرة","كبار","صغير","صغيرة","صغار","طازج","طازجة","أحمر","حمراء","أخضر","خضراء","أصفر","صفراء","أبيض","بيضاء","أسود","سوداء",
+]);
+
+function applyConjunctionDelimiters(raw: string): string {
+  // Convert natural-language "and/ו/и/و" separators into commas so the parser can split items.
+  // Keeps cases like "מתנה ולאמא" / "gift to mom" together (do not split when ו/و is prefix before l/ل).
+  let t = ` ${raw || ""} `;
+
+  // Hebrew multi-word connectors
+  t = t
+    .replace(/\s+ואחר\s+כך\s+/g, ", ")
+    .replace(/\s+אחר\s+כך\s+/g, ", ")
+    .replace(/\s+וגם\s+/g, ", ")
+    .replace(/\s+ואז\s+/g, ", ")
+    .replace(/\s+ו\s+/g, ", ");
+
+  // Protect Hebrew prefix "ו" before "ל..." (do not split: "ולאמא")
+  t = t.replace(/(\s)ו(?=ל[א-ת]{2,})/g, "$1__V_L__");
+  // Split "ועגבניה" style prefixes
+  t = t.replace(/(\s)ו(?=[א-ת]{2,})/g, "$1, ");
+  t = t.replace(/__V_L__/g, "ו");
+
+  // English
+  t = t.replace(/\s+(and|then|also|next)\s+/gi, ", ");
+
+  // Russian
+  t = t.replace(/\s+(и|потом|затем|также)\s+/gi, ", ");
+
+  // Arabic multi-word connectors
+  t = t
+    .replace(/\s+بعد\s+ذلك\s+/g, ", ")
+    .replace(/\s+ثم\s+/g, ", ")
+    .replace(/\s+و\s+/g, ", ");
+
+  // Protect Arabic prefix و before ل... (do not split: "ولأمي" etc)
+  t = t.replace(/(\s)و(?=ل[\u0600-\u06FF]{1,})/g, "$1__W_L__");
+  t = t.replace(/(\s)و(?=[\u0600-\u06FF]{2,})/g, "$1, ");
+  t = t.replace(/__W_L__/g, "و");
+
+  return t.trim();
+}
+
   return out;
 }
 
-
-
-function mergeLPrefix(tokens: string[]): string[] {
-  // Merge standalone Hebrew prefix "ל" with the following word: ["ל","אמא"] -> ["לאמא"]
-  const out: string[] = [];
-  for (let i = 0; i < tokens.length; i++) {
-    const a = tokens[i];
-    const b = i + 1 < tokens.length ? tokens[i + 1] : "";
-    if (a === "ל" && b) {
-      out.push(`ל${b}`);
-      i += 1;
-      continue;
-    }
-    out.push(a);
-  }
-  return out;
-}
 
 
 /**
@@ -523,7 +573,6 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
   let tokens = seg.split(" ").filter(Boolean);
   tokens = mergeCompounds(tokens);
-  tokens = mergeLPrefix(tokens);
   if (tokens.length === 0) return [];
 
   const out: Array<{ name: string; qty: number }> = [];
@@ -577,14 +626,15 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     if (nameParts.length === 1 && shouldKeepAsMultiwordByPrefix(nameParts[0])) {
       continue;
     }
-
-    // keep phrases with connectors
-    if (tok === "של" || tok === "עם") continue;
-    if (nxt === "של" || nxt === "עם") continue;
-
-    // keep Hebrew "ל..." together with the previous word (ex: "טבליות למדיח", "מתנה לאמא")
-    if (tok === "ל") continue;
-    if (nxt === "ל" || (nxt && nxt.startsWith("ל") && nxt.length > 1)) continue;
+    
+    // If the first token is a common adjective (in non-Hebrew languages), keep it with the next word.
+    const tokNorm = normalizeToken(tok);
+    if (nameParts.length === 1 && COMMON_ADJ.has(tokNorm) && nxt && !isQtyToken(nxt)) {
+      continue;
+    }
+// keep phrases with connectors (do not split around these tokens)
+    if (PHRASE_CONNECTORS.has(tok) || PHRASE_CONNECTORS.has(normalizeToken(tok))) continue;
+    if (PHRASE_CONNECTORS.has(nxt) || PHRASE_CONNECTORS.has(normalizeToken(nxt))) continue;
 
     // if next is qty, wait (suffix qty) or prefix qty handling will flush
     if (isQtyToken(nxt)) continue;
@@ -596,10 +646,7 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
   if (nameParts.length > 0) flush();
 
   return out
-    .map((x) => ({
-      name: x.name.replace(new RegExp("⁣", "g"), " ").replace(/\s+/g, " ").trim(),
-      qty: Math.max(1, Number(x.qty || 1)),
-    }))
+    .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
     .filter((x) => x.name.length > 0);
 }
 
@@ -609,15 +656,11 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
  */
 function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   const t0 = normalizeVoiceText(raw);
-  const t = normalize(t0);
-  if (!t) return [];
+  const t1 = normalize(t0);
+  if (!t1) return [];
 
-  const cleaned = t
-    .replace(/\s+וגם\s+/g, ",")
-    .replace(/\s+ואז\s+/g, ",")
-    .replace(/\s+אחר כך\s+/g, ",")
-    .replace(/\s+ואחר כך\s+/g, ",")
-    .replace(/\s+ו\s+/g, ",");
+  // Normalize natural-language "and" separators to commas across languages.
+  const cleaned = applyConjunctionDelimiters(t1);
 
   const segments = cleaned
     .split(/,|\n/)
@@ -634,132 +677,7 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
 
 
 
-function formatCommaPreview(text: string): string {
-  // Review window: show commas BETWEEN WORDS to help spotting multiword phrases,
-  // while keeping item separators editable and unambiguous.
-  //
-  // Item separator: ", " (comma + normal space)
-  // Word separator (inside an item): ",\u00A0" (comma + NBSP) - looks like a space, but we can parse it safely.
-  const WORD_SEP = ",\u00A0";
-  const ITEM_SEP = ", ";
-
-  const raw = (text || "").trim();
-  if (!raw) return "";
-
-  const norm = normalize(normalizeVoiceText(raw));
-  if (!norm) return raw;
-
-  // If it looks like an explicit command, don't inject commas (keeps it readable/editable).
-  // (Command handling runs on the raw draft in executeVoiceTextWithUndo.)
-  if (
-    /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(norm) ||
-    /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(norm) ||
-    /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(norm) ||
-    /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(norm) ||
-    /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(norm)
-  ) {
-    return raw;
-  }
-
-  // Known 2-word phrases we keep with a normal space (no comma between the two words) in the review preview.
-  const noCommaPairs = new Set<string>([
-    "מחק רשימה",
-    "נקה רשימה",
-    "מרחק רשימה",
-    "אחד רשימה",
-    "רק נשימה",
-    "אחד רשימה",
-    "clear list",
-    "delete list",
-    "remove list",
-    "очистить список",
-    "удалить список",
-    "امسح القائمة",
-    "احذف القائمة",
-  ]);
-
-  // Parse to items using existing logic, then render:
-  // - items separated by ", "
-  // - words inside each item separated by ",\u00A0" (NBSP)
-  const parsed = parseItemsFromText(raw);
-  if (parsed.length === 0) return raw;
-
-  const previewItems = parsed
-    .map((p) => {
-      const name = (p.name || "").replace(/\s+/g, " ").trim();
-      if (!name) return "";
-      const n = normalize(name);
-
-      if (noCommaPairs.has(n)) return name;
-
-      const parts = name.split(" ").filter(Boolean);
-      if (parts.length <= 1) return name;
-      return parts.join(WORD_SEP);
-    })
-    .filter(Boolean);
-
-  return previewItems.join(ITEM_SEP);
-}
-
-function parseCommaPreviewToRaw(text: string): string {
-  // Convert the editable review text back into the raw draft that executeVoiceTextWithUndo expects.
-  //
-  // Rules:
-  // - Items are separated by ", " (comma + normal space) in the review text.
-  // - Word commas inside an item are ",\u00A0" (comma + NBSP). They should NOT split items.
-  // - We return a comma-separated raw string where each item is protected from internal splitting
-  //   by replacing spaces with an invisible joiner (\u2063). Later, parseSegmentTokensToItems converts it back to spaces.
-  const WORD_NBSP = "\u00A0";
-  const INV_JOIN = "\u2063";
-
-  const input = (text || "").trim();
-  if (!input) return "";
-
-  const maybeCmd = normalize(normalizeVoiceText(input));
-  if (
-    maybeCmd &&
-    (
-      /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(maybeCmd) ||
-      /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(maybeCmd) ||
-      /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(maybeCmd) ||
-      /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(maybeCmd) ||
-      /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(maybeCmd)
-    )
-  ) {
-    return input.replace(/\s+/g, " ").trim();
-  }
-
-  // Protect NBSP so splitting on ", " won't break word commas
-  const PLACE = "\uE000";
-  const tmp = input.replaceAll(WORD_NBSP, PLACE);
-
-  // Split ONLY on comma followed by (one or more) regular whitespace
-  const roughItems = tmp
-    .split(/,\s+/)
-    .map((s) => s.replaceAll(PLACE, WORD_NBSP).trim())
-    .filter(Boolean);
-
-  const normalizedItems = roughItems
-    .map((s) => {
-      // Convert word commas (comma + NBSP) to spaces
-      let x = s.replace(new RegExp(`,${WORD_NBSP}`, "g"), " ");
-      // If user typed other commas inside the item (without spaces), treat them as word separators too
-      x = x.replace(/,/g, " ");
-      x = x.replace(/\s+/g, " ").trim();
-      if (!x) return "";
-
-      // Protect internal spaces so parseSegmentTokensToItems treats it as ONE item
-      return x.split(" ").filter(Boolean).join(INV_JOIN);
-    })
-    .filter(Boolean);
-
-  return normalizedItems.join(", ");
-}
-
-
-
-// --
-// -------------------------
+// ---------------------------
 // Autocomplete (Hebrew grocery suggestions)
 // ---------------------------
 const COMMON_GROCERY_HE: string[] = [
@@ -1470,9 +1388,6 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
-  const [voiceReviewText, setVoiceReviewText] = useState<string>("");
-  const voiceReviewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
-  const voiceReviewOverlayRef = useRef<HTMLDivElement | null>(null);
   const voiceTimerRef = useRef<number | null>(null);
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
@@ -1528,15 +1443,6 @@ const [listLoading, setListLoading] = useState(false);
   const swipeConsumedRef = useRef(false);
   const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
-  const [swipeHintMode, setSwipeHintMode] = useState(false);
-  const swipeHintTimersRef = useRef<number[]>([]);
-
-  useEffect(() => {
-    return () => {
-      swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
-      swipeHintTimersRef.current = [];
-    };
-  }, []);
   const swipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const SWIPE_THRESHOLD_PX = 70;
@@ -1551,12 +1457,6 @@ const [listLoading, setListLoading] = useState(false);
 
   const onSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
     if (isNoSwipeTarget(e.target)) return;
-
-    // If a hint animation is running, stop it immediately when the user starts interacting
-    if (swipeHintMode) {
-      setSwipeHintMode(false);
-      setSwipeUi({ id: null, dx: 0 });
-    }
 
         swipeConsumedRef.current = false;
     swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
@@ -1886,46 +1786,6 @@ const activeItems = useMemo(
     () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
     [items]
   );
-
-  // ---------------------------
-  // One-time hint per "first item added" (active list goes from 0 -> 1)
-  // This is UI-only and does not trigger any delete/favorite actions.
-  const prevActiveCountRef = useRef<number>(0);
-
-  useEffect(() => {
-    const curr = activeItems.length;
-    const prev = prevActiveCountRef.current;
-
-    // Always update for next tick
-    prevActiveCountRef.current = curr;
-
-    // Run every time the active list becomes non-empty from empty
-    if (prev === 0 && curr === 1) {
-      const first = activeItems[0];
-      if (!first) return;
-
-      // Don't override real swipes
-      if (swipeStartRef.current) return;
-
-      // Clear any previous hint timers
-      swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
-      swipeHintTimersRef.current = [];
-
-      setSwipeHintMode(true);
-      setSwipeUi({ id: first.id, dx: 76 });
-
-      // Slower, clearer demo: right (trash) -> center -> left (star) -> center
-      const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 650);
-      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -76 }), 1150);
-      const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 1800);
-      const t4 = window.setTimeout(() => {
-        setSwipeUi({ id: null, dx: 0 });
-        setSwipeHintMode(false);
-      }, 2150);
-
-      swipeHintTimersRef.current.push(t1, t2, t3, t4);
-    }
-  }, [activeItems.length, activeItems[0]?.id]);
 
   const purchasedItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
@@ -3207,12 +3067,11 @@ const finalText = mergeChunks(chunks);
     }
 
     setVoiceDraft(combined);
-    setVoiceReviewText(formatCommaPreview(combined));
     setVoiceUi("review");
   };
 
-  const confirmVoiceDraft = async (draftOverride?: string) => {
-    const draft = (draftOverride ?? voiceDraft).trim();
+  const confirmVoiceDraft = async () => {
+    const draft = voiceDraft.trim();
     if (!draft) {
       setVoiceUi("idle");
       return;
@@ -3225,7 +3084,6 @@ const finalText = mergeChunks(chunks);
 
       setVoiceUi("idle");
       setVoiceDraft("");
-      setVoiceReviewText("");
 
       // Undo (3 seconds) - only when we have reversible actions (add items path)
       if (actions.length > 0) {
@@ -3260,7 +3118,6 @@ const finalText = mergeChunks(chunks);
 
   const cancelVoiceDraft = () => {
     setVoiceDraft("");
-    setVoiceReviewText("");
     setVoiceUi("idle");
   };
 
@@ -3963,7 +3820,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 420ms ease-in-out" : "none") : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
                         }}
                       >
                         <div
@@ -4370,16 +4227,13 @@ useEffect(() => {
                 </div>
               </div>
 
-              <div className="w-full">
-                <textarea
-                  ref={voiceReviewTextareaRef}
-                  value={voiceReviewText}
-                  onChange={(e) => setVoiceReviewText(e.target.value)}
-                  rows={3}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200 text-slate-700 selection:bg-indigo-200/50 resize-none"
-                  placeholder={t(t("מה אמרת?"))}
-                />
-                              </div>
+              <textarea
+                value={voiceDraft}
+                onChange={(e) => setVoiceDraft(e.target.value)}
+                rows={3}
+                className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+                placeholder={t(t("מה אמרת?"))}
+              />
 
               <div className="flex gap-3 pt-2">
                 <button
@@ -4389,7 +4243,7 @@ useEffect(() => {
                   {t("ביטול")}
                 </button>
                 <button
-                  onClick={() => confirmVoiceDraft(parseCommaPreviewToRaw(voiceReviewText))}
+                  onClick={() => confirmVoiceDraft()}
                   className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
                 >
                   {t("שלח")}
