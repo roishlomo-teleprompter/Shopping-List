@@ -596,7 +596,10 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
   if (nameParts.length > 0) flush();
 
   return out
-    .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
+    .map((x) => ({
+      name: x.name.replace(new RegExp("⁣", "g"), " ").replace(/\s+/g, " ").trim(),
+      qty: Math.max(1, Number(x.qty || 1)),
+    }))
     .filter((x) => x.name.length > 0);
 }
 
@@ -632,41 +635,131 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
 
 
 function formatCommaPreview(text: string): string {
-  // Show commas between words (for the review-before-send window) without affecting actual item names.
-  // Works for all languages that use whitespace between words.
-  return (text || "")
-    .split("\n")
-    .map((line) => {
-      const parts = line.trim().split(/\s+/).filter(Boolean);
-      return parts.length <= 1 ? (line.trim() ? parts.join("") : "") : parts.join(", ");
-    })
-    .join("\n");
-}
+  // Review window: show commas BETWEEN WORDS to help spotting multiword phrases,
+  // while keeping item separators editable and unambiguous.
+  //
+  // Item separator: ", " (comma + normal space)
+  // Word separator (inside an item): ",\u00A0" (comma + NBSP) - looks like a space, but we can parse it safely.
+  const WORD_SEP = ",\u00A0";
+  const ITEM_SEP = ", ";
 
+  const raw = (text || "").trim();
+  if (!raw) return "";
+
+  const norm = normalize(normalizeVoiceText(raw));
+  if (!norm) return raw;
+
+  // If it looks like an explicit command, don't inject commas (keeps it readable/editable).
+  // (Command handling runs on the raw draft in executeVoiceTextWithUndo.)
+  if (
+    /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(norm) ||
+    /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(norm) ||
+    /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(norm) ||
+    /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(norm) ||
+    /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(norm)
+  ) {
+    return raw;
+  }
+
+  // Known 2-word phrases we keep with a normal space (no comma between the two words) in the review preview.
+  const noCommaPairs = new Set<string>([
+    "מחק רשימה",
+    "נקה רשימה",
+    "מרחק רשימה",
+    "אחד רשימה",
+    "רק נשימה",
+    "אחד רשימה",
+    "clear list",
+    "delete list",
+    "remove list",
+    "очистить список",
+    "удалить список",
+    "امسح القائمة",
+    "احذف القائمة",
+  ]);
+
+  // Parse to items using existing logic, then render:
+  // - items separated by ", "
+  // - words inside each item separated by ",\u00A0" (NBSP)
+  const parsed = parseItemsFromText(raw);
+  if (parsed.length === 0) return raw;
+
+  const previewItems = parsed
+    .map((p) => {
+      const name = (p.name || "").replace(/\s+/g, " ").trim();
+      if (!name) return "";
+      const n = normalize(name);
+
+      if (noCommaPairs.has(n)) return name;
+
+      const parts = name.split(" ").filter(Boolean);
+      if (parts.length <= 1) return name;
+      return parts.join(WORD_SEP);
+    })
+    .filter(Boolean);
+
+  return previewItems.join(ITEM_SEP);
+}
 
 function parseCommaPreviewToRaw(text: string): string {
-  // Convert comma-separated editable preview back to a space-separated draft.
-  // Keeps line breaks. Safe across languages as long as whitespace separates words.
-  return (text || "")
-    .split("\n")
-    .map((line) => {
-      const trimmed = line.trim();
-      if (!trimmed) return "";
-      if (trimmed.includes(",")) {
-        const tokens = trimmed
-          .split(",")
-          .map((t) => t.trim())
-          .filter(Boolean);
-        return tokens.join(" ");
-      }
-      return trimmed.replace(/\s+/g, " ");
+  // Convert the editable review text back into the raw draft that executeVoiceTextWithUndo expects.
+  //
+  // Rules:
+  // - Items are separated by ", " (comma + normal space) in the review text.
+  // - Word commas inside an item are ",\u00A0" (comma + NBSP). They should NOT split items.
+  // - We return a comma-separated raw string where each item is protected from internal splitting
+  //   by replacing spaces with an invisible joiner (\u2063). Later, parseSegmentTokensToItems converts it back to spaces.
+  const WORD_NBSP = "\u00A0";
+  const INV_JOIN = "\u2063";
+
+  const input = (text || "").trim();
+  if (!input) return "";
+
+  const maybeCmd = normalize(normalizeVoiceText(input));
+  if (
+    maybeCmd &&
+    (
+      /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(maybeCmd) ||
+      /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(maybeCmd) ||
+      /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(maybeCmd) ||
+      /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(maybeCmd) ||
+      /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(maybeCmd)
+    )
+  ) {
+    return input.replace(/\s+/g, " ").trim();
+  }
+
+  // Protect NBSP so splitting on ", " won't break word commas
+  const PLACE = "\uE000";
+  const tmp = input.replaceAll(WORD_NBSP, PLACE);
+
+  // Split ONLY on comma followed by (one or more) regular whitespace
+  const roughItems = tmp
+    .split(/,\s+/)
+    .map((s) => s.replaceAll(PLACE, WORD_NBSP).trim())
+    .filter(Boolean);
+
+  const normalizedItems = roughItems
+    .map((s) => {
+      // Convert word commas (comma + NBSP) to spaces
+      let x = s.replace(new RegExp(`,${WORD_NBSP}`, "g"), " ");
+      // If user typed other commas inside the item (without spaces), treat them as word separators too
+      x = x.replace(/,/g, " ");
+      x = x.replace(/\s+/g, " ").trim();
+      if (!x) return "";
+
+      // Protect internal spaces so parseSegmentTokensToItems treats it as ONE item
+      return x.split(" ").filter(Boolean).join(INV_JOIN);
     })
-    .join("\n");
+    .filter(Boolean);
+
+  return normalizedItems.join(", ");
 }
 
 
 
-// ---------------------------
+// --
+// -------------------------
 // Autocomplete (Hebrew grocery suggestions)
 // ---------------------------
 const COMMON_GROCERY_HE: string[] = [
@@ -1377,6 +1470,9 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
+  const [voiceReviewText, setVoiceReviewText] = useState<string>("");
+  const voiceReviewTextareaRef = useRef<HTMLTextAreaElement | null>(null);
+  const voiceReviewOverlayRef = useRef<HTMLDivElement | null>(null);
   const voiceTimerRef = useRef<number | null>(null);
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
@@ -3111,11 +3207,12 @@ const finalText = mergeChunks(chunks);
     }
 
     setVoiceDraft(combined);
+    setVoiceReviewText(formatCommaPreview(combined));
     setVoiceUi("review");
   };
 
-  const confirmVoiceDraft = async () => {
-    const draft = voiceDraft.trim();
+  const confirmVoiceDraft = async (draftOverride?: string) => {
+    const draft = (draftOverride ?? voiceDraft).trim();
     if (!draft) {
       setVoiceUi("idle");
       return;
@@ -3128,6 +3225,7 @@ const finalText = mergeChunks(chunks);
 
       setVoiceUi("idle");
       setVoiceDraft("");
+      setVoiceReviewText("");
 
       // Undo (3 seconds) - only when we have reversible actions (add items path)
       if (actions.length > 0) {
@@ -3162,6 +3260,7 @@ const finalText = mergeChunks(chunks);
 
   const cancelVoiceDraft = () => {
     setVoiceDraft("");
+    setVoiceReviewText("");
     setVoiceUi("idle");
   };
 
@@ -4271,13 +4370,16 @@ useEffect(() => {
                 </div>
               </div>
 
-              <textarea
-                value={formatCommaPreview(voiceDraft)}
-                onChange={(e) => setVoiceDraft(parseCommaPreviewToRaw(e.target.value))}
-                rows={3}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                placeholder={t(t("מה אמרת?"))}
-              />
+              <div className="w-full">
+                <textarea
+                  ref={voiceReviewTextareaRef}
+                  value={voiceReviewText}
+                  onChange={(e) => setVoiceReviewText(e.target.value)}
+                  rows={3}
+                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200 text-slate-700 selection:bg-indigo-200/50 resize-none"
+                  placeholder={t(t("מה אמרת?"))}
+                />
+                              </div>
 
               <div className="flex gap-3 pt-2">
                 <button
@@ -4287,7 +4389,7 @@ useEffect(() => {
                   {t("ביטול")}
                 </button>
                 <button
-                  onClick={() => confirmVoiceDraft()}
+                  onClick={() => confirmVoiceDraft(parseCommaPreviewToRaw(voiceReviewText))}
                   className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
                 >
                   {t("שלח")}
