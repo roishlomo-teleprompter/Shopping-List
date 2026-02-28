@@ -454,13 +454,6 @@ function mergeCompounds(tokens: string[]): string[] {
 
     // never merge quantity tokens
     if (a && b && !isQtyToken(a) && !isQtyToken(b)) {
-      // Special: merge standalone Hebrew preposition 'ל' with next word ("ל אמא" -> "לאמא")
-      if (a === "ל") {
-        out.push(`ל${b}`);
-        i += 2;
-        continue;
-      }
-
       const pair = `${a} ${b}`;
       const bNorm = stripHe(b);
       const pairNorm = `${a} ${bNorm}`;
@@ -496,6 +489,23 @@ function mergeCompounds(tokens: string[]): string[] {
 
 
 
+function mergeLPrefix(tokens: string[]): string[] {
+  // Merge standalone Hebrew prefix "ל" with the following word: ["ל","אמא"] -> ["לאמא"]
+  const out: string[] = [];
+  for (let i = 0; i < tokens.length; i++) {
+    const a = tokens[i];
+    const b = i + 1 < tokens.length ? tokens[i + 1] : "";
+    if (a === "ל" && b) {
+      out.push(`ל${b}`);
+      i += 1;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+
 /**
  * Token-scan parser that handles:
  * - "ביצים חלב עגבניה" -> 3 items
@@ -513,6 +523,7 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
   let tokens = seg.split(" ").filter(Boolean);
   tokens = mergeCompounds(tokens);
+  tokens = mergeLPrefix(tokens);
   if (tokens.length === 0) return [];
 
   const out: Array<{ name: string; qty: number }> = [];
@@ -571,15 +582,16 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     if (tok === "של" || tok === "עם") continue;
     if (nxt === "של" || nxt === "עם") continue;
 
+    // keep Hebrew "ל..." together with the previous word (ex: "טבליות למדיח", "מתנה לאמא")
+    if (tok === "ל") continue;
+    if (nxt === "ל" || (nxt && nxt.startsWith("ל") && nxt.length > 1)) continue;
+
     // if next is qty, wait (suffix qty) or prefix qty handling will flush
     if (isQtyToken(nxt)) continue;
 
-    // Keep common Hebrew "ל..." attachments as part of the same item ("טבליות למדיח", "מתנה לאמא")
-    if (nxt === "ל" || (nxt && nxt.startsWith("ל") && nxt.length > 1)) continue;
-
     // otherwise flush after each word/phrase - this splits "ביצים חלב עגבניה"
     flush();
-}
+  }
 
   if (nameParts.length > 0) flush();
 
@@ -615,6 +627,41 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
     for (const p of parsed) out.push(p);
   }
   return out;
+}
+
+
+
+function formatCommaPreview(text: string): string {
+  // Show commas between words (for the review-before-send window) without affecting actual item names.
+  // Works for all languages that use whitespace between words.
+  return (text || "")
+    .split("\n")
+    .map((line) => {
+      const parts = line.trim().split(/\s+/).filter(Boolean);
+      return parts.length <= 1 ? (line.trim() ? parts.join("") : "") : parts.join(", ");
+    })
+    .join("\n");
+}
+
+
+function parseCommaPreviewToRaw(text: string): string {
+  // Convert comma-separated editable preview back to a space-separated draft.
+  // Keeps line breaks. Safe across languages as long as whitespace separates words.
+  return (text || "")
+    .split("\n")
+    .map((line) => {
+      const trimmed = line.trim();
+      if (!trimmed) return "";
+      if (trimmed.includes(",")) {
+        const tokens = trimmed
+          .split(",")
+          .map((t) => t.trim())
+          .filter(Boolean);
+        return tokens.join(" ");
+      }
+      return trimmed.replace(/\s+/g, " ");
+    })
+    .join("\n");
 }
 
 
@@ -4225,8 +4272,8 @@ useEffect(() => {
               </div>
 
               <textarea
-                value={voiceDraft}
-                onChange={(e) => setVoiceDraft(e.target.value)}
+                value={formatCommaPreview(voiceDraft)}
+                onChange={(e) => setVoiceDraft(parseCommaPreviewToRaw(e.target.value))}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
