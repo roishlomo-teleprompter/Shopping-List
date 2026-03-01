@@ -1429,7 +1429,7 @@ useEffect(() => {
         delete (next as any)[id];
         return next;
       });
-    }, 200);
+    }, 260);
   }
 }, [items]);
 
@@ -1931,21 +1931,21 @@ const runSwipeHintOnItem = (itemId: string) => {
     window.setTimeout(() => {
       if (swipeStartRef.current) return;
 
-      const dx = 62; // ~ icon reveal
+      const dx = 60; // ~ icon reveal
       setSwipeHintMode(true);
 
       // Short, clear demo: right (trash) -> center -> left (star) -> center
       setSwipeUi({ id: itemId, dx });
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 450));
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: -dx }), 850));
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 1250));
+      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 520));
+      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: -dx }), 1050));
+      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 1570));
       swipeHintTimersRef.current.push(
         window.setTimeout(() => {
           setSwipeUi({ id: null, dx: 0 });
           setSwipeHintMode(false);
-        }, 1500)
+        }, 1850)
       );
-    }, 200)
+    }, 260)
   );
 };
 
@@ -2267,7 +2267,7 @@ const hideSuggestion = (s: SuggestView) => {
         next.delete(itemId);
         return next;
       });
-    }, 200);
+    }, 260);
   };
 
   const removeFavorite = async (favId: string) => {
@@ -2554,7 +2554,7 @@ ${footer}`;
           next.delete(existing.id);
           return next;
         });
-      }, 200);
+      }, 260);
 
       return { targetId: existing.id, created: false };
     }
@@ -2572,7 +2572,7 @@ ${footer}`;
         next.delete(fav.id);
         return next;
       });
-    }, 200);
+    }, 260);
 
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
@@ -3785,7 +3785,7 @@ useEffect(() => {
       </div>
 
       {/* Content */}
-      <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
+      <main className="flex-1 p-5 pb-44 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === "list" ? (
           <>
             <form onSubmit={addItem} className="relative">
@@ -4022,7 +4022,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 360ms ease-in-out" : "none") : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 420ms ease-in-out" : "none") : "transform 120ms ease-out",
                         }}
                       >
                         <div
