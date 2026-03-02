@@ -1320,7 +1320,106 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
+  const [voiceReviewText, setVoiceReviewText] = useState<string>("");
   const voiceTimerRef = useRef<number | null>(null);
+
+
+  // Voice review - show commas between words (for clarity) without affecting saved items.
+  // We distinguish:
+  // - Item separators: ", " (comma + normal space)
+  // - Word separators (preview only): ",\u00A0" (comma + NBSP)
+  const WORD_COMMA = ",\u00A0";
+
+  const isQuantityToken = (s: string) => /^\d+$/.test(s);
+
+  const shouldKeepAsCompound = (a: string, b: string) => {
+    const x = (a || "").trim();
+    const y = (b || "").trim();
+    const pair = (x + " " + y).toLowerCase();
+    // Hebrew compounds + common ASR variants
+    const hePairs = new Set([
+      "נייר טואלט",
+      "נייר טואלטים",
+      "נייר טואליט",
+      "נייר טואלט",
+      "נייר טואלט",
+    ]);
+    // Voice command-like phrases (keep without comma)
+    const cmdPairs = new Set([
+      "מחק רשימה",
+      "נקה רשימה",
+      "מרחק רשימה",
+      "אחד רשימה",
+      "רק נשימה",
+    ]);
+    // English/Russian/Arabic equivalents (keep without comma)
+    const otherPairs = new Set([
+      "clear list",
+      "delete list",
+      "очистить список",
+      "удалить список",
+      "امسح القائمة",
+      "امسح لائحة",
+      "امسح قائمة",
+    ]);
+    return hePairs.has(pair) || cmdPairs.has(pair) || otherPairs.has(pair);
+  };
+
+  const commaifyItemForReview = (itemText: string) => {
+    const raw = (itemText || "").trim().replace(/\s+/g, " ");
+    if (!raw) return "";
+    const parts = raw.split(" ").filter(Boolean);
+    if (parts.length <= 1) return raw;
+
+    const out: string[] = [];
+    for (let i = 0; i < parts.length; i++) {
+      const cur = parts[i];
+      const next = parts[i + 1];
+
+      // Quantity (e.g., "2 מלפפונים") - keep as "2 מלפפונים"
+      if (i == 0 && isQuantityToken(cur) && next) {
+        out.push(cur + " " + next);
+        i += 1;
+        continue;
+      }
+
+      // Keep known compounds without a comma between them
+      if (next && shouldKeepAsCompound(cur, next)) {
+        out.push(cur + " " + next);
+        i += 1;
+        continue;
+      }
+
+      out.push(cur);
+    }
+
+    // Now insert preview commas between tokens/groups
+    return out.join(WORD_COMMA);
+  };
+
+  const formatVoiceReviewText = (draft: string) => {
+    const s = (draft || "").trim();
+    if (!s) return "";
+    const items = s
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map(commaifyItemForReview);
+
+    return items.join(", ");
+  };
+
+  const parseVoiceReviewTextToDraft = (review: string) => {
+    const s = (review || "").trim();
+    if (!s) return "";
+    // Split items on ", " only (comma + normal space). Word commas use NBSP.
+    const items = s
+      .split(", ")
+      .map((x) => x.replaceAll(WORD_COMMA, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+
+    return items.join(", ");
+  };
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
   const undoToastTimerRef = useRef<number | null>(null);
@@ -3050,11 +3149,12 @@ const finalText = mergeChunks(chunks);
     }
 
     setVoiceDraft(combined);
+    setVoiceReviewText(formatVoiceReviewText(combined));
     setVoiceUi("review");
   };
 
   const confirmVoiceDraft = async () => {
-    const draft = voiceDraft.trim();
+    const draft = parseVoiceReviewTextToDraft(voiceReviewText).trim();
     if (!draft) {
       setVoiceUi("idle");
       return;
@@ -3067,6 +3167,7 @@ const finalText = mergeChunks(chunks);
 
       setVoiceUi("idle");
       setVoiceDraft("");
+      setVoiceReviewText("");
 
       // Undo (3 seconds) - only when we have reversible actions (add items path)
       if (actions.length > 0) {
@@ -3101,6 +3202,7 @@ const finalText = mergeChunks(chunks);
 
   const cancelVoiceDraft = () => {
     setVoiceDraft("");
+    setVoiceReviewText("");
     setVoiceUi("idle");
   };
 
@@ -4212,8 +4314,8 @@ useEffect(() => {
               </div>
 
               <textarea
-                value={voiceDraft}
-                onChange={(e) => setVoiceDraft(e.target.value)}
+                value={voiceReviewText}
+                onChange={(e) => setVoiceReviewText(e.target.value)}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
