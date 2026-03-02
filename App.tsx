@@ -1,4 +1,4 @@
-import React, { useEffect, useMemo, useRef, useState } from "react";
+import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { HashRouter, Routes, Route, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Share2,
@@ -607,126 +607,6 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
   return out;
 }
 
-
-
-// ---------------------------
-// Voice review comma preview helpers
-// ---------------------------
-function formatCommaPreview(text: string): string {
-  // Review window: show commas BETWEEN WORDS to help spotting multiword phrases,
-  // while keeping item separators editable and unambiguous.
-  //
-  // Item separator: ", " (comma + normal space)
-  // Word separator (inside an item): ",\u00A0" (comma + NBSP) - looks like a space, but we can parse it safely.
-  const WORD_SEP = ",\u00A0";
-  const ITEM_SEP = ", ";
-
-  const raw = (text || "").trim();
-  if (!raw) return "";
-
-  const norm = normalize(normalizeVoiceText(raw));
-  if (!norm) return raw;
-
-  // If it looks like an explicit command, don't inject commas (keeps it readable/editable).
-  if (
-    /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(norm) ||
-    /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(norm) ||
-    /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(norm) ||
-    /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(norm) ||
-    /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(norm)
-  ) {
-    return raw;
-  }
-
-  const parsed = parseItemsFromText(raw);
-  if (parsed.length === 0) return raw;
-
-  const previewItems = parsed
-    .map((p) => {
-      const nameRaw = (p.name || "").replace(/\s+/g, " ").trim();
-      if (!nameRaw) return "";
-
-      // Render compound phrases as an ATOMIC token (keeps "נייר טואלט" without a comma between the two words)
-      const baseTokens = nameRaw.split(" ").filter(Boolean);
-      const atomicTokens = mergeCompounds(baseTokens); // may return tokens that include an internal space
-
-      const renderedName =
-        atomicTokens.length <= 1 ? nameRaw : atomicTokens.map((t) => t.trim()).filter(Boolean).join(WORD_SEP);
-
-      const q = Math.max(1, Number(p.qty || 1));
-      return q > 1 ? `${q} ${renderedName}` : renderedName;
-    })
-    .filter(Boolean);
-
-  return previewItems.join(ITEM_SEP);
-}
-
-function parseCommaPreviewToRaw(text: string): string {
-  // Convert the editable review text back into the raw draft that executeVoiceTextWithUndo expects.
-  //
-  // Rules:
-  // - Items are separated by ", " (comma + normal space) in the review text.
-  // - Word commas inside an item are ",\u00A0" (comma + NBSP). They should NOT split items.
-  // - We protect internal spaces inside each item by replacing them with an invisible joiner (\u2063)
-  //   so parseSegmentTokensToItems treats it as ONE item.
-  // - IMPORTANT: keep a NORMAL space between leading qty and the item name, so quantity parsing keeps working.
-  const WORD_NBSP = "\u00A0";
-  const INV_JOIN = "\u2063";
-
-  const input = (text || "").trim();
-  if (!input) return "";
-
-  const maybeCmd = normalize(normalizeVoiceText(input));
-  if (
-    maybeCmd &&
-    (
-      /^(מחק|תמחק|תמחוק|תמחקי)\s+/.test(maybeCmd) ||
-      /^\s*(נקה\s+רשימה|מחק\s+רשימה|מרחק\s+רשימה|אחד\s+רשימה|רק\s+נשימה)\s*$/.test(maybeCmd) ||
-      /^\s*(clear\s+list|delete\s+list|remove\s+list)\s*$/.test(maybeCmd) ||
-      /^\s*(очистить\s+список|удалить\s+список)\s*$/.test(maybeCmd) ||
-      /^\s*(امسح\s+القائمة|احذف\s+القائمة)\s*$/.test(maybeCmd)
-    )
-  ) {
-    return input.replace(/\s+/g, " ").trim();
-  }
-
-  // Protect NBSP so splitting on ", " won't break word commas
-  const PLACE = "\uE000";
-  const tmp = input.replaceAll(WORD_NBSP, PLACE);
-
-  // Split ONLY on comma followed by (one or more) regular whitespace
-  const roughItems = tmp
-    .split(/,\s+/)
-    .map((s) => s.replaceAll(PLACE, WORD_NBSP).trim())
-    .filter(Boolean);
-
-  const normalizedItems = roughItems
-    .map((s) => {
-      // Convert word commas (comma + NBSP) to spaces
-      let x = s.replace(new RegExp(`,${WORD_NBSP}`, "g"), " ");
-      // If user typed other commas inside the item (without spaces), treat them as word separators too
-      x = x.replace(/,/g, " ");
-      x = x.replace(/\s+/g, " ").trim();
-      if (!x) return "";
-
-      const parts = x.split(" ").filter(Boolean);
-      if (parts.length === 0) return "";
-
-      // Keep leading qty as separate token (normal space),
-      // and protect only the name part to keep multiword items together.
-      if (parts.length >= 2 && isQtyToken(parts[0])) {
-        const qTok = parts[0];
-        const nameTok = parts.slice(1).join(INV_JOIN);
-        return `${qTok} ${nameTok}`;
-      }
-
-      // No leading qty - protect all internal spaces
-      return parts.join(INV_JOIN);
-    })
-    .filter(Boolean);
-
-  return normalizedItems.join(", ");
-}
 
 
 // ---------------------------
@@ -1440,7 +1320,6 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
-  const [voiceReviewText, setVoiceReviewText] = useState<string>("");
   const voiceTimerRef = useRef<number | null>(null);
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
@@ -1496,6 +1375,7 @@ const [listLoading, setListLoading] = useState(false);
   const swipeConsumedRef = useRef(false);
   const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+  const [swipeHintMode, setSwipeHintMode] = useState(false);
   const swipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const SWIPE_THRESHOLD_PX = 70;
@@ -1844,6 +1724,56 @@ const activeItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
+
+  // ---------------------------
+  // Swipe hint: demonstrate swipe on the relevant item
+  // - If active list goes from 0 -> 1: hint on that single item
+  // - If multiple items were added in one action: hint on the newest (last added)
+  const swipeHintPrevCountRef = useRef<number>(0);
+
+  const runSwipeHintOnItem = useCallback((itemId: string) => {
+    const dx = 62; // ~ icon reveal
+
+    setSwipeHintMode(true);
+
+    window.setTimeout(() => {
+      // Right
+      setSwipeUi({ id: itemId, dx });
+
+      // Center
+      window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 450);
+
+      // Left
+      window.setTimeout(() => setSwipeUi({ id: itemId, dx: -dx }), 850);
+
+      // Center
+      window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 1250);
+
+      // End
+      window.setTimeout(() => {
+        setSwipeHintMode(false);
+        setSwipeUi({ id: null, dx: 0 });
+      }, 1500);
+    }, 200);
+  }, []);
+
+  useEffect(() => {
+    const prev = swipeHintPrevCountRef.current;
+    const curr = activeItems.length;
+
+    // Only run when we add into an empty list (0 -> >=1)
+    if (prev === 0 && curr > 0) {
+      const targetId = activeItems[0]?.id;
+      if (targetId) {
+        const el = document.getElementById(`swipe-item-${targetId}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        // Small delay so scroll settles a bit
+        window.setTimeout(() => runSwipeHintOnItem(targetId), 220);
+      }
+    }
+
+    swipeHintPrevCountRef.current = curr;
+  }, [activeItems.length, activeItems[0]?.id, runSwipeHintOnItem]);
 
 
 
@@ -2909,7 +2839,6 @@ const isClearListCommand = (t: string, lang: AppLang) => {
 
     tapActiveRef.current = true;
     setVoiceDraft("");
-      setVoiceReviewText("");
     setLastHeard("");
     setIsListening(true);
     setVoiceUi("recording");
@@ -3121,12 +3050,11 @@ const finalText = mergeChunks(chunks);
     }
 
     setVoiceDraft(combined);
-    setVoiceReviewText(formatCommaPreview(combined));
     setVoiceUi("review");
   };
 
   const confirmVoiceDraft = async () => {
-    const draft = parseCommaPreviewToRaw((voiceReviewText || voiceDraft)).trim();
+    const draft = voiceDraft.trim();
     if (!draft) {
       setVoiceUi("idle");
       return;
@@ -3173,7 +3101,6 @@ const finalText = mergeChunks(chunks);
 
   const cancelVoiceDraft = () => {
     setVoiceDraft("");
-    setVoiceReviewText("");
     setVoiceUi("idle");
   };
 
@@ -3784,6 +3711,7 @@ useEffect(() => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
+                      id={`swipe-item-${item.id}`}
                       className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
                         leavingIds.has(item.id)
                           ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
@@ -3876,7 +3804,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 360ms ease-in-out" : "none") : "transform 120ms ease-out",
                         }}
                       >
                         <div
@@ -4284,8 +4212,8 @@ useEffect(() => {
               </div>
 
               <textarea
-                value={voiceReviewText}
-                onChange={(e) => setVoiceReviewText(e.target.value)}
+                value={voiceDraft}
+                onChange={(e) => setVoiceDraft(e.target.value)}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
