@@ -1878,7 +1878,7 @@ const activeItems = useMemo(
     const prevIds = swipeHintPrevIdsRef.current;
     const added = activeItems.filter((i) => !prevIds.has(i.id));
 
-    const shouldHint = (prev === 0 && curr > 0) || added.length > 1;
+    const shouldHint = added.length > 0;
 
     if (shouldHint && added.length > 0) {
       // Pick newest among the newly added items (createdAt), fallback to first in array
