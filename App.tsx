@@ -1826,9 +1826,14 @@ const activeItems = useMemo(
 
   // ---------------------------
   // Swipe hint: demonstrate swipe on the relevant item
-  // - If active list goes from 0 -> 1: hint on that single item
-  // - If multiple items were added in one action: hint on the newest (last added)
+  // - If active list goes from 0 -> 1: hint on that single item (after items settle)
+  // - If multiple items were added in one action (bulk): hint on the newest (last added)
+  // Note: do NOT run on initial hydration/page refresh. Only after real adds in-session.
   const swipeHintPrevCountRef = useRef<number>(0);
+  const swipeHintHydratedRef = useRef(false);
+  const swipeHintPrevIdsRef = useRef<Set<string>>(new Set());
+  const swipeHintCandidateIdRef = useRef<string | null>(null);
+  const swipeHintDebounceRef = useRef<number | null>(null);
 
   const runSwipeHintOnItem = useCallback((itemId: string) => {
     const dx = 62; // ~ icon reveal
@@ -1857,22 +1862,58 @@ const activeItems = useMemo(
   }, []);
 
   useEffect(() => {
-    const prev = swipeHintPrevCountRef.current;
     const curr = activeItems.length;
+    const prev = swipeHintPrevCountRef.current;
 
-    // Only run when we add into an empty list (0 -> >=1)
-    if (prev === 0 && curr > 0) {
-      const targetId = activeItems[0]?.id;
-      if (targetId) {
-        const el = document.getElementById(`swipe-item-${targetId}`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        // Small delay so scroll settles a bit
-        window.setTimeout(() => runSwipeHintOnItem(targetId), 220);
-      }
+    const currIds = new Set(activeItems.map((i) => i.id));
+
+    // First non-empty snapshot after mount should NOT trigger a hint (prevents "hint on refresh")
+    if (!swipeHintHydratedRef.current) {
+      swipeHintHydratedRef.current = true;
+      swipeHintPrevIdsRef.current = currIds;
+      swipeHintPrevCountRef.current = curr;
+      return;
     }
 
+    const prevIds = swipeHintPrevIdsRef.current;
+    const added = activeItems.filter((i) => !prevIds.has(i.id));
+
+    const shouldHint = (prev === 0 && curr > 0) || added.length > 1;
+
+    if (shouldHint && added.length > 0) {
+      // Pick newest among the newly added items (createdAt), fallback to first in array
+      const target = added.reduce((best, it) => {
+        const b = (best as any)?.createdAt ?? 0;
+        const c = (it as any)?.createdAt ?? 0;
+        return c >= b ? it : best;
+      }, added[0]);
+
+      swipeHintCandidateIdRef.current = target.id;
+
+      // Debounce: if items keep arriving (bulk add), wait until it "settles" then run once on last added
+      if (swipeHintDebounceRef.current) window.clearTimeout(swipeHintDebounceRef.current);
+      swipeHintDebounceRef.current = window.setTimeout(() => {
+        const id = swipeHintCandidateIdRef.current;
+        if (!id) return;
+
+        const el = document.getElementById(`swipe-item-${id}`);
+        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
+        window.setTimeout(() => runSwipeHintOnItem(id), 220);
+
+        swipeHintCandidateIdRef.current = null;
+      }, 550);
+    }
+
+    swipeHintPrevIdsRef.current = currIds;
     swipeHintPrevCountRef.current = curr;
-  }, [activeItems.length, activeItems[0]?.id, runSwipeHintOnItem]);
+
+    return () => {
+      if (swipeHintDebounceRef.current) {
+        window.clearTimeout(swipeHintDebounceRef.current);
+        swipeHintDebounceRef.current = null;
+      }
+    };
+  }, [activeItems, runSwipeHintOnItem]);
 
 
 
