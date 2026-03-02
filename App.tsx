@@ -1888,104 +1888,46 @@ const activeItems = useMemo(
   );
 
   // ---------------------------
-  // ---------------------------
-// Swipe hint (UX): show a short demo swipe on the relevant item.
-// Rule:
-// - If active list becomes 1 item (0 -> 1): hint on that item.
-// - If multiple items are added (e.g., voice batch): hint on the LAST newly added item.
-// - No dependency on refresh.
-const prevActiveIdsRef = useRef<Set<string>>(new Set());
-const prevActiveLenRef = useRef<number>(0);
+  // One-time hint per "first item added" (active list goes from 0 -> 1)
+  // This is UI-only and does not trigger any delete/favorite actions.
+  const prevActiveCountRef = useRef<number>(0);
 
-const clearSwipeHintTimers = () => {
-  swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
-  swipeHintTimersRef.current = [];
-};
+  useEffect(() => {
+    const curr = activeItems.length;
+    const prev = prevActiveCountRef.current;
 
-const isElementMostlyVisible = (el: HTMLElement) => {
-  const r = el.getBoundingClientRect();
-  const vh = window.innerHeight || document.documentElement.clientHeight;
-  const centerY = r.top + r.height / 2;
-  return centerY >= 0 && centerY <= vh;
-};
+    // Always update for next tick
+    prevActiveCountRef.current = curr;
 
-const runSwipeHintOnItem = (itemId: string) => {
-  if (!itemId) return;
+    // Run every time the active list becomes non-empty from empty
+    if (prev === 0 && curr === 1) {
+      const first = activeItems[0];
+      if (!first) return;
 
-  // Don't clash with an actual swipe in progress
-  if (swipeStartRef.current) return;
-
-  clearSwipeHintTimers();
-
-  const el = document.getElementById(`swipe-item-${itemId}`) as HTMLElement | null;
-  if (el && !isElementMostlyVisible(el)) {
-    try {
-      el.scrollIntoView({ behavior: "smooth", block: "center" });
-    } catch {
-      // ignore
-    }
-  }
-
-  // Give the browser a moment after scroll to paint
-  swipeHintTimersRef.current.push(
-    window.setTimeout(() => {
+      // Don't override real swipes
       if (swipeStartRef.current) return;
 
-      const dx = 60; // ~ icon reveal
+      // Clear any previous hint timers
+      swipeHintTimersRef.current.forEach((t) => window.clearTimeout(t));
+      swipeHintTimersRef.current = [];
+
       setSwipeHintMode(true);
+      setSwipeUi({ id: first.id, dx: 76 });
 
-      // Short, clear demo: right (trash) -> center -> left (star) -> center
-      setSwipeUi({ id: itemId, dx });
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 520));
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: -dx }), 1050));
-      swipeHintTimersRef.current.push(window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 1570));
-      swipeHintTimersRef.current.push(
-        window.setTimeout(() => {
-          setSwipeUi({ id: null, dx: 0 });
-          setSwipeHintMode(false);
-        }, 1850)
-      );
-    }, 260)
-  );
-};
+      // Slower, clearer demo: right (trash) -> center -> left (star) -> center
+      const t1 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 650);
+      const t2 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: -76 }), 1150);
+      const t3 = window.setTimeout(() => setSwipeUi({ id: first.id, dx: 0 }), 1800);
+      const t4 = window.setTimeout(() => {
+        setSwipeUi({ id: null, dx: 0 });
+        setSwipeHintMode(false);
+      }, 2150);
 
-useEffect(() => {
-  // Compute active items locally to avoid any init-order issues
-  const activeItemsLocal = (items ?? [])
-    .filter((i) => !i.isPurchased)
-    // keep the same order you render: newest first (createdAt desc)
-    .sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      swipeHintTimersRef.current.push(t1, t2, t3, t4);
+    }
+  }, [activeItems.length, activeItems[0]?.id]);
 
-  const currentIds = new Set(activeItemsLocal.map((i) => i.id));
-  const prevIds = prevActiveIdsRef.current;
-  const prevLen = prevActiveLenRef.current;
-  const currLen = activeItemsLocal.length;
-
-  const newlyAdded = activeItemsLocal.filter((i) => !prevIds.has(i.id)).map((i) => i.id);
-
-  prevActiveIdsRef.current = currentIds;
-  prevActiveLenRef.current = currLen;
-
-  if (newlyAdded.length === 0) return;
-
-  // 0 -> 1: single item, hint on it
-  if (currLen === 1 && prevLen === 0) {
-    runSwipeHintOnItem(activeItemsLocal[0]?.id || "");
-    return;
-  }
-
-  // More than one item: hint on the LAST newly added item (or last item as fallback)
-  if (currLen > 1) {
-    const targetId = newlyAdded[newlyAdded.length - 1] || activeItemsLocal[activeItemsLocal.length - 1]?.id;
-    if (targetId) runSwipeHintOnItem(targetId);
-  }
-}, [items]);
-
-useEffect(() => {
-  return () => clearSwipeHintTimers();
-}, []);
-
-const purchasedItems = useMemo(
+  const purchasedItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
@@ -3785,7 +3727,7 @@ useEffect(() => {
       </div>
 
       {/* Content */}
-      <main className="flex-1 p-5 pb-44 space-y-6 overflow-y-auto no-scrollbar">
+      <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
         {activeTab === "list" ? (
           <>
             <form onSubmit={addItem} className="relative">
@@ -3929,7 +3871,6 @@ useEffect(() => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      id={`swipe-item-${item.id}`}
                       className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
                         leavingIds.has(item.id)
                           ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
