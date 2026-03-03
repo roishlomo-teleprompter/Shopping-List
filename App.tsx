@@ -1830,9 +1830,9 @@ useEffect(() => {
               createdAt: Date.now(),
               updatedAt: Date.now(),
             };
-
-            await setDoc(newListRef, newList);
-            setList(newList);
+    // Non-blocking write (important offline)
+    void setDoc(newListRef, newList).catch((err) => console.error("setDoc failed", err));
+setList(newList);
             localStorage.setItem("activeListId", newListRef.id);
           } else {
             const savedId = localStorage.getItem("activeListId");
@@ -1951,6 +1951,8 @@ const suggestionList = useMemo(() => {
   });
 }, [inputValue, favorites, items]);
 
+const visibleSuggestionList = useMemo(() => suggestionList.filter((s) => !s.isInList), [suggestionList]);
+
 const closeSuggestionsSoon = () => {
   if (blurCloseTimerRef.current) window.clearTimeout(blurCloseTimerRef.current);
   blurCloseTimerRef.current = window.setTimeout(() => {
@@ -2033,8 +2035,9 @@ const hideSuggestion = (s: SuggestView) => {
     const existing = items.find((it) => normalizeItemName(it.name) === normalized);
 
     if (existing) {
-      await updateQty(existing.id, 1);
-      if (normalized) {
+      // Non-blocking update (important offline)
+      void updateQty(existing.id, 1).catch((err) => console.error("updateQty failed", err));
+if (normalized) {
         unhideSuggestionKey(normalized);
         hiddenSuggestRef.current.delete(normalized);
       }
@@ -2054,6 +2057,11 @@ const hideSuggestion = (s: SuggestView) => {
       isFavorite: false,
       createdAt: Date.now(),
     };
+
+    // Clear the add box immediately (especially important offline where Firestore writes may not resolve quickly)
+    setInputValue("");
+    setIsSuggestOpen(false);
+    setActiveSuggestIndex(-1);
 
     await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
     if (normalized) {
@@ -2112,9 +2120,9 @@ const hideSuggestion = (s: SuggestView) => {
     // For positive deltas (the common case), use an atomic Firestore increment to avoid stale-state bugs
     // when the user adds the same item multiple times quickly.
     if (delta > 0) {
-      await updateDoc(doc(db, "lists", list.id, "items", id), {
+      void updateDoc(doc(db, "lists", list.id, "items", id), {
         quantity: increment(delta),
-      });
+      }).catch((err) => console.error("updateDoc failed", err));
       return;
     }
 
@@ -2122,9 +2130,9 @@ const hideSuggestion = (s: SuggestView) => {
     const item = items.find((i) => i.id === id);
     if (!item) return;
 
-    await updateDoc(doc(db, "lists", list.id, "items", id), {
+    void updateDoc(doc(db, "lists", list.id, "items", id), {
       quantity: Math.max(1, item.quantity + delta),
-    });
+    }).catch((err) => console.error("updateDoc failed", err));
   };
 
   const deleteItem = async (id: string) => {
@@ -3698,36 +3706,36 @@ useEffect(() => {
 
                   if (e.key === "ArrowDown") {
                     e.preventDefault();
-                    if (suggestionList.length === 0) return;
+                    if (visibleSuggestionList.length === 0) return;
                     setActiveSuggestIndex((prev) => {
                       const next = prev + 1;
-                      return next >= suggestionList.length ? 0 : next;
+                      return next >= visibleSuggestionList.length ? 0 : next;
                     });
                     return;
                   }
 
                   if (e.key === "ArrowUp") {
                     e.preventDefault();
-                    if (suggestionList.length === 0) return;
+                    if (visibleSuggestionList.length === 0) return;
                     setActiveSuggestIndex((prev) => {
                       const next = prev - 1;
-                      return next < 0 ? suggestionList.length - 1 : next;
+                      return next < 0 ? visibleSuggestionList.length - 1 : next;
                     });
                     return;
                   }
 
                   if (e.key === "Tab") {
-                    if (suggestionList.length === 0) return;
+                    if (visibleSuggestionList.length === 0) return;
                     e.preventDefault();
-                    applySuggestion(suggestionList[Math.max(0, activeSuggestIndex >= 0 ? activeSuggestIndex : 0)]);
+                    applySuggestion(visibleSuggestionList[Math.max(0, activeSuggestIndex >= 0 ? activeSuggestIndex : 0)]);
                     return;
                   }
 
                   if (e.key === "Enter") {
-                    if (suggestionList.length > 0) {
+                    if (visibleSuggestionList.length > 0) {
                       e.preventDefault();
                       const idx = activeSuggestIndex >= 0 ? activeSuggestIndex : 0;
-                      applySuggestion(suggestionList[idx]);
+                      applySuggestion(visibleSuggestionList[idx]);
                       return;
                     }
                   }
@@ -3749,7 +3757,7 @@ useEffect(() => {
                 <Plus className="w-6 h-6" />
               </button>
 
-              {isSuggestOpen && inputValue.trim() && suggestionList.length > 0 ? (
+              {isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
   <div
     className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden"
     dir="rtl"
@@ -3762,7 +3770,7 @@ useEffect(() => {
       e.preventDefault();
     }}
   >
-    {suggestionList.map((s, idx) => (
+    {visibleSuggestionList.map((s, idx) => (
     <div
       key={s.key + "-" + idx}
       className={
