@@ -489,93 +489,57 @@ function mergeCompounds(tokens: string[]): string[] {
 
 
 
-const isClearListCommand = (t: string, lang: AppLang) => {
-  const rawText = (t || "").trim();
-  const text = rawText
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
+type AppLang = "he" | "en" | "ru" | "ar";
 
-  switch (lang) {
-    case "en": {
-      // Examples: "clear the list", "clear list", "delete all", "remove all items", "empty the list"
-      const enPatterns: RegExp[] = [
-        /^clear( the)? list$/,
-        /^empty( the)? list$/,
-        /\b(clear|empty)\b.*\b(list)\b/,
-        /\b(delete|remove)\b.*\b(all|everything|all items|items)\b/,
-        /\b(delete|remove)\b.*\b(list)\b/,
-      ];
-      return enPatterns.some((p) => p.test(text));
-    }
+// Clear list / delete all list items - supports calls with or without explicit lang
+function isClearListCommand(raw: string, lang?: AppLang) {
+  const s = (raw || "").trim().toLowerCase();
 
-    case "ru": {
-      // Examples: "очистить список", "удалить список", "удалить все"
-      const ruPatterns: RegExp[] = [
-        /^очист(ить)?\s+спис(ок|ка)$/,
-        /^удал(ить)?\s+спис(ок|ка)$/,
-        /^удал(ить)?\s+все$/,
-        /^очист(ить)?\s+все$/,
-        /\b(очист(ить)?|удал(ить)?|стер(еть)?|убер(и|ите))\b.*\b(спис(ок|ка))\b/,
-        /\b(удал(ить)?|очист(ить)?)\b.*\b(все)\b/,
-      ];
-      return ruPatterns.some((p) => p.test(text));
-    }
-
-    case "ar": {
-      // Examples: "امسح القائمة", "احذف القائمة", "احذف الكل", "امسح الكل"
-      const arPatterns: RegExp[] = [
-        /^(امسح|احذف)\s+(القائمة)$/,
-        /^(امسح|احذف)\s+(الكل)$/,
-        /\b(امسح|احذف|افرغ)\b.*\b(القائمة)\b/,
-        /\b(امسح|احذف)\b.*\b(الكل)\b/,
-      ];
-      return arPatterns.some((p) => p.test(text));
-    }
-
-    case "he":
-    default: {
-      const hePatterns: RegExp[] = [
-        /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/,
-        /^(מחק|רחק|מרחק)$/,
-      ];
-
+  const byLang = (l: AppLang) => {
+    if (l === "he") {
       return (
-        hePatterns.some((p) => p.test(text)) ||
-        (text.includes("מחק") && text.includes("הכל") && (text.includes("רשימה") || text.includes("הרשימה"))) ||
-        (text.includes("למחוק") && (text.includes("רשימה") || text.includes("הרשימה")))
+        /(מחק|נקה|אפס).{0,12}(רשימה|הרשימה|את הרשימה)/.test(s) ||
+        /מחק.{0,12}הכל/.test(s) ||
+        /נקה.{0,12}הכל/.test(s)
       );
     }
-  }
-};
+    if (l === "en") {
+      return (
+        /\b(clear|delete|reset)\b.{0,16}\b(list|the list)\b/.test(s) ||
+        /\bremove\b.{0,16}\b(all|everything)\b/.test(s)
+      );
+    }
+    if (l === "ru") {
+      return (
+        /\b(очисти|очистить|удали|удалить|сбрось|сбросить)\b.{0,16}\b(список|весь список)\b/.test(s)
+      );
+    }
+    // ar
+    return (
+      /\b(امسح|احذف|افرغ)\b.{0,16}\b(القائمة|قائمة)\b/.test(s) ||
+      /\b(امسح|احذف)\b.{0,16}\b(الكل|كلها)\b/.test(s)
+    );
+  };
+
+  // Prefer explicit lang, otherwise try all languages (keeps behavior robust)
+  if (lang) return byLang(lang);
+
+  return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
+}
+
 
 function formatDraftForReview(raw: string): string {
   const s = (raw || "").trim();
   if (!s) return raw;
-  // If user already has punctuation, keep it.
-  if (s.includes(",")) return raw;
 
-  // Don't reformat non-add commands.
-  const lower = s.toLowerCase();
-  if (isClearListCommand(s)) return raw;
-  if (
-    /^(מחק|למחוק|הסר|להסיר|נקה|לנקות|סמן|סמני|קניתי|קנינו|הגדל|הקטן|עדכן|שנה)\b/i.test(s) ||
-    /^(delete|remove|erase|clear|mark|bought|increase|decrease|update|edit)\b/i.test(lower) ||
-    /^(удали|удалить|очисти|очистить|отметь|купил|увелич|уменьш)\b/i.test(lower) ||
-    /^(احذف|حذف|امسح|مسح|علّم|اشترينا|اشتريت)\b/i.test(lower)
-  ) {
-    return raw;
-  }
+  // If user already has punctuation/new lines, keep it as-is (manual edit mode).
+  if (s.includes(",") || s.includes("\n")) return raw;
 
   const items = parseItemsFromText(s);
-  if (items.length >= 2) {
-    return items
-      .map((it) => (it.qty && it.qty > 1 ? `${it.name} x ${it.qty}` : it.name))
-      .join(", ");
-  }
 
-  return raw;
+  // Present as comma-separated list so the user can quickly edit before sending.
+  const parts = items.map((it) => (it.qty && it.qty > 1 ? `${it.qty} ${it.name}` : it.name));
+  return parts.join(", ");
 }
 
 
@@ -672,37 +636,57 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
  * Parse a phrase into multiple items.
  * Supports commas / וגם / ואז / אחר כך, and also no commas.
  */
-function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
-  const t0 = normalizeVoiceText(raw);
-  const t = normalize(t0);
-  if (!t) return [];
+function parseSingleItemFromSegment(segment: string): ItemParse | null {
+  const raw = (segment || "").trim();
+  if (!raw) return null;
 
-  const cleaned = t
-    .replace(/\s+וגם\s+/g, ",")
-    .replace(/\s+ואז\s+/g, ",")
-    .replace(/\s+אחר כך\s+/g, ",")
-    .replace(/\s+ואחר כך\s+/g, ",")
-    .replace(/\s+ו\s+/g, ",");
+  let tokens = mergeCompounds(raw.split(/\s+/).filter(Boolean));
+  if (!tokens.length) return null;
 
-  let segments = cleaned
-    .split(/,|\n/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-  // Fallback: אם המשתמש אמר רשימת פריטים רק עם רווחים (בלי פסיקים/מחברים),
-  // נפרק למילים כדי להציג "בדיקה לפני שליחה" עם פסיקים בין פריטים.
-  if (segments.length === 1 && /\s+/.test(segments[0])) {
-    const tokens = segments[0].split(/\s+/).filter(Boolean);
-    // נמנעים מלפרק ביטויים בני 2 מילים כמו "אבקת כביסה"
-    if (tokens.length >= 3) segments = tokens;
+  let qty = 1;
+
+  // Quantity at the beginning: "2 milk"
+  if (tokens.length >= 2 && isQtyToken(tokens[0])) {
+    qty = qtyFromToken(tokens[0]);
+    tokens = tokens.slice(1);
   }
 
-
-  const out: Array<{ name: string; qty: number }> = [];
-  for (const seg of segments) {
-    const parsed = parseSegmentTokensToItems(seg);
-    for (const p of parsed) out.push(p);
+  // Quantity at the end: "milk 2"
+  if (tokens.length >= 2 && isQtyToken(tokens[tokens.length - 1])) {
+    const tailQty = qtyFromToken(tokens[tokens.length - 1]);
+    if (qty === 1) qty = tailQty;
+    tokens = tokens.slice(0, -1);
   }
-  return out;
+
+  const name = tokens.join(" ").trim();
+  if (!name) return null;
+
+  return { name, qty };
+}
+
+function parseItemsFromText(raw: string): ItemParse[] {
+  const s = normalizeVoiceText(raw);
+  if (!s) return [];
+
+  const hasSeparators = s.includes(",") || s.includes("\n");
+
+  // If the user used commas/new lines, treat each segment as ONE item (multi-word supported).
+  if (hasSeparators) {
+    const segments = s
+      .split(/[\n,]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    const out: ItemParse[] = [];
+    for (const seg of segments) {
+      const it = parseSingleItemFromSegment(seg);
+      if (it) out.push(it);
+    }
+    return out;
+  }
+
+  // Otherwise (voice style: space-separated), split by tokens into multiple items.
+  return parseSegmentTokensToItems(s);
 }
 
 
@@ -926,8 +910,6 @@ function getAutocompleteSuggestions(opts: {
       };
     });
 }
-
-type AppLang = "he" | "en" | "ru" | "ar";
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
 
@@ -1528,8 +1510,6 @@ useEffect(() => {
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
   const voiceTimerRef = useRef<number | null>(null);
-
-  const formattedVoiceDraft = useMemo(() => formatDraftForReview(voiceDraft), [voiceDraft]);
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
   const undoToastTimerRef = useRef<number | null>(null);
@@ -4347,12 +4327,6 @@ useEffect(() => {
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
               />
-
-              {formattedVoiceDraft ? (
-                <div className="text-right text-sm font-bold text-slate-500 break-words">
-                  {formattedVoiceDraft}
-                </div>
-              ) : null}
 
               <div className="flex gap-3 pt-2">
                 <button
