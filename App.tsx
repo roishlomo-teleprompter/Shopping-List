@@ -489,6 +489,96 @@ function mergeCompounds(tokens: string[]): string[] {
 
 
 
+const isClearListCommand = (t: string, lang: AppLang) => {
+  const rawText = (t || "").trim();
+  const text = rawText
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  switch (lang) {
+    case "en": {
+      // Examples: "clear the list", "clear list", "delete all", "remove all items", "empty the list"
+      const enPatterns: RegExp[] = [
+        /^clear( the)? list$/,
+        /^empty( the)? list$/,
+        /\b(clear|empty)\b.*\b(list)\b/,
+        /\b(delete|remove)\b.*\b(all|everything|all items|items)\b/,
+        /\b(delete|remove)\b.*\b(list)\b/,
+      ];
+      return enPatterns.some((p) => p.test(text));
+    }
+
+    case "ru": {
+      // Examples: "очистить список", "удалить список", "удалить все"
+      const ruPatterns: RegExp[] = [
+        /^очист(ить)?\s+спис(ок|ка)$/,
+        /^удал(ить)?\s+спис(ок|ка)$/,
+        /^удал(ить)?\s+все$/,
+        /^очист(ить)?\s+все$/,
+        /\b(очист(ить)?|удал(ить)?|стер(еть)?|убер(и|ите))\b.*\b(спис(ок|ка))\b/,
+        /\b(удал(ить)?|очист(ить)?)\b.*\b(все)\b/,
+      ];
+      return ruPatterns.some((p) => p.test(text));
+    }
+
+    case "ar": {
+      // Examples: "امسح القائمة", "احذف القائمة", "احذف الكل", "امسح الكل"
+      const arPatterns: RegExp[] = [
+        /^(امسح|احذف)\s+(القائمة)$/,
+        /^(امسح|احذف)\s+(الكل)$/,
+        /\b(امسح|احذف|افرغ)\b.*\b(القائمة)\b/,
+        /\b(امسح|احذف)\b.*\b(الكل)\b/,
+      ];
+      return arPatterns.some((p) => p.test(text));
+    }
+
+    case "he":
+    default: {
+      const hePatterns: RegExp[] = [
+        /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/,
+        /^(מחק|רחק|מרחק)$/,
+      ];
+
+      return (
+        hePatterns.some((p) => p.test(text)) ||
+        (text.includes("מחק") && text.includes("הכל") && (text.includes("רשימה") || text.includes("הרשימה"))) ||
+        (text.includes("למחוק") && (text.includes("רשימה") || text.includes("הרשימה")))
+      );
+    }
+  }
+};
+
+function formatDraftForReview(raw: string): string {
+  const s = (raw || "").trim();
+  if (!s) return raw;
+  // If user already has punctuation, keep it.
+  if (s.includes(",")) return raw;
+
+  // Don't reformat non-add commands.
+  const lower = s.toLowerCase();
+  if (isClearListCommand(s)) return raw;
+  if (
+    /^(מחק|למחוק|הסר|להסיר|נקה|לנקות|סמן|סמני|קניתי|קנינו|הגדל|הקטן|עדכן|שנה)\b/i.test(s) ||
+    /^(delete|remove|erase|clear|mark|bought|increase|decrease|update|edit)\b/i.test(lower) ||
+    /^(удали|удалить|очисти|очистить|отметь|купил|увелич|уменьш)\b/i.test(lower) ||
+    /^(احذف|حذف|امسح|مسح|علّم|اشترينا|اشتريت)\b/i.test(lower)
+  ) {
+    return raw;
+  }
+
+  const items = parseItemsFromText(s);
+  if (items.length >= 2) {
+    return items
+      .map((it) => (it.qty && it.qty > 1 ? `${it.name} x ${it.qty}` : it.name))
+      .join(", ");
+  }
+
+  return raw;
+}
+
+
 /**
  * Token-scan parser that handles:
  * - "ביצים חלב עגבניה" -> 3 items
@@ -594,10 +684,18 @@ function parseItemsFromText(raw: string): Array<{ name: string; qty: number }> {
     .replace(/\s+ואחר כך\s+/g, ",")
     .replace(/\s+ו\s+/g, ",");
 
-  const segments = cleaned
+  let segments = cleaned
     .split(/,|\n/)
     .map((s) => s.trim())
     .filter(Boolean);
+  // Fallback: אם המשתמש אמר רשימת פריטים רק עם רווחים (בלי פסיקים/מחברים),
+  // נפרק למילים כדי להציג "בדיקה לפני שליחה" עם פסיקים בין פריטים.
+  if (segments.length === 1 && /\s+/.test(segments[0])) {
+    const tokens = segments[0].split(/\s+/).filter(Boolean);
+    // נמנעים מלפרק ביטויים בני 2 מילים כמו "אבקת כביסה"
+    if (tokens.length >= 3) segments = tokens;
+  }
+
 
   const out: Array<{ name: string; qty: number }> = [];
   for (const seg of segments) {
@@ -847,6 +945,12 @@ const reminderI18n: Record<string, {
   eventDetails: string;
 }> = {
   he: {
+  "__toast_no_internet__": "אין חיבור לאינטרנט",
+  "__toast_online_back__": "חיבור לרשת חזר",
+  "STATUS_ONLINE": "מחובר",
+  "STATUS_OFFLINE": "לא מחובר",
+    "לא מחובר": "לא מחובר",
+    "מחובר": "מחובר",
     reminderTitle: "תזכורת לביצוע קניות",
     scheduleTitle: "תזמון קניות",
     addToCalendar: "נוסיף תזכורת ביומן (בלי פריטי הרשימה)",
@@ -857,8 +961,17 @@ const reminderI18n: Record<string, {
     cancel: "ביטול",
     eventTitle: "תזכורת לביצוע קניות",
     eventDetails: "תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות",
+    "אין חיבור לאינטרנט": "אין חיבור לאינטרנט",
+    "אין חיבור אינטרנט": "אין חיבור אינטרנט",
+    "חיבור לרשת חזר": "החיבור חזר",
+    "זיהוי קולי דורש חיבור לאינטרנט": "זיהוי קולי דורש חיבור לאינטרנט",
+    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.",
   },
   en: {
+  "__toast_no_internet__": "No internet connection",
+  "__toast_online_back__": "Back online",
+    "לא מחובר": "Offline",
+    "מחובר": "Online",
     reminderTitle: "Shopping Reminder",
     scheduleTitle: "Schedule Shopping",
     addToCalendar: "We'll add a calendar reminder (without list items)",
@@ -869,8 +982,17 @@ const reminderI18n: Record<string, {
     cancel: "Cancel",
     eventTitle: "Shopping Reminder",
     eventDetails: "Shopping reminder - open your shopping list app",
+    "אין חיבור לאינטרנט": "No internet connection",
+    "אין חיבור אינטרנט": "No internet connection",
+    "חיבור לרשת חזר": "Connection restored",
+    "זיהוי קולי דורש חיבור לאינטרנט": "Voice input requires an internet connection",
+    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "Microphone permission is required. Please allow it and try again.",
   },
   ru: {
+  "__toast_no_internet__": "Нет подключения к интернету",
+  "__toast_online_back__": "Снова онлайн",
+    "לא מחובר": "Офлайн",
+    "מחובר": "Онлайн",
     reminderTitle: "Напоминание о покупках",
     scheduleTitle: "Запланировать покупки",
     addToCalendar: "Добавим напоминание в календарь (без позиций списка)",
@@ -881,8 +1003,17 @@ const reminderI18n: Record<string, {
     cancel: "Отмена",
     eventTitle: "Напоминание о покупках",
     eventDetails: "Напоминание о покупках - откройте приложение списка покупок",
+    "אין חיבור לאינטרנט": "Нет подключения к интернету",
+    "אין חיבור אינטרנט": "Нет подключения к интернету",
+    "חיבור לרשת חזר": "Подключение восстановлено",
+    "זיהוי קולי דורש חיבור לאינטרנט": "Голосовой ввод требует подключения к интернету",
+    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "Нужен доступ к микрофону. Разрешите и попробуйте снова.",
   },
   ar: {
+  "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
+  "__toast_online_back__": "تم الاتصال بالإنترنت",
+    "לא מחובר": "غير متصل",
+    "מחובר": "متصل",
     reminderTitle: "تذكير بالتسوق",
     scheduleTitle: "جدولة التسوق",
     addToCalendar: "سنضيف تذكيرًا في التقويم (بدون عناصر القائمة)",
@@ -893,6 +1024,11 @@ const reminderI18n: Record<string, {
     cancel: "إلغاء",
     eventTitle: "تذكير بالتسوق",
     eventDetails: "تذكير بالتسوق - افتح تطبيق قائمة التسوق",
+    "אין חיבור לאינטרנט": "لا يوجد اتصال بالإنترنت",
+    "אין חיבור אינטרנט": "لا يوجد اتصال بالإنترنت",
+    "חיבור לרשת חזר": "تمت استعادة الاتصال",
+    "זיהוי קולי דורש חיבור לאינטרנט": "الإدخال الصوتي يتطلب اتصالاً بالإنترنت",
+    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "يلزم إذن الميكروفون. يرجى السماح ثم المحاولة مرة أخرى.",
   },
 };
 
@@ -918,6 +1054,11 @@ const SPEECH_LANG_BY_APP_LANG: Record<AppLang, string> = {
 
 const I18N: Record<AppLang, Record<string, string>> = {
   he: {
+    "__toast_no_internet__": "אין חיבור לאינטרנט",
+    "__toast_online_back__": "חיבור לרשת חזר",
+
+    "מחובר": "מחובר",
+    "לא מחובר": "לא מחובר",
     "הרשימה ריקה": "הרשימה ריקה",
     "התחבר עם גוגל": "התחבר עם גוגל",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
@@ -967,6 +1108,11 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
   },
   en: {
+    "__toast_no_internet__": "No internet connection",
+    "__toast_online_back__": "Back online",
+
+    "מחובר": "Online",
+    "לא מחובר": "Offline",
     "הרשימה ריקה": "The list is empty",
     "התחבר עם גוגל": "Sign in with Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "To use the list and invite friends, please sign in with Google.",
@@ -1037,6 +1183,11 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוצע": "Done",
   },
   ru: {
+    "__toast_no_internet__": "Нет подключения к интернету",
+    "__toast_online_back__": "Снова онлайн",
+
+    "מחובר": "Онлайн",
+    "לא מחובר": "Офлайн",
     "הרשימה ריקה": "Список пуст",
     "התחבר עם גוגל": "Войти через Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "Чтобы пользоваться списком и приглашать друзей, войдите через Google.",
@@ -1107,6 +1258,11 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוצע": "Готово",
   },
   ar: {
+    "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
+    "__toast_online_back__": "تم الاتصال بالإنترنت من جديد",
+
+    "מחובר": "متصل",
+    "לא מחובר": "غير متصل",
     "הרשימה ריקה": "القائمة فارغة",
     "התחבר עם גוגל": "تسجيل الدخول عبر Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "لاستخدام القائمة ودعوة الأصدقاء، يرجى تسجيل الدخول عبر Google.",
@@ -1219,10 +1375,34 @@ useEffect(() => {
 
 const t = useMemo(() => {
   const dict = I18N[lang] || I18N.he;
-  return (key: string) => dict[key] ?? I18N.he[key] ?? key;
+  return (key: string) => {
+    const k = String(key ?? "").trim();
+    return dict[k] ?? I18N.he[k] ?? k;
+  };
 }, [lang]);
 
 const speechLang = useMemo(() => SPEECH_LANG_BY_APP_LANG[lang] ?? "he-IL", [lang]);
+
+const [isOnline, setIsOnline] = useState<boolean>(() => {
+  try {
+    return typeof navigator !== "undefined" ? !!navigator.onLine : true;
+  } catch {
+    return true;
+  }
+});
+
+const onlineToastInitRef = useRef(false);
+
+useEffect(() => {
+  const onOnline = () => setIsOnline(true);
+  const onOffline = () => setIsOnline(false);
+  window.addEventListener("online", onOnline);
+  window.addEventListener("offline", onOffline);
+  return () => {
+    window.removeEventListener("online", onOnline);
+    window.removeEventListener("offline", onOffline);
+  };
+}, []);
 
 const [langMenuOpen, setLangMenuOpen] = useState(false);
 const langMenuRef = useRef<HTMLDivElement | null>(null);
@@ -1315,111 +1495,39 @@ const [listLoading, setListLoading] = useState(false);
   const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
   const [toast, setToast] = useState<string | null>(null);
+
+// Keep the last toast as a translation key when relevant, so it can re-render when language changes.
+const toastKeyRef = useRef<string | null>(null);
+const showToastKey = useCallback(
+  (key: string) => {
+    const k = String(key ?? "").trim();
+    toastKeyRef.current = k;
+    setToast(t(k));
+  },
+  [t]
+);
+
+
+useEffect(() => {
+  if (!onlineToastInitRef.current) {
+    onlineToastInitRef.current = true;
+    return;
+  }
+  showToastKey(isOnline ? "__toast_online_back__" : "__toast_no_internet__");
+}, [isOnline, showToastKey]);
+
+// If the user changes language while a translated toast is visible, re-translate it.
+useEffect(() => {
+  if (!toastKeyRef.current) return;
+  setToast(t(toastKeyRef.current));
+}, [t]);
+
   // Voice (tap-to-record) UI state
   type VoiceUiState = "idle" | "recording" | "processing" | "review";
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
-  const [voiceReviewText, setVoiceReviewText] = useState<string>("");
   const voiceTimerRef = useRef<number | null>(null);
-
-
-  // Voice review - show commas between words (for clarity) without affecting saved items.
-  // We distinguish:
-  // - Item separators: ", " (comma + normal space)
-  // - Word separators (preview only): ",\u00A0" (comma + NBSP)
-  const WORD_COMMA = ",\u00A0";
-
-  const isQuantityToken = (s: string) => /^\d+$/.test(s);
-
-  const shouldKeepAsCompound = (a: string, b: string) => {
-    const x = (a || "").trim();
-    const y = (b || "").trim();
-    const pair = (x + " " + y).toLowerCase();
-    // Hebrew compounds + common ASR variants
-    const hePairs = new Set([
-      "נייר טואלט",
-      "נייר טואלטים",
-      "נייר טואליט",
-      "נייר טואלט",
-      "נייר טואלט",
-    ]);
-    // Voice command-like phrases (keep without comma)
-    const cmdPairs = new Set([
-      "מחק רשימה",
-      "נקה רשימה",
-      "מרחק רשימה",
-      "אחד רשימה",
-      "רק נשימה",
-    ]);
-    // English/Russian/Arabic equivalents (keep without comma)
-    const otherPairs = new Set([
-      "clear list",
-      "delete list",
-      "очистить список",
-      "удалить список",
-      "امسح القائمة",
-      "امسح لائحة",
-      "امسح قائمة",
-    ]);
-    return hePairs.has(pair) || cmdPairs.has(pair) || otherPairs.has(pair);
-  };
-
-  const commaifyItemForReview = (itemText: string) => {
-    const raw = (itemText || "").trim().replace(/\s+/g, " ");
-    if (!raw) return "";
-    const parts = raw.split(" ").filter(Boolean);
-    if (parts.length <= 1) return raw;
-
-    const out: string[] = [];
-    for (let i = 0; i < parts.length; i++) {
-      const cur = parts[i];
-      const next = parts[i + 1];
-
-      // Quantity (e.g., "2 מלפפונים") - keep as "2 מלפפונים"
-      if (i == 0 && isQuantityToken(cur) && next) {
-        out.push(cur + " " + next);
-        i += 1;
-        continue;
-      }
-
-      // Keep known compounds without a comma between them
-      if (next && shouldKeepAsCompound(cur, next)) {
-        out.push(cur + " " + next);
-        i += 1;
-        continue;
-      }
-
-      out.push(cur);
-    }
-
-    // Now insert preview commas between tokens/groups
-    return out.join(WORD_COMMA);
-  };
-
-  const formatVoiceReviewText = (draft: string) => {
-    const s = (draft || "").trim();
-    if (!s) return "";
-    const items = s
-      .split(",")
-      .map((x) => x.trim())
-      .filter(Boolean)
-      .map(commaifyItemForReview);
-
-    return items.join(", ");
-  };
-
-  const parseVoiceReviewTextToDraft = (review: string) => {
-    const s = (review || "").trim();
-    if (!s) return "";
-    // Split items on ", " only (comma + normal space). Word commas use NBSP.
-    const items = s
-      .split(", ")
-      .map((x) => x.replaceAll(WORD_COMMA, " ").replace(/\s+/g, " ").trim())
-      .filter(Boolean);
-
-    return items.join(", ");
-  };
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
   const undoToastTimerRef = useRef<number | null>(null);
@@ -1474,7 +1582,6 @@ const [listLoading, setListLoading] = useState(false);
   const swipeConsumedRef = useRef(false);
   const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
   const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
-  const [swipeHintMode, setSwipeHintMode] = useState(false);
   const swipeVibratedRef = useRef<Record<string, boolean>>({});
 
   const SWIPE_THRESHOLD_PX = 70;
@@ -1528,7 +1635,7 @@ const [listLoading, setListLoading] = useState(false);
     setSwipeUi({ id, dx });
   };
 
-  const onSwipePointerUp = (id: string) => async (e: React.PointerEvent) => {
+  const onSwipePointerUp = (id: string) => (e: React.PointerEvent) => {
     const s = swipeStartRef.current;
     const last = swipeLastRef.current;
 
@@ -1567,7 +1674,7 @@ const [listLoading, setListLoading] = useState(false);
         deleteItemWithFlash(id); // swipe right
       } else {
         if (!favoritesById.has(id)) {
-          await toggleFavorite(id); // swipe left (add only)
+          toggleFavorite(id); // swipe left (add only)
         }
       }
     } finally {
@@ -1651,7 +1758,7 @@ const [listLoading, setListLoading] = useState(false);
       deleteItemWithFlash(id);
     } else {
       if (!favoritesById.has(id)) {
-        await toggleFavorite(id);
+        toggleFavorite(id);
       }
     }
 
@@ -1823,97 +1930,6 @@ const activeItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
   );
-
-  // ---------------------------
-  // Swipe hint: demonstrate swipe on the relevant item
-  // - If active list goes from 0 -> 1: hint on that single item (after items settle)
-  // - If multiple items were added in one action (bulk): hint on the newest (last added)
-  // Note: do NOT run on initial hydration/page refresh. Only after real adds in-session.
-  const swipeHintPrevCountRef = useRef<number>(0);
-  const swipeHintHydratedRef = useRef(false);
-  const swipeHintPrevIdsRef = useRef<Set<string>>(new Set());
-  const swipeHintCandidateIdRef = useRef<string | null>(null);
-  const swipeHintDebounceRef = useRef<number | null>(null);
-
-  const runSwipeHintOnItem = useCallback((itemId: string) => {
-    const dx = 62; // ~ icon reveal
-
-    setSwipeHintMode(true);
-
-    window.setTimeout(() => {
-      // Right
-      setSwipeUi({ id: itemId, dx });
-
-      // Center
-      window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 450);
-
-      // Left
-      window.setTimeout(() => setSwipeUi({ id: itemId, dx: -dx }), 850);
-
-      // Center
-      window.setTimeout(() => setSwipeUi({ id: itemId, dx: 0 }), 1250);
-
-      // End
-      window.setTimeout(() => {
-        setSwipeHintMode(false);
-        setSwipeUi({ id: null, dx: 0 });
-      }, 1500);
-    }, 200);
-  }, []);
-
-  useEffect(() => {
-    const curr = activeItems.length;
-    const prev = swipeHintPrevCountRef.current;
-
-    const currIds = new Set(activeItems.map((i) => i.id));
-
-    // First non-empty snapshot after mount should NOT trigger a hint (prevents "hint on refresh")
-    if (!swipeHintHydratedRef.current) {
-      swipeHintHydratedRef.current = true;
-      swipeHintPrevIdsRef.current = currIds;
-      swipeHintPrevCountRef.current = curr;
-      return;
-    }
-
-    const prevIds = swipeHintPrevIdsRef.current;
-    const added = activeItems.filter((i) => !prevIds.has(i.id));
-
-    const shouldHint = added.length > 0;
-
-    if (shouldHint && added.length > 0) {
-      // Pick newest among the newly added items (createdAt), fallback to first in array
-      const target = added.reduce((best, it) => {
-        const b = (best as any)?.createdAt ?? 0;
-        const c = (it as any)?.createdAt ?? 0;
-        return c >= b ? it : best;
-      }, added[0]);
-
-      swipeHintCandidateIdRef.current = target.id;
-
-      // Debounce: if items keep arriving (bulk add), wait until it "settles" then run once on last added
-      if (swipeHintDebounceRef.current) window.clearTimeout(swipeHintDebounceRef.current);
-      swipeHintDebounceRef.current = window.setTimeout(() => {
-        const id = swipeHintCandidateIdRef.current;
-        if (!id) return;
-
-        const el = document.getElementById(`swipe-item-${id}`);
-        if (el) el.scrollIntoView({ behavior: "smooth", block: "center" });
-        window.setTimeout(() => runSwipeHintOnItem(id), 220);
-
-        swipeHintCandidateIdRef.current = null;
-      }, 550);
-    }
-
-    swipeHintPrevIdsRef.current = currIds;
-    swipeHintPrevCountRef.current = curr;
-
-    return () => {
-      if (swipeHintDebounceRef.current) {
-        window.clearTimeout(swipeHintDebounceRef.current);
-        swipeHintDebounceRef.current = null;
-      }
-    };
-  }, [activeItems, runSwipeHintOnItem]);
 
 
 
@@ -2138,31 +2154,40 @@ const hideSuggestion = (s: SuggestView) => {
     if (!list?.id) return;
     if (deleteFlashIds.has(id)) return;
 
+    // Visual cue first
     setDeleteFlashIds((prev) => {
       const next = new Set(prev);
       next.add(id);
       return next;
     });
 
+    // Optimistic UI: remove from list quickly (even offline)
     window.setTimeout(() => {
-      void deleteItem(id).finally(() => {
-        setDeleteFlashIds((prev) => {
-          const next = new Set(prev);
-          next.delete(id);
-          return next;
-        });
+      setItems((prev) => prev.filter((it) => it.id !== id));
+    }, 80);
+
+    // Firestore delete in background
+    void deleteItem(id).catch((e) => console.warn("delete failed", e));
+
+    // Clear flash
+    window.setTimeout(() => {
+      setDeleteFlashIds((prev) => {
+        const next = new Set(prev);
+        next.delete(id);
+        return next;
       });
-    }, 240);
+    }, 260);
   };
 
-  const toggleFavorite = async (itemId: string) => {
+  const toggleFavorite = (itemId: string) => {
     if (!list?.id) return;
 
     const favRef = doc(db, "lists", list.id, "favorites", itemId);
 
-    // If already favorite by id - remove
+    // Remove favorite (optimistic)
     if (favoritesById.has(itemId)) {
-      await deleteDoc(favRef);
+      setFavorites((prev) => prev.filter((f) => f.id !== itemId));
+      void deleteDoc(favRef).catch((e) => console.warn("favorite remove failed", e));
       return;
     }
 
@@ -2173,12 +2198,17 @@ const hideSuggestion = (s: SuggestView) => {
     // Prevent duplicates by normalized name (even if different itemId)
     if (key) {
       const existsByName = favorites.some((f) => normalize(f.name) === key);
-      if (existsByName) {
-        return;
-      }
+      if (existsByName) return;
     }
 
-    await setDoc(favRef, { name: itemName, createdAt: Date.now() });
+    const createdAt = Date.now();
+
+    // Add favorite (optimistic)
+    setFavorites((prev) => {
+      // Avoid duplicate id if it already exists
+      if (prev.some((f) => f.id === itemId)) return prev;
+      return [{ id: itemId, name: itemName, createdAt }, ...prev];
+    });
 
     // Visual cue: item was added to favorites (no text)
     setFavoriteFlashIds((prev) => {
@@ -2193,6 +2223,11 @@ const hideSuggestion = (s: SuggestView) => {
         return next;
       });
     }, 260);
+
+    // Write in background (offline-friendly)
+    void setDoc(favRef, { name: itemName, createdAt }, { merge: true }).catch((e) =>
+      console.warn("favorite add failed", e)
+    );
   };
 
   const removeFavorite = async (favId: string) => {
@@ -2648,66 +2683,7 @@ ${footer}`;
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
-const isClearListCommand = (t: string, lang: AppLang) => {
-  const rawText = (t || "").trim();
-  const text = rawText
-    .toLowerCase()
-    .replace(/[^\p{L}\p{N}\s]/gu, " ")
-    .replace(/\s+/g, " ")
-    .trim();
 
-  switch (lang) {
-    case "en": {
-      // Examples: "clear the list", "clear list", "delete all", "remove all items", "empty the list"
-      const enPatterns: RegExp[] = [
-        /^clear( the)? list$/,
-        /^empty( the)? list$/,
-        /\b(clear|empty)\b.*\b(list)\b/,
-        /\b(delete|remove)\b.*\b(all|everything|all items|items)\b/,
-        /\b(delete|remove)\b.*\b(list)\b/,
-      ];
-      return enPatterns.some((p) => p.test(text));
-    }
-
-    case "ru": {
-      // Examples: "очистить список", "удалить список", "удалить все"
-      const ruPatterns: RegExp[] = [
-        /^очист(ить)?\s+спис(ок|ка)$/,
-        /^удал(ить)?\s+спис(ок|ка)$/,
-        /^удал(ить)?\s+все$/,
-        /^очист(ить)?\s+все$/,
-        /\b(очист(ить)?|удал(ить)?|стер(еть)?|убер(и|ите))\b.*\b(спис(ок|ка))\b/,
-        /\b(удал(ить)?|очист(ить)?)\b.*\b(все)\b/,
-      ];
-      return ruPatterns.some((p) => p.test(text));
-    }
-
-    case "ar": {
-      // Examples: "امسح القائمة", "احذف القائمة", "احذف الكل", "امسح الكل"
-      const arPatterns: RegExp[] = [
-        /^(امسح|احذف)\s+(القائمة)$/,
-        /^(امسح|احذف)\s+(الكل)$/,
-        /\b(امسح|احذف|افرغ)\b.*\b(القائمة)\b/,
-        /\b(امسح|احذف)\b.*\b(الكل)\b/,
-      ];
-      return arPatterns.some((p) => p.test(text));
-    }
-
-    case "he":
-    default: {
-      const hePatterns: RegExp[] = [
-        /(מחק|תמחק|תמחוק|למחוק|נקה|תנקה|תרוקן|רוקן|מרחק|רחק)\s*(לי\s*)?(את\s*)?(כל\s*)?(הרשימה|רשימה)?/,
-        /^(מחק|רחק|מרחק)$/,
-      ];
-
-      return (
-        hePatterns.some((p) => p.test(text)) ||
-        (text.includes("מחק") && text.includes("הכל") && (text.includes("רשימה") || text.includes("הרשימה"))) ||
-        (text.includes("למחוק") && (text.includes("רשימה") || text.includes("הרשימה")))
-      );
-    }
-  }
-};
 
 
 
@@ -2959,6 +2935,13 @@ const isClearListCommand = (t: string, lang: AppLang) => {
   };
 
   const startTapListening = async () => {
+    if (!isOnline) {
+      setToast(t("__toast_no_internet__"));
+      setVoiceUi("idle");
+      setIsListening(false);
+      return;
+    }
+
     const SR = ensureSpeechRecognition();
     if (!SR) {
       alert(t("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge."));
@@ -3074,9 +3057,11 @@ const isClearListCommand = (t: string, lang: AppLang) => {
       tapActiveRef.current = false;
 
       if (err === "not-allowed" || err === "service-not-allowed") {
-        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+        alert(t("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב."));
       } else if (err === "audio-capture") {
         setToast(t("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)"));
+      } else if (err === "network" || err === "network-error" || !isOnline) {
+        setToast(t("זיהוי קולי דורש חיבור לאינטרנט"));
       } else {
         setToast(`שגיאת מיקרופון: ${err || "unknown"}`);
       }
@@ -3189,13 +3174,12 @@ const finalText = mergeChunks(chunks);
       return;
     }
 
-    setVoiceDraft(combined);
-    setVoiceReviewText(formatVoiceReviewText(combined));
+    setVoiceDraft(formatDraftForReview(combined));
     setVoiceUi("review");
   };
 
   const confirmVoiceDraft = async () => {
-    const draft = parseVoiceReviewTextToDraft(voiceReviewText).trim();
+    const draft = voiceDraft.trim();
     if (!draft) {
       setVoiceUi("idle");
       return;
@@ -3208,7 +3192,6 @@ const finalText = mergeChunks(chunks);
 
       setVoiceUi("idle");
       setVoiceDraft("");
-      setVoiceReviewText("");
 
       // Undo (3 seconds) - only when we have reversible actions (add items path)
       if (actions.length > 0) {
@@ -3243,7 +3226,6 @@ const finalText = mergeChunks(chunks);
 
   const cancelVoiceDraft = () => {
     setVoiceDraft("");
-    setVoiceReviewText("");
     setVoiceUi("idle");
   };
 
@@ -3397,9 +3379,11 @@ const finalText = mergeChunks(chunks);
       holdActiveRef.current = false;
 
       if (err === "not-allowed" || err === "service-not-allowed") {
-        alert("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.");
+        alert(t("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב."));
       } else if (err === "audio-capture") {
         setToast(t("המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)"));
+      } else if (err === "network" || err === "network-error" || !isOnline) {
+        setToast(t("זיהוי קולי דורש חיבור לאינטרנט"));
       } else {
         setToast(`שגיאת מיקרופון: ${err || "unknown"}`);
       }
@@ -3638,6 +3622,7 @@ useEffect(() => {
     <div className="flex items-center gap-3">
 
       <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List</span>
+      <span className={`text-[11px] px-2 py-1 rounded-full border whitespace-nowrap ${isOnline ? "border-emerald-200 text-emerald-700 bg-emerald-50/70" : "border-rose-200 text-rose-700 bg-rose-50/70"}`}>{isOnline ? t("מחובר") : t("לא מחובר")}</span>
 
       <div className="relative inline-flex items-center" ref={shareMenuRef}>
         <button
@@ -3854,7 +3839,6 @@ useEffect(() => {
                   {activeItems.map((item) => (
                     <div
                       key={item.id}
-                      id={`swipe-item-${item.id}`}
                       className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
                         leavingIds.has(item.id)
                           ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
@@ -3947,7 +3931,7 @@ useEffect(() => {
                         className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
                         style={{
                           transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? (swipeHintMode ? "transform 360ms ease-in-out" : "none") : "transform 120ms ease-out",
+                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
                         }}
                       >
                         <div
@@ -4355,8 +4339,8 @@ useEffect(() => {
               </div>
 
               <textarea
-                value={voiceReviewText}
-                onChange={(e) => setVoiceReviewText(e.target.value)}
+                value={voiceDraft}
+                onChange={(e) => setVoiceDraft(e.target.value)}
                 rows={3}
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
