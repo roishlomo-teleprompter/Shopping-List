@@ -1529,6 +1529,8 @@ useEffect(() => {
   const [voiceDraft, setVoiceDraft] = useState<string>("");
   const voiceTimerRef = useRef<number | null>(null);
 
+  const formattedVoiceDraft = useMemo(() => formatDraftForReview(voiceDraft), [voiceDraft]);
+
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
   const undoToastTimerRef = useRef<number | null>(null);
 
@@ -4345,6 +4347,12 @@ useEffect(() => {
                 className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
                 placeholder={t(t("מה אמרת?"))}
               />
+
+              {formattedVoiceDraft ? (
+                <div className="text-right text-sm font-bold text-slate-500 break-words">
+                  {formattedVoiceDraft}
+                </div>
+              ) : null}
 
               <div className="flex gap-3 pt-2">
                 <button
