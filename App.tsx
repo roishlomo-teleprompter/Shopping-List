@@ -496,6 +496,11 @@ type AppLang = "he" | "en" | "ru" | "ar";
 function isClearListCommand(raw: string, lang?: AppLang) {
   const s = (raw || "").trim().toLowerCase();
 
+  // Allow single-word commands (per product requirement)
+  if (s === "רשימה" || s === "הרשימה" || s === "list" || s === "список" || s === "القائمة" || s === "قائمة") {
+    return true;
+  }
+
   const byLang = (l: AppLang) => {
     if (l === "he") {
       return (
@@ -532,6 +537,9 @@ function isClearListCommand(raw: string, lang?: AppLang) {
 function formatDraftForReview(raw: string): string {
   const s = (raw || "").trim();
   if (!s) return raw;
+
+  // If this is a clear-list command, keep it exactly as spoken (do not add commas).
+  if (isClearListCommand(s)) return raw;
 
   // If user already has punctuation/new lines, keep it as-is (manual edit mode).
   if (s.includes(",") || s.includes("\n")) return raw;
@@ -4280,81 +4288,69 @@ const finalText = mergeChunks(chunks);
       <div className="fixed bottom-0 left-0 right-0 z-50">
         <div className="max-w-md mx-auto px-4 pb-3">
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
-  <div className="flex items-center justify-between px-8 py-3">
-    {/* Favorites */}
-    <button
-      onClick={() => setActiveTab("favorites")}
-      className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-        activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
-      }`}
-      title={t("מועדפים")}
-    >
-      <Star
-        className={`w-7 h-7 ${
-          activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"
-        }`}
-      />
-      {t("מועדפים")}
-    </button>
+            <div className="relative flex items-center justify-between px-6 py-2">
+              {/* List */}
+              <button
+                onClick={() => setActiveTab("list")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title={t("רשימה")}
+              >
+                <ListChecks className="w-7 h-7" />
+                {t("רשימה")}
+              </button>
 
-    {/* Voice button (tap-to-record) - centered between tabs */}
-    <button
-      onClick={(e) => {
-        e.preventDefault();
-        if (voiceUi === "processing" || voiceUi === "review") return;
-        if (voiceUi === "idle") startTapListening();
-        else if (voiceUi === "recording") stopTapListening();
-      }}
-      className={`flex flex-col items-center gap-2 ${
-        voiceUi === "processing" ? "opacity-60 pointer-events-none" : ""
-      }`}
-      title={
-        voiceUi === "recording"
-          ? t(t("לחץ לסיום"))
-          : voiceUi === "processing"
-          ? t(t("מעבד"))
-          : t(t("לחץ כדי לדבר"))
-      }
-    >
-      {voiceUi === "recording" ? (
-        <div className="px-3 py-1 rounded-full bg-black/80 text-white text-[12px] font-black flex items-center gap-2">
-          <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-          {t(t("מקליט"))} {formatMmSs(voiceSeconds)}
-        </div>
-      ) : (
-        <div className="h-6" />
-      )}
+              {/* Voice button (tap-to-record) */}
+              <div className="relative flex flex-col items-center justify-center">
+                {voiceUi === "recording" ? (
+                  <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/80 text-white text-[12px] font-black flex items-center gap-2 whitespace-nowrap">
+                    <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
+                    {t(t("מקליט"))} {formatMmSs(voiceSeconds)}
+                  </div>
+                ) : null}
 
-      <div
-        className={`w-16 h-16 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
-          voiceUi === "recording"
-            ? "bg-rose-500 text-white"
-            : "bg-indigo-600 text-white hover:bg-indigo-700"
-        }`}
-      >
-        {voiceUi === "processing" ? (
-          <Loader2 className="w-7 h-7 animate-spin" />
-        ) : voiceUi === "recording" ? (
-          <MicOff className="w-7 h-7" />
-        ) : (
-          <Mic className="w-7 h-7" />
-        )}
-      </div>
-    </button>
+                <button
+                  onClick={(e) => {
+                    e.preventDefault();
+                    if (voiceUi === "processing" || voiceUi === "review") return;
+                    if (voiceUi === "idle") startTapListening();
+                    else if (voiceUi === "recording") stopTapListening();
+                  }}
+                  className={`w-14 h-14 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
+                    voiceUi === "recording" ? "bg-rose-500 text-white" : "bg-indigo-600 text-white hover:bg-indigo-700"
+                  } ${voiceUi === "processing" ? "opacity-60 pointer-events-none" : ""}`}
+                  title={
+                    voiceUi === "recording"
+                      ? t(t("לחץ לסיום"))
+                      : voiceUi === "processing"
+                      ? t(t("מעבד"))
+                      : t(t("לחץ כדי לדבר"))
+                  }
+                >
+                  {voiceUi === "processing" ? (
+                    <Loader2 className="w-7 h-7 animate-spin" />
+                  ) : voiceUi === "recording" ? (
+                    <MicOff className="w-7 h-7" />
+                  ) : (
+                    <Mic className="w-7 h-7" />
+                  )}
+                </button>
+              </div>
 
-    {/* List */}
-    <button
-      onClick={() => setActiveTab("list")}
-      className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-        activeTab === "list" ? "text-indigo-600" : "text-slate-300"
-      }`}
-      title={t("רשימה")}
-    >
-      <ListChecks className="w-7 h-7" />
-      {t("רשימה")}
-    </button>
-  </div>
-</footer>
+              {/* Favorites */}
+              <button
+                onClick={() => setActiveTab("favorites")}
+                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
+                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
+                }`}
+                title={t("מועדפים")}
+              >
+                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
+                {t("מועדפים")}
+              </button>
+            </div>
+          </footer>
         </div>
       </div>
 
