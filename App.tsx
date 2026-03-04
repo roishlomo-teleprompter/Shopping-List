@@ -1089,7 +1089,9 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מה אמרת?": "מה אמרת?",
   
     "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
-  },
+
+    "צור תזכורת ביומן": "צור תזכורת ביומן",
+},
   en: {
     "__toast_no_internet__": "No internet connection",
     "__toast_online_back__": "Back online",
@@ -1164,7 +1166,9 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוטל": "Undone",
   
     "בוצע": "Done",
-  },
+
+    "צור תזכורת ביומן": "Create calendar reminder",
+},
   ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
     "__toast_online_back__": "Снова онлайн",
@@ -1239,7 +1243,9 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוטל": "Отменено",
   
     "בוצע": "Готово",
-  },
+
+    "צור תזכורת ביומן": "Создать напоминание в календаре",
+},
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
     "__toast_online_back__": "تم الاتصال بالإنترنت من جديد",
@@ -1314,7 +1320,9 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוטל": "تم التراجع",
   
     "בוצע": "تم",
-  },
+
+    "צור תזכורת ביומן": "إنشاء تذكير في التقويم",
+},
 };
 
 const getVoiceExamplesText = (lang: AppLang) => {
@@ -3736,6 +3744,19 @@ const finalText = mergeChunks(chunks);
             onClick={() => {
               setMoreMenuOpen(false);
               setMoreMenuView("main");
+              setShowCalendarModal(true);
+            }}
+            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <Calendar className="w-4 h-4 text-slate-500" />
+            <span className="font-semibold text-[15px] leading-none">{t("צור תזכורת ביומן")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              setMoreMenuView("main");
               setShowClearConfirm(true);
             }}
             className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
@@ -4271,25 +4292,6 @@ const finalText = mergeChunks(chunks);
                 {t("מועדפים")}
               </button>
 
-              <button
-                onClick={shareListWhatsApp}
-                className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  "text-slate-300"
-                }`}
-                title={t("וואטסאפ")}
-              >
-                <MessageCircle className="w-7 h-7" />
-                {t("וואטסאפ")}
-              </button>
-
-              <button
-                onClick={() => setShowCalendarModal(true)}
-                className={`flex flex-col items-center gap-1 text-[11px] font-black text-slate-300`}
-                title={t("יומן")}
-              >
-                <Calendar className="w-7 h-7" />
-                {t("יומן")}
-              </button>
 
               <button
                 onClick={() => setActiveTab("list")}
