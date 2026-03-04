@@ -18,6 +18,7 @@ import {
   Mic,
   MicOff,
   Calendar,
+  MoreVertical,
   Languages,
 } from "lucide-react";
 
@@ -1044,7 +1045,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה ריקה": "הרשימה ריקה",
     "התחבר עם גוגל": "התחבר עם גוגל",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
-    "הרשימה שלי חכמה": "רשימת הקניות שלי",
+    "הרשימה שלי חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
     "וואטסאפ": "וואטסאפ",
     "שפה": "שפה",
@@ -1386,8 +1387,12 @@ useEffect(() => {
   };
 }, []);
 
-const [langMenuOpen, setLangMenuOpen] = useState(false);
-const langMenuRef = useRef<HTMLDivElement | null>(null);
+const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const [moreMenuView, setMoreMenuView] = useState<"main" | "language">("main");
+  const appRootRef = useRef<HTMLDivElement | null>(null);
+  const moreBtnRef = useRef<HTMLButtonElement | null>(null);
+  const moreMenuElRef = useRef<HTMLDivElement | null>(null);
+  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number } | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
@@ -1449,7 +1454,68 @@ useEffect(() => {
   const [isCopied, setIsCopied] = useState(false);
   
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
-  const shareMenuRef = useRef<HTMLDivElement | null>(null);
+  const shareBtnRef = useRef<HTMLButtonElement | null>(null);
+  const shareMenuElRef = useRef<HTMLDivElement | null>(null);
+  const [shareMenuPos, setShareMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const openShareMenu = () => {
+  const r = shareBtnRef.current?.getBoundingClientRect();
+  const appRect = appRootRef.current?.getBoundingClientRect();
+
+  const menuW = 260;
+  const pad = 10;
+
+  // Position INSIDE the app container (not the viewport) so it never escapes the app bounds.
+  const top = r && appRect ? (r.bottom - appRect.top + 8) : 56;
+
+  // Share button is on the RIGHT - open the menu to the LEFT of the button.
+  const preferredLeft = r && appRect ? (r.right - appRect.left - menuW) : pad;
+  const maxLeft = Math.max(pad, (appRect?.width ?? window.innerWidth) - menuW - pad);
+  const left = Math.min(Math.max(preferredLeft, pad), maxLeft);
+
+  setMoreMenuOpen(false);
+  setMoreMenuView("main");
+  setShareMenuPos({ top, left });
+  setShareMenuOpen(true);
+};
+
+
+  const toggleShareMenu = () => {
+    if (shareMenuOpen) {
+      setShareMenuOpen(false);
+      return;
+    }
+    openShareMenu();
+  };
+
+  const openMoreMenu = () => {
+  const r = moreBtnRef.current?.getBoundingClientRect();
+  const appRect = appRootRef.current?.getBoundingClientRect();
+
+  const menuW = 220;
+  const pad = 10;
+
+  const top = r && appRect ? (r.bottom - appRect.top + 8) : 56;
+
+  // More button is on the LEFT - open aligned to the button's left edge (inside the app).
+  const preferredLeft = r && appRect ? (r.left - appRect.left) : pad;
+  const maxLeft = Math.max(pad, (appRect?.width ?? window.innerWidth) - menuW - pad);
+  const left = Math.min(Math.max(preferredLeft, pad), maxLeft);
+
+  setShareMenuOpen(false);
+  setMoreMenuPos({ top, left });
+  setMoreMenuOpen(true);
+};
+
+
+  const toggleMoreMenu = () => {
+    if (moreMenuOpen) {
+      setMoreMenuOpen(false);
+      setMoreMenuView("main");
+      return;
+    }
+    openMoreMenu();
+  };
+
 const [showClearConfirm, setShowClearConfirm] = useState(false);
 const [showCalendarModal, setShowCalendarModal] = useState(false);
   const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
@@ -1824,7 +1890,7 @@ useEffect(() => {
             const newListRef = doc(collection(db, "lists"));
             const newList: ShoppingList = {
               id: newListRef.id,
-              title: "הרשימה שלי",
+              title: "My Easy List",
               ownerUid: u.uid,
               sharedWith: [u.uid],
               createdAt: Date.now(),
@@ -2417,7 +2483,7 @@ const shareListWhatsApp = () => {
     (globalThis as any).Treminder = tReminder;
 
     const defaultTitleByLang: Record<AppLang, string> = {
-      he: "הרשימה שלי",
+      he: "My Easy List",
       en: "My list",
       ru: "Мой список",
       ar: "قائمتي",
@@ -3470,27 +3536,31 @@ const finalText = mergeChunks(chunks);
   useEffect(() => {
     const onDocPointerDown_shareMenu = (e: PointerEvent) => {
       if (!shareMenuOpen) return;
-      const el = shareMenuRef.current;
-      if (!el) return;
-      if (e.target && el.contains(e.target as Node)) return;
+      const menuEl = shareMenuElRef.current;
+      const btnEl = shareBtnRef.current;
+      const target = e.target as Node | null;
+      if (target && menuEl && menuEl.contains(target)) return;
+      if (target && btnEl && btnEl.contains(target)) return;
       setShareMenuOpen(false);
     };
     document.addEventListener("pointerdown", onDocPointerDown_shareMenu);
     return () => document.removeEventListener("pointerdown", onDocPointerDown_shareMenu);
   }, [shareMenuOpen]);
 
-
-useEffect(() => {
-  const onDocPointerDown_langMenu = (e: PointerEvent) => {
-    if (!langMenuOpen) return;
-    const el = langMenuRef.current;
-    if (!el) return;
-    if (e.target && el.contains(e.target as Node)) return;
-    setLangMenuOpen(false);
-  };
-  document.addEventListener("pointerdown", onDocPointerDown_langMenu);
-  return () => document.removeEventListener("pointerdown", onDocPointerDown_langMenu);
-}, [langMenuOpen]);
+  useEffect(() => {
+    const onDocPointerDown_moreMenu = (e: PointerEvent) => {
+      if (!moreMenuOpen) return;
+      const menuEl = moreMenuElRef.current;
+      const btnEl = moreBtnRef.current;
+      const target = e.target as Node | null;
+      if (target && menuEl && menuEl.contains(target)) return;
+      if (target && btnEl && btnEl.contains(target)) return;
+      setMoreMenuOpen(false);
+      setMoreMenuView("main");
+    };
+    document.addEventListener("pointerdown", onDocPointerDown_moreMenu);
+    return () => document.removeEventListener("pointerdown", onDocPointerDown_moreMenu);
+  }, [moreMenuOpen]);
 
 
   if (!authInitialized) {
@@ -3544,127 +3614,180 @@ useEffect(() => {
   }
 
   return (
-    <div className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-hidden" dir="rtl">
+    <div ref={appRootRef} className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible" dir="rtl">
       {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
   <div className="flex items-center justify-between">
-    {/* שמאל - יציאה */}
+    {/* Left: More */}
     <div className="flex items-center gap-2">
-  <button
-        onClick={() => signOut(auth)}
+      <button
+        ref={moreBtnRef}
+        type="button"
+        onClick={toggleMoreMenu}
+        style={{ touchAction: "manipulation" }}
         className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
-        title={t("יציאה")}
-        aria-label={t("יציאה")}
+        aria-label="Menu"
+        title="Menu"
       >
-        <LogOut className="w-4 h-4" />
+        <MoreVertical className="w-5 h-5" />
       </button>
-
-  
-<div className="relative" ref={langMenuRef}>
-  <button
-    type="button"
-    onClick={() => setLangMenuOpen((v) => !v)}
-    className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
-    title={t("שפה")}
-    aria-label={t("שפה")}
-  >
-    <Languages className="w-4 h-4" />
-  </button>
-
-  {langMenuOpen ? (
-    <div className="absolute right-0 mt-2 w-44 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[14px] leading-tight z-[80]">
-      {([
-        { code: "he" as AppLang, label: "עברית" },
-        { code: "en" as AppLang, label: "English" },
-        { code: "ru" as AppLang, label: "Русский" },
-        { code: "ar" as AppLang, label: "العربية" },
-      ] as const).map((opt) => (
-        <button
-          key={opt.code}
-          type="button"
-          onClick={() => {
-            setLang(opt.code);
-            setLangMenuOpen(false);
-          }}
-          className={`w-full px-4 py-2 flex items-center justify-between hover:bg-slate-50 ${
-            lang === opt.code ? "font-black text-slate-900" : "font-bold text-slate-600"
-          }`}
-        >
-          <span>{opt.label}</span>
-          {lang === opt.code ? <Check className="w-4 h-4 text-emerald-500" /> : null}
-        </button>
-      ))}
     </div>
-  ) : null}
-</div>
 
-<button
-          onClick={() => setShowClearConfirm(true)}
-          className="p-2 text-slate-400 hover:text-rose-500"
-          title={t("נקה רשימה")}
-          aria-label={t("נקה רשימה")}
-        >
-          <Trash2 className="w-5 h-5" />
-        </button>
-</div>
-
-    {/* ימין - סל אשפה, שיתוף, כותרת */}
-    <div className="flex items-center gap-3">
-
+    {/* Center: App title + offline dot */}
+    <div className="flex items-center gap-2 min-w-0">
+      <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" />
       <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List</span>
-      <span className={`text-[11px] px-2 py-1 rounded-full border whitespace-nowrap ${isOnline ? "border-emerald-200 text-emerald-700 bg-emerald-50/70" : "border-rose-200 text-rose-700 bg-rose-50/70"}`}>{isOnline ? t("מחובר") : t("לא מחובר")}</span>
+    </div>
 
-      <div className="relative inline-flex items-center" ref={shareMenuRef}>
-        <button
-          type="button"
-          onClick={() => setShareMenuOpen((v) => !v)}
-          className="p-2 text-slate-400 hover:text-indigo-600"
-          title={t("שיתוף")}
-          aria-label={t("שיתוף")}
-        >
-          {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
-        </button>
+    
 
-        {shareMenuOpen ? (
-          <div className="absolute top-11 left-0 z-[80] w-64 rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight">
-            <button
-              type="button"
-              onClick={async () => {
-                setShareMenuOpen(false);
-                await shareInviteLinkSystem();
-              }}
-              className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-            >
-              <Share2 className="w-4 h-4 text-slate-500" />
-              <span className="font-semibold text-[15px] leading-none">{t("שתף רשימת קניות")}</span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => {
-                const canLeave = !!(user && list?.ownerUid && user.uid !== list.ownerUid);
-                setShareMenuOpen(false);
-                if (!canLeave) {
-                  setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
-                  return;
-                }
-                setShowLeaveConfirm(true);
-              }}
-              className={`w-full text-right px-4 py-3 flex items-center gap-2 ${
-                user && list?.ownerUid && user.uid !== list.ownerUid
-                  ? "text-rose-700 hover:bg-rose-50"
-                  : "text-slate-400 cursor-not-allowed"
-              }`}
-            >
-              <AlertCircle className={`w-4 h-4 ${user && list?.ownerUid && user.uid !== list.ownerUid ? "text-rose-600" : "text-slate-400"}`} />
-              <span className="font-semibold text-[15px] leading-none">{t("התנתק מרשימת קניות משותפת")}</span>
-            </button>
-          </div>
-        ) : null}
-      </div>
-
+    {/* Right: Share */}
+    <div className="flex items-center gap-2">
+      <button
+        ref={shareBtnRef}
+        type="button"
+        onClick={toggleShareMenu}
+        style={{ touchAction: "manipulation" }}
+        className="w-9 h-9 rounded-full flex items-center justify-center bg-slate-100 text-slate-600 hover:bg-slate-200 active:scale-95 transition-transform"
+        title={t("שיתוף")}
+        aria-label={t("שיתוף")}
+      >
+        {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
+      </button>
     </div>
   </div>
+
+  {/* Share menu */}
+  {shareMenuOpen && shareMenuPos ? (
+    <div
+      ref={shareMenuElRef}
+      className="absolute z-[100] w-[260px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
+      style={{ top: shareMenuPos.top, left: shareMenuPos.left }}
+    >
+      <button
+        type="button"
+        onClick={() => {
+          setShareMenuOpen(false);
+          shareListWhatsApp();
+        }}
+        className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+      >
+        <MessageCircle className="w-4 h-4 text-emerald-600" />
+        <span className="font-semibold text-[15px] leading-none">{t("וואטסאפ")}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={async () => {
+          setShareMenuOpen(false);
+          await shareInviteLinkSystem();
+        }}
+        className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+      >
+        <Share2 className="w-4 h-4 text-slate-500" />
+        <span className="font-semibold text-[15px] leading-none">{t("שתף רשימת קניות")}</span>
+      </button>
+
+      <button
+        type="button"
+        onClick={async () => {
+          const canLeave = !!(user && list?.ownerUid && user.uid !== list.ownerUid);
+          setShareMenuOpen(false);
+          if (!canLeave) {
+            setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
+            return;
+          }
+          const ok = window.confirm(`${t("התנתק מרשימת קניות משותפת")} ?`);
+          if (!ok) return;
+          await leaveSharedList();
+        }}
+        className={`w-full text-right px-4 py-3 flex items-center gap-2 ${
+          user && list?.ownerUid && user.uid !== list.ownerUid
+            ? "text-rose-700 hover:bg-rose-50"
+            : "text-slate-400 cursor-not-allowed"
+        }`}
+      >
+        <LogOut className={`w-4 h-4 ${user && list?.ownerUid && user.uid !== list.ownerUid ? "text-rose-600" : "text-slate-400"}`} />
+        <span className="font-semibold text-[15px] leading-none">{t("התנתק מרשימת קניות משותפת")}</span>
+      </button>
+    </div>
+  ) : null}
+
+  {/* More menu */}
+  {moreMenuOpen && moreMenuPos ? (
+    <div
+      ref={moreMenuElRef}
+      className="absolute z-[100] w-[220px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
+      style={{ top: moreMenuPos.top, left: moreMenuPos.left }}
+    >
+      {moreMenuView === "main" ? (
+        <>
+          <button
+            type="button"
+            onClick={() => setMoreMenuView("language")}
+            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <Languages className="w-4 h-4 text-slate-500" />
+            <span className="font-semibold text-[15px] leading-none">{t("שפה")}</span>
+          </button>
+
+          <button
+            type="button"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              setMoreMenuView("main");
+              setShowClearConfirm(true);
+            }}
+            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <Trash2 className="w-4 h-4 text-rose-500" />
+            <span className="font-semibold text-[15px] leading-none">{t("נקה רשימה")}</span>
+          </button>
+
+          <div className="h-px bg-slate-100" />
+
+          <button
+            type="button"
+            onClick={() => {
+              setMoreMenuOpen(false);
+              setMoreMenuView("main");
+              void signOut(auth);
+            }}
+            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+          >
+            <LogOut className="w-4 h-4 text-slate-500" />
+            <span className="font-semibold text-[15px] leading-none">{t("יציאה")}</span>
+          </button>
+        </>
+      ) : (
+        <>
+          {([
+            { code: "he" as AppLang, label: "עברית" },
+            { code: "en" as AppLang, label: "English" },
+            { code: "ru" as AppLang, label: "Русский" },
+            { code: "ar" as AppLang, label: "العربية" },
+          ] as const).map((opt) => (
+            <button
+              key={opt.code}
+              type="button"
+              onClick={() => {
+                setLang(opt.code);
+                setMoreMenuOpen(false);
+                setMoreMenuView("main");
+              }}
+              className={`w-full px-4 py-3 flex items-center justify-between hover:bg-slate-50 ${
+                lang === opt.code ? "font-black text-slate-900" : "font-bold text-slate-600"
+              }`}
+            >
+              <span>{opt.label}</span>
+              {lang === opt.code ? <Check className="w-4 h-4 text-emerald-500" /> : null}
+            </button>
+          ))}
+        </>
+      )}
+    </div>
+  ) : null}
+
 </header>
 
       {/* Voice hint */}
