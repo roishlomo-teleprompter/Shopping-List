@@ -4289,16 +4289,16 @@ const finalText = mergeChunks(chunks);
         <div className="max-w-md mx-auto px-4 pb-3">
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
             <div className="relative flex items-center justify-between px-6 py-2">
-              {/* List */}
+              {/* Favorites */}
               <button
-                onClick={() => setActiveTab("list")}
+                onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
+                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
                 }`}
-                title={t("רשימה")}
+                title={t("מועדפים")}
               >
-                <ListChecks className="w-7 h-7" />
-                {t("רשימה")}
+                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
+                {t("מועדפים")}
               </button>
 
               {/* Voice button (tap-to-record) */}
@@ -4337,17 +4337,16 @@ const finalText = mergeChunks(chunks);
                   )}
                 </button>
               </div>
-
-              {/* Favorites */}
+ {/* List */}
               <button
-                onClick={() => setActiveTab("favorites")}
+                onClick={() => setActiveTab("list")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
+                  activeTab === "list" ? "text-indigo-600" : "text-slate-300"
                 }`}
-                title={t("מועדפים")}
+                title={t("רשימה")}
               >
-                <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
-                {t("מועדפים")}
+                <ListChecks className="w-7 h-7" />
+                {t("רשימה")}
               </button>
             </div>
           </footer>
