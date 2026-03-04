@@ -673,6 +673,95 @@ function parseSingleItemFromSegment(segment: string): ItemParse | null {
   return { name, qty };
 }
 
+
+function isHebrewLikeToken(t: string) {
+  return /[\u0590-\u05FF]/.test(t);
+}
+function isArabicLikeToken(t: string) {
+  return /[\u0600-\u06FF]/.test(t);
+}
+
+const EN_LINKING = new Set([
+  "to","for","with","in","on","at","from","into","onto","of","about","by"
+]);
+const RU_LINKING = new Set([
+  "в","во","на","к","ко","для","из","от","у","по","за","с","со","о","об","про"
+]);
+const AR_LINKING = new Set([
+  "ل","إلى","الى","من","على","في","مع","عن","ب","بال"
+]);
+
+function isLinkingToken(t: string) {
+  const x = (t || "").trim().toLowerCase();
+  if (!x) return false;
+
+  // Hebrew: standalone "ל" or attached prefix "ל..." (like "לאמא")
+  if (x === "ל") return true;
+  if (x.startsWith("ל") && x.length > 1 && isHebrewLikeToken(x)) return true;
+
+  // Arabic: standalone preps, or attached prefix "ل..."
+  if (AR_LINKING.has(x)) return true;
+  if (x.startsWith("ل") && x.length > 1 && isArabicLikeToken(x)) return true;
+
+  if (EN_LINKING.has(x)) return true;
+  if (RU_LINKING.has(x)) return true;
+
+  return false;
+}
+
+function linkingNeedsNextWord(t: string) {
+  const x = (t || "").trim().toLowerCase();
+  if (!x) return false;
+  // standalone linking tokens that usually require an object next
+  if (x === "ל") return true;
+  if (EN_LINKING.has(x)) return true;
+  if (RU_LINKING.has(x)) return true;
+  if (AR_LINKING.has(x)) return true;
+  return false;
+}
+
+/**
+ * Build segments from voice-style text without commas/newlines.
+ * Rule: keep linking words (and Hebrew/Arabic "ל..." attached forms) WITH their neighbor, so
+ * "מתנה לאמא" stays one segment, and "bring to mom" stays one segment.
+ */
+function segmentVoiceTextKeepingLinking(rawNorm: string): string[] {
+  const tokens = (rawNorm || "").split(/\s+/).map(t => t.trim()).filter(Boolean);
+  if (!tokens.length) return [];
+
+  const segments: string[] = [];
+  let cur: string[] = [];
+
+  for (let i = 0; i < tokens.length; i++) {
+    const t = tokens[i];
+    if (!cur.length) {
+      cur.push(t);
+      continue;
+    }
+
+    const lower = t.toLowerCase();
+
+    // If it's a linking token, attach to current segment (and sometimes also attach the next word)
+    if (isLinkingToken(lower)) {
+      cur.push(t);
+
+      if (linkingNeedsNextWord(lower) && i + 1 < tokens.length) {
+        // attach next token as well, so it won't be split by commas in review
+        cur.push(tokens[i + 1]);
+        i += 1;
+      }
+      continue;
+    }
+
+    // Otherwise, start a new segment
+    segments.push(cur.join(" "));
+    cur = [t];
+  }
+
+  if (cur.length) segments.push(cur.join(" "));
+  return segments;
+}
+
 function parseItemsFromText(raw: string): ItemParse[] {
   const s = normalizeVoiceText(raw);
   if (!s) return [];
@@ -695,7 +784,14 @@ function parseItemsFromText(raw: string): ItemParse[] {
   }
 
   // Otherwise (voice style: space-separated), split by tokens into multiple items.
-  return parseSegmentTokensToItems(s);
+    const segments = segmentVoiceTextKeepingLinking(s);
+
+  const out: ItemParse[] = [];
+  for (const seg of segments) {
+    const it = parseSingleItemFromSegment(seg);
+    if (it) out.push(it);
+  }
+  return out;
 }
 
 
@@ -4289,7 +4385,7 @@ const finalText = mergeChunks(chunks);
         <div className="max-w-md mx-auto px-4 pb-3">
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
             <div className="relative flex items-center justify-between px-6 py-2">
-              {/* Favorites */}
+               {/* Favorites */}
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
