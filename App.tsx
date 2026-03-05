@@ -307,6 +307,11 @@ const normalizeVoiceText = (s: string) => {
     .replace(/\bפסיקים\b/g, ",")
     .replace(/\bפסיק\b/g, ",")
     .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
+    // Fix: commas between numeric quantity and item should not split items (e.g., "2, apples")
+    .replace(/(\b\d+\b)\s*,\s*(?=[^\d\s])/g, "$1 ")
+    // Remove commas between quantity token and item name (so "2, עגבניות" becomes "2 עגבניות")
+.replace(/\b(\d+)\s*,\s*/g, "$1 ")
+.replace(/\b(אחד|אחת|שני|שניים|שתיים|שתים|שתי|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה|שבע|שבעה|שמונה|תשע|תשעה|עשר|עשרה)\s*,\s*/g, "$1 ")
     .replace(/\s+/g, " ")
     .trim();
 };
@@ -489,20 +494,18 @@ function mergeCompounds(tokens: string[]): string[] {
   return out;
 }
 
-
-
-type AppLang = "he" | "en" | "ru" | "ar";
-
-// Clear list / delete all list items - supports calls with or without explicit lang
 function isClearListCommand(raw: string, lang?: AppLang) {
-  const s = (raw || "").trim().toLowerCase();
+  const s0 = (raw || "").trim().toLowerCase();
+  // Normalize punctuation so phrases like "רק, רשימה" are treated correctly.
+  const s = s0.replace(/[\n,]+/g, " ").replace(/\s+/g, " ").trim();
 
-  // Allow single-word commands (per product requirement)
-  if (s === "רשימה" || s === "הרשימה" || s === "list" || s === "список" || s === "القائمة" || s === "قائمة") {
-    return true;
-  }
+  const tokens = s.split(" ").filter(Boolean);
+  const listWords = new Set(["רשימה", "הרשימה", "list", "список", "القائمة", "قائمة"]);
 
-  const byLang = (l: AppLang) => {
+  // Per requirement: ANY phrase that includes "list"/"רשימה" should clear the list
+  if (tokens.some((t) => listWords.has(t))) return true;
+
+const byLang = (l: AppLang) => {
     if (l === "he") {
       return (
         /(מחק|נקה|אפס).{0,12}(רשימה|הרשימה|את הרשימה)/.test(s) ||
@@ -529,6 +532,9 @@ function isClearListCommand(raw: string, lang?: AppLang) {
   };
 
   // Prefer explicit lang, otherwise try all languages (keeps behavior robust)
+  if (lang) return byLang(lang);
+
+  return byLang("he") || byLang("en") || byLang("ru") || byLang("ar"); // try all languages (keeps behavior robust)
   if (lang) return byLang(lang);
 
   return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
@@ -764,36 +770,30 @@ function segmentVoiceTextKeepingLinking(rawNorm: string): string[] {
 }
 
 function parseItemsFromText(raw: string): ItemParse[] {
-  const s = normalizeVoiceText(raw);
-  if (!s) return [];
+  const s0 = normalizeVoiceText(raw);
+  if (!s0) return [];
 
-  const hasSeparators = s.includes(",") || s.includes("\n");
+  // Speech-to-text often injects commas between words ("שתי, עגבניות", "נייר, טואלט").
+  // For voice parsing we treat commas as spaces and rely on the token parser + compound merge.
+  const s = s0
+    .replace(/[，،]/g, ",")
+    .replace(/,/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
 
-  // If the user used commas/new lines, treat each segment as ONE item (multi-word supported).
-  if (hasSeparators) {
-    const segments = s
-      .split(/[\n,]+/)
-      .map((x) => x.trim())
-      .filter(Boolean);
-
-    const out: ItemParse[] = [];
-    for (const seg of segments) {
-      const it = parseSingleItemFromSegment(seg);
-      if (it) out.push(it);
-    }
-    return out;
-  }
-
-  // Otherwise (voice style: space-separated), split by tokens into multiple items.
-    const segments = segmentVoiceTextKeepingLinking(s);
+  const segments = s
+    .split(/\n+/)
+    .map((x) => x.trim())
+    .filter(Boolean);
 
   const out: ItemParse[] = [];
   for (const seg of segments) {
-    const it = parseSingleItemFromSegment(seg);
-    if (it) out.push(it);
+    const parsed = parseSegmentTokensToItems(seg);
+    for (const p of parsed) out.push(p);
   }
   return out;
 }
+
 
 
 
