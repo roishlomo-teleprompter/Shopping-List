@@ -1,4 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { HashRouter, Routes, Route, useNavigate, useSearchParams } from "react-router-dom";
 import {
   Share2,
@@ -1504,7 +1505,7 @@ const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const appRootRef = useRef<HTMLDivElement | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuElRef = useRef<HTMLDivElement | null>(null);
-  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number; maxWidth: number } | null>(null);
   const [list, setList] = useState<ShoppingList | null>(null);
   const [items, setItems] = useState<ShoppingItem[]>([]);
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
@@ -1564,32 +1565,54 @@ useEffect(() => {
 
 
   const [isCopied, setIsCopied] = useState(false);
-  
+
+  const clamp = (v: number, min: number, max: number) => Math.min(Math.max(v, min), max);
+
+  const calcFixedMenuPos = (opts: {
+    anchorRect: DOMRect | null | undefined;
+    menuWidth: number;
+    align?: "left" | "right"; // legacy (kept for compatibility)
+  }) => {
+    const { anchorRect: r, menuWidth } = opts;
+    const appRect = appRootRef.current?.getBoundingClientRect();
+
+    const pad = 10;
+    const gap = 8;
+
+    // Stick right under the triggering button
+    const top = r ? r.bottom + gap : 56;
+
+    // Clamp to the app container (max-w-md) boundaries
+    const minLeft = (appRect ? appRect.left : 0) + pad;
+    const maxLeft = (appRect ? appRect.right : window.innerWidth) - menuWidth - pad;
+
+    // Prefer: center under the button, then clamp.
+    const preferredLeft = r ? r.left + (r.width - menuWidth) / 2 : minLeft;
+
+    const left = clamp(preferredLeft, minLeft, Math.max(minLeft, maxLeft));
+    const maxWidth = Math.max(140, (appRect ? appRect.width : window.innerWidth) - pad * 2);
+
+    return { top, left, maxWidth };
+  };
+
   const [shareMenuOpen, setShareMenuOpen] = useState(false);
   const shareBtnRef = useRef<HTMLButtonElement | null>(null);
   const shareMenuElRef = useRef<HTMLDivElement | null>(null);
-  const [shareMenuPos, setShareMenuPos] = useState<{ top: number; left: number } | null>(null);
+  const [shareMenuPos, setShareMenuPos] = useState<{ top: number; left: number; maxWidth: number } | null>(null);
+
+  const updateShareMenuPos = useCallback(() => {
+    if (!shareMenuOpen) return;
+    const r = shareBtnRef.current?.getBoundingClientRect();
+    const measuredW = shareMenuElRef.current?.offsetWidth;
+    const menuW = measuredW && measuredW > 0 ? measuredW : 260;
+    setShareMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "right" }));
+  }, [shareMenuOpen]);
+
   const openShareMenu = () => {
-  const r = shareBtnRef.current?.getBoundingClientRect();
-  const appRect = appRootRef.current?.getBoundingClientRect();
-
-  const menuW = 260;
-  const pad = 10;
-
-  // Position INSIDE the app container (not the viewport) so it never escapes the app bounds.
-  const top = r && appRect ? (r.bottom - appRect.top + 8) : 56;
-
-  // Share button is on the RIGHT - open the menu to the LEFT of the button.
-  const preferredLeft = r && appRect ? (r.right - appRect.left - menuW) : pad;
-  const maxLeft = Math.max(pad, (appRect?.width ?? window.innerWidth) - menuW - pad);
-  const left = Math.min(Math.max(preferredLeft, pad), maxLeft);
-
-  setMoreMenuOpen(false);
-  setMoreMenuView("main");
-  setShareMenuPos({ top, left });
-  setShareMenuOpen(true);
-};
-
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    setShareMenuOpen(true);
+  };
 
   const toggleShareMenu = () => {
     if (shareMenuOpen) {
@@ -1599,25 +1622,18 @@ useEffect(() => {
     openShareMenu();
   };
 
+  const updateMoreMenuPos = useCallback(() => {
+    if (!moreMenuOpen) return;
+    const r = moreBtnRef.current?.getBoundingClientRect();
+    const measuredW = moreMenuElRef.current?.offsetWidth;
+    const menuW = measuredW && measuredW > 0 ? measuredW : 220;
+    setMoreMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "left" }));
+  }, [moreMenuOpen]);
+
   const openMoreMenu = () => {
-  const r = moreBtnRef.current?.getBoundingClientRect();
-  const appRect = appRootRef.current?.getBoundingClientRect();
-
-  const menuW = 220;
-  const pad = 10;
-
-  const top = r && appRect ? (r.bottom - appRect.top + 8) : 56;
-
-  // More button is on the LEFT - open aligned to the button's left edge (inside the app).
-  const preferredLeft = r && appRect ? (r.left - appRect.left) : pad;
-  const maxLeft = Math.max(pad, (appRect?.width ?? window.innerWidth) - menuW - pad);
-  const left = Math.min(Math.max(preferredLeft, pad), maxLeft);
-
-  setShareMenuOpen(false);
-  setMoreMenuPos({ top, left });
-  setMoreMenuOpen(true);
-};
-
+    setShareMenuOpen(false);
+    setMoreMenuOpen(true);
+  };
 
   const toggleMoreMenu = () => {
     if (moreMenuOpen) {
@@ -1627,6 +1643,52 @@ useEffect(() => {
     }
     openMoreMenu();
   };
+
+  // When a menu opens, compute its initial fixed position on the next frame.
+  useEffect(() => {
+    if (!shareMenuOpen) return;
+    requestAnimationFrame(() => {
+      const r = shareBtnRef.current?.getBoundingClientRect();
+      const measuredW = shareMenuElRef.current?.offsetWidth;
+      const menuW = measuredW && measuredW > 0 ? measuredW : 260;
+      setShareMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "right" }));
+    });
+  }, [shareMenuOpen]);
+
+  useEffect(() => {
+    if (!moreMenuOpen) return;
+    requestAnimationFrame(() => {
+      const r = moreBtnRef.current?.getBoundingClientRect();
+      const measuredW = moreMenuElRef.current?.offsetWidth;
+      const menuW = measuredW && measuredW > 0 ? measuredW : 220;
+      setMoreMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "left" }));
+    });
+  }, [moreMenuOpen]);
+
+  // Keep menus pinned under their buttons while scrolling/resizing.
+  useEffect(() => {
+    if (!shareMenuOpen && !moreMenuOpen) return;
+
+    let raf = 0;
+    const onMove = () => {
+      if (raf) return;
+      raf = window.requestAnimationFrame(() => {
+        raf = 0;
+        updateShareMenuPos();
+        updateMoreMenuPos();
+      });
+    };
+
+    window.addEventListener("scroll", onMove, true);
+    window.addEventListener("resize", onMove);
+
+    return () => {
+      if (raf) window.cancelAnimationFrame(raf);
+      window.removeEventListener("scroll", onMove, true);
+      window.removeEventListener("resize", onMove);
+    };
+  }, [shareMenuOpen, moreMenuOpen, updateShareMenuPos, updateMoreMenuPos]);
+
 
 const [showClearConfirm, setShowClearConfirm] = useState(false);
 const [showCalendarModal, setShowCalendarModal] = useState(false);
@@ -2608,39 +2670,62 @@ const shareListWhatsApp = () => {
       ar: "القائمة فارغة حاليًا",
     };
 
-    const rawTitle = (list?.title || "").trim();
-    const titleIsDefault =
-      rawTitle === defaultTitleByLang.he ||
-      rawTitle === defaultTitleByLang.en ||
-      rawTitle === defaultTitleByLang.ru ||
-      rawTitle === defaultTitleByLang.ar;
+    const myListNameByLang: Record<AppLang, string> = {
+  he: "הרשימה שלי",
+  en: "My List",
+  ru: "Мой список",
+  ar: "قائمتي",
+};
 
-    const title = rawTitle
-      ? (titleIsDefault ? defaultTitleByLang[shareLang] : rawTitle)
-      : defaultTitleByLang[shareLang];
+const rawTitle = (list?.title || "").trim();
+const rawTitleNorm = rawTitle.toLowerCase();
 
-    const lines =
-      active.length > 0
-        ? active
-            .map((i) => {
-              if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
-              return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
-            })
-            .join("\n")
-        : `${RLE}(${emptyByLang[shareLang] || emptyByLang.he})${PDF}`;
+// Treat list titles that equal the app default title in ANY language/version as "default"
+// so we can localize them during WhatsApp sharing.
+const knownDefaultTitlesNorm = new Set(
+  [
+    defaultTitleByLang.he,
+    defaultTitleByLang.en,
+    defaultTitleByLang.ru,
+    defaultTitleByLang.ar,
+    myListNameByLang.he,
+    myListNameByLang.en,
+    myListNameByLang.ru,
+    myListNameByLang.ar,
+    // Older/variant spellings that may exist in persisted data
+    "shopping-list",
+    "shopping list",
+    "my easy list",
+  ].map((s) => String(s || "").trim().toLowerCase())
+);
 
-    const header = `*${title}:*`;
+const titleIsDefault = !rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm);
 
-    const footerByLang: Record<AppLang, string> = {
-      he: "נשלח מרשימת הקניות שלי 🛒",
-      en: "Sent from My Easy List 🛒",
-      ru: "Отправлено из приложения My Easy List 🛒",
-      ar: "تم الإرسال من قائمة التسوق 🛒",
-    };
+const appName = myListNameByLang[shareLang] || myListNameByLang.he;
 
-    const footer = footerByLang[shareLang] || footerByLang.he;
+// If user didn't rename the list (or it matches a known default), localize it for sharing.
+const title = titleIsDefault ? appName : rawTitle;
 
-    const text = `${header}
+const lines =
+  active.length > 0
+    ? active
+        .map((i) => {
+          if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+          return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
+        })
+        .join("\n")
+    : `${RLE}(${emptyByLang[shareLang] || emptyByLang.he})${PDF}`;
+
+const header = `*${title}:*`;
+
+const footerByLang: Record<AppLang, string> = {
+  he: `נשלח מ${appName} 🛒`,
+  en: `Sent from ${appName} 🛒`,
+  ru: `Отправлено из ${appName} 🛒`,
+  ar: `تم الإرسال من ${appName} 🛒`,
+};
+
+const footer = footerByLang[shareLang] || footerByLang.he;const text = `${header}
 
 ${lines}
 
@@ -3770,11 +3855,12 @@ const finalText = mergeChunks(chunks);
   </div>
 
   {/* Share menu */}
-  {shareMenuOpen && shareMenuPos ? (
-    <div
+  {shareMenuOpen && shareMenuPos ? createPortal(
+    (
+<div
       ref={shareMenuElRef}
-      className="absolute z-[100] w-[260px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
-      style={{ top: shareMenuPos.top, left: shareMenuPos.left }}
+      className="fixed z-[100] w-[260px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
+      style={{ top: shareMenuPos.top, left: shareMenuPos.left, maxWidth: shareMenuPos.maxWidth }}
     >
       <button
         type="button"
@@ -3823,14 +3909,16 @@ const finalText = mergeChunks(chunks);
         <span className="font-semibold text-[15px] leading-none">{t("התנתק מרשימת קניות משותפת")}</span>
       </button>
     </div>
+    ),
+    document.body
   ) : null}
-
-  {/* More menu */}
-  {moreMenuOpen && moreMenuPos ? (
-    <div
+{/* More menu */}
+  {moreMenuOpen && moreMenuPos ? createPortal(
+    (
+<div
       ref={moreMenuElRef}
-      className="absolute z-[100] w-[220px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
-      style={{ top: moreMenuPos.top, left: moreMenuPos.left }}
+      className="fixed z-[100] w-[220px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
+      style={{ top: moreMenuPos.top, left: moreMenuPos.left, maxWidth: moreMenuPos.maxWidth }}
     >
       {moreMenuView === "main" ? (
         <>
@@ -3911,8 +3999,9 @@ const finalText = mergeChunks(chunks);
         </>
       )}
     </div>
+    ),
+    document.body
   ) : null}
-
 </header>
 
       {/* Voice hint */}
