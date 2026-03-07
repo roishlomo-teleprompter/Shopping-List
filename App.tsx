@@ -40,7 +40,8 @@ const ListPlusIcon: React.FC<{ className?: string }> = ({ className }) => {
 import {
   onAuthStateChanged,
   signInWithPopup,
-  signInWithRedirect,
+  signInWithCredential,
+  GoogleAuthProvider,
   signOut,
   User as FirebaseUser,
   setPersistence,
@@ -64,6 +65,10 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
+import { Capacitor } from "@capacitor/core";
+import { Share } from "@capacitor/share";
+import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
+import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
 import { auth, db, googleProvider } from "./firebase.ts";
 import confetti from "canvas-confetti";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
@@ -100,7 +105,37 @@ async function copyToClipboard(text: string) {
 }
 
 async function signInSmart() {
-  // Try popup first (best UX). If blocked/closed, fall back to redirect.
+  const platform = (() => {
+    try {
+      return String(Capacitor.getPlatform?.() || "web").toLowerCase();
+    } catch (e) {
+      return "web";
+    }
+  })();
+
+  const isNative =
+    platform === "android" ||
+    platform === "ios" ||
+    platform === "native" ||
+    Capacitor.isNativePlatform();
+
+  if (isNative) {
+    try {
+      const result = await FirebaseAuthentication.signInWithGoogle();
+      const idToken = result.credential?.idToken;
+      if (!idToken) {
+        throw new Error("Google native sign-in returned without idToken");
+      }
+      const credential = GoogleAuthProvider.credential(idToken);
+      await signInWithCredential(auth, credential);
+      return;
+    } catch (e: any) {
+      console.error("Native Google sign-in failed", e);
+      throw new Error(e?.message || "Native Google sign-in failed");
+    }
+  }
+
+  // Browser only: popup. No redirect fallback, to avoid redirect-state issues in APK/WebView.
   try {
     try {
       await setPersistence(auth, browserLocalPersistence);
@@ -115,11 +150,21 @@ async function signInSmart() {
       c === "auth/cancelled-popup-request" ||
       c === "auth/popup-closed-by-user"
     ) {
-      await signInWithRedirect(auth, googleProvider);
-      return;
+      throw new Error("Popup sign-in was blocked or closed");
     }
-    await signInWithRedirect(auth, googleProvider);
+    throw e;
   }
+}
+
+async function signOutSmart() {
+  if (Capacitor.isNativePlatform()) {
+    try {
+      await FirebaseAuthentication.signOut();
+    } catch (e) {
+      // ignore native sign out errors and continue with web sign out
+    }
+  }
+  await signOut(auth);
 }
 
 function openWhatsApp(text: string) {
@@ -1716,6 +1761,9 @@ const [listLoading, setListLoading] = useState(false);
   const [isListening, setIsListening] = useState(false);
   const [voiceMode] = useState<VoiceMode>("hold_to_talk");
   const [lastHeard, setLastHeard] = useState<string>("");
+  const lastHeardRef = useRef<string>("");
+  const nativeFinalizeRef = useRef<boolean>(false);
+  const nativeRestartRequestedRef = useRef<boolean>(false);
   const [toast, setToast] = useState<string | null>(null);
 
 // Keep the last toast as a translation key when relevant, so it can re-render when language changes.
@@ -1758,6 +1806,12 @@ useEffect(() => {
   const noiseStreamRef = useRef<MediaStream | null>(null);
 
   const recognitionRef = useRef<any>(null);
+  const nativeSpeechAvailableRef = useRef<boolean | null>(null);
+  const nativeFinalTranscriptRef = useRef<string>("");
+  const nativeLastPartialRef = useRef<string>("");
+  const micTapLockUntilRef = useRef<number>(0);
+  const nativeLastStopAtRef = useRef<number>(0);
+  const pendingRestartTimerRef = useRef<number | null>(null);
   const holdActiveRef = useRef<boolean>(false);
   const transcriptBufferRef = useRef<string[]>([]);
   const lastInterimRef = useRef<string>("");
@@ -1766,6 +1820,23 @@ useEffect(() => {
   // Auto-clear "שמענו" line shortly after listening ends (no manual refresh)
   const HEARD_CLEAR_MS = 1800;
   const heardClearTimerRef = useRef<number | null>(null);
+  const MIC_TAP_DEBOUNCE_MS = 450;
+  const NATIVE_RESTART_COOLDOWN_MS = 700;
+  const NATIVE_LATE_TRANSCRIPT_WAIT_MS = 900;
+  const NATIVE_LATE_TRANSCRIPT_POLL_MS = 60;
+
+
+  useEffect(() => {
+    lastHeardRef.current = lastHeard || "";
+  }, [lastHeard]);
+  useEffect(() => {
+    return () => {
+      if (pendingRestartTimerRef.current != null) {
+        window.clearTimeout(pendingRestartTimerRef.current);
+        pendingRestartTimerRef.current = null;
+      }
+    };
+  }, []);
 
 
   useEffect(() => {
@@ -2533,19 +2604,32 @@ if (normalized) {
     const link = await generateInviteTokenAndLink();
     if (!link) return;
 
+    const title = t("קישור לרשימה");
+    const text = t("קישור הצטרפות להרשימה שלי");
+
     try {
+      if (Capacitor.isNativePlatform()) {
+        await Share.share({
+          title,
+          text,
+          url: link,
+          dialogTitle: t("שתף רשימת קניות"),
+        });
+        return;
+      }
+
       if (typeof navigator !== "undefined" && "share" in navigator) {
         // @ts-ignore
         await navigator.share({
-          title: t("קישור לרשימה"),
-          text: t("קישור הצטרפות להרשימה שלי"),
+          title,
+          text,
           url: link,
         });
         return;
       }
     } catch (e) {
-    // ignore
-  }
+      // ignore and continue to clipboard fallback
+    }
 
     await copyToClipboard(link);
     setIsCopied(true);
@@ -3014,6 +3098,96 @@ ${footer}`;
     // intentionally no toast for "added items" via microphone
   };
 
+
+  const isNativeSpeechMode = () => {
+    try {
+      return Capacitor.isNativePlatform();
+    } catch (e) {
+      return false;
+    }
+  };
+
+  const clearNativeSpeechState = () => {
+    nativeFinalTranscriptRef.current = "";
+    nativeLastPartialRef.current = "";
+  };
+
+  const restartNativeTapListeningSoon = () => {
+    window.setTimeout(() => {
+      void startTapListening();
+    }, 120);
+  };
+
+  const mergeTranscriptParts = (parts: string[]) => {
+    let acc = "";
+    for (const raw of parts) {
+      const c = String(raw || "").trim();
+      if (!c) continue;
+      if (!acc) {
+        acc = c;
+        continue;
+      }
+      const a = acc.trim();
+      if (c.startsWith(a)) {
+        acc = c;
+        continue;
+      }
+      if (a.startsWith(c)) {
+        continue;
+      }
+      const maxOverlap = Math.min(a.length, c.length, 60);
+      let stitched = false;
+      for (let k = maxOverlap; k >= 10; k--) {
+        if (a.slice(-k) === c.slice(0, k)) {
+          acc = a + c.slice(k);
+          stitched = true;
+          break;
+        }
+      }
+      if (!stitched) acc = a + " " + c;
+    }
+    return acc.replace(/\s+/g, " ").trim();
+  };
+
+  const ensureNativeSpeechReady = async () => {
+    if (!isNativeSpeechMode()) return false;
+
+    try {
+      const available = await SpeechRecognition.available();
+      const isAvailable = !!available?.available;
+      nativeSpeechAvailableRef.current = isAvailable;
+      if (!isAvailable) return false;
+    } catch (e) {
+      nativeSpeechAvailableRef.current = false;
+      return false;
+    }
+
+    try {
+      const perms: any = await SpeechRecognition.checkPermissions();
+
+      // Android fix:
+      // The speech-recognition plugin exposes Android permission state via
+      // `speechRecognition`, which maps to RECORD_AUDIO.
+      // It does not require a separate `microphone` field to be present.
+      const speechGranted =
+        perms?.speechRecognition === "granted" ||
+        perms?.speechRecognition === "prompt-with-rationale" ||
+        perms?.permission === "granted";
+
+      if (!speechGranted) {
+        const req: any = await SpeechRecognition.requestPermissions();
+        const speechOk =
+          req?.speechRecognition === "granted" ||
+          req?.permission === "granted";
+        return !!speechOk;
+      }
+
+      return true;
+    } catch (e) {
+      return false;
+    }
+  };
+
   const ensureSpeechRecognition = () => {
     const SR: any = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
     if (!SR) return null;
@@ -3187,7 +3361,114 @@ ${footer}`;
     return actions;
   };
 
+  const waitForLateNativeTranscript = async (maxWaitMs = NATIVE_LATE_TRANSCRIPT_WAIT_MS) => {
+    const startedAt = Date.now();
+    let latest = "";
+
+    while (Date.now() - startedAt < maxWaitMs) {
+      latest = mergeTranscriptParts(
+        [
+          nativeFinalTranscriptRef.current,
+          nativeLastPartialRef.current,
+          lastHeardRef.current,
+        ]
+          .map((x) => normalizeVoiceText(String(x || "")))
+          .filter(Boolean)
+      );
+
+      if (latest) return latest;
+      await new Promise((resolve) => setTimeout(resolve, NATIVE_LATE_TRANSCRIPT_POLL_MS));
+    }
+
+    return latest;
+  };
+
+  const finalizeNativeTapListening = async () => {
+    if (nativeFinalizeRef.current) return;
+    nativeFinalizeRef.current = true;
+
+    setIsListening(false);
+    setVoiceUi("processing");
+    stopVoiceTimer();
+    nativeLastStopAtRef.current = Date.now();
+
+    try {
+      await Promise.race([
+        SpeechRecognition.stop().catch(() => {}),
+        new Promise((resolve) => setTimeout(resolve, 180)),
+      ]);
+    } catch (e) {
+      // ignore
+    }
+
+    await new Promise((resolve) => setTimeout(resolve, 90));
+
+    let combined = mergeTranscriptParts(
+      [
+        nativeFinalTranscriptRef.current,
+        nativeLastPartialRef.current,
+        lastHeardRef.current,
+      ]
+        .map((x) => normalizeVoiceText(String(x || "")))
+        .filter(Boolean)
+    );
+
+    if (!combined) {
+      combined = await waitForLateNativeTranscript();
+    }
+
+    try {
+      await SpeechRecognition.removeAllListeners();
+    } catch (e) {
+      // ignore
+    }
+
+    clearNativeSpeechState();
+
+    if (!combined) {
+      setVoiceUi("idle");
+      setToast(t("לא נקלט קול - נסה שוב"));
+      nativeFinalizeRef.current = false;
+
+      if (nativeRestartRequestedRef.current) {
+        nativeRestartRequestedRef.current = false;
+        restartNativeTapListeningSoon();
+      }
+      return;
+    }
+
+    if (nativeRestartRequestedRef.current) {
+      nativeRestartRequestedRef.current = false;
+      setVoiceDraft("");
+      setVoiceUi("idle");
+      nativeFinalizeRef.current = false;
+      scheduleNativeTapRestart(0);
+      return;
+    }
+
+    setVoiceDraft(formatDraftForReview(combined));
+    setVoiceUi("review");
+    nativeFinalizeRef.current = false;
+  };
+
+  const scheduleNativeTapRestart = (delayMs: number) => {
+    if (pendingRestartTimerRef.current != null) {
+      window.clearTimeout(pendingRestartTimerRef.current);
+      pendingRestartTimerRef.current = null;
+    }
+
+    pendingRestartTimerRef.current = window.setTimeout(() => {
+      pendingRestartTimerRef.current = null;
+      void startTapListening();
+    }, Math.max(0, delayMs));
+  };
+
   const startTapListening = async () => {
+    nativeRestartRequestedRef.current = false;
+
+    if (Date.now() < micTapLockUntilRef.current) return;
+    micTapLockUntilRef.current = Date.now() + MIC_TAP_DEBOUNCE_MS;
+
     if (!isOnline) {
       setToast(t("__toast_no_internet__"));
       setVoiceUi("idle");
@@ -3195,15 +3476,99 @@ ${footer}`;
       return;
     }
 
-    const SR = ensureSpeechRecognition();
-    if (!SR) {
-      alert(t("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge."));
-      return;
-    }
-
     if (!user) {
       setToast(t("צריך להתחבר לפני פקודות קוליות"));
       signInSmart();
+      return;
+    }
+
+    if (isNativeSpeechMode()) {
+      const ready = await ensureNativeSpeechReady();
+      if (!ready) {
+        alert(t("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב."));
+        return;
+      }
+
+      const sinceLastStop = Date.now() - nativeLastStopAtRef.current;
+      if (nativeLastStopAtRef.current && sinceLastStop < NATIVE_RESTART_COOLDOWN_MS) {
+        scheduleNativeTapRestart(NATIVE_RESTART_COOLDOWN_MS - sinceLastStop);
+        setVoiceUi("processing");
+        return;
+      }
+
+      clearNativeSpeechState();
+      nativeFinalizeRef.current = false;
+      transcriptBufferRef.current = [];
+      lastInterimRef.current = "";
+      startGuardRef.current = false;
+
+      tapActiveRef.current = true;
+      setVoiceDraft("");
+      setLastHeard("");
+      setIsListening(true);
+      setVoiceUi("recording");
+      startVoiceTimer();
+
+      if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+        navigator.vibrate(10);
+      }
+
+      try {
+        try {
+          await Promise.race([
+            SpeechRecognition.stop().catch(() => {}),
+            new Promise((resolve) => setTimeout(resolve, 80)),
+          ]);
+        } catch (e) {
+          // ignore stale previous session stop
+        }
+
+        await SpeechRecognition.removeAllListeners();
+        await new Promise((resolve) => setTimeout(resolve, 90));
+
+                await SpeechRecognition.addListener("partialResults", (data: any) => {
+          const matches = Array.isArray(data?.matches) ? data.matches : [];
+          const merged = mergeTranscriptParts(matches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
+          if (!merged) return;
+          nativeLastPartialRef.current = merged;
+          setLastHeard(merged);
+        });
+
+        await SpeechRecognition.addListener("listeningState", (data: any) => {
+          if (data?.status === "stopped" && tapActiveRef.current) {
+            tapActiveRef.current = false;
+            void finalizeNativeTapListening();
+          }
+        });
+
+        const started = await SpeechRecognition.start({
+          language: speechLang,
+          maxResults: 1,
+          prompt: "",
+          partialResults: true,
+          popup: false,
+        } as any);
+
+        const initialMatches = Array.isArray((started as any)?.matches) ? (started as any).matches : [];
+        const initialMerged = mergeTranscriptParts(initialMatches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
+        if (initialMerged) {
+          nativeFinalTranscriptRef.current = initialMerged;
+          setLastHeard(initialMerged);
+        }
+      } catch (e) {
+        console.error(e);
+        stopVoiceTimer();
+        setIsListening(false);
+        setVoiceUi("idle");
+        tapActiveRef.current = false;
+        setToast(t("לא הצלחתי להתחיל האזנה"));
+      }
+      return;
+    }
+
+    const SR = ensureSpeechRecognition();
+    if (!SR) {
+      alert(t("הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge."));
       return;
     }
 
@@ -3369,6 +3734,11 @@ ${footer}`;
 
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(20);
+    }
+
+    if (isNativeSpeechMode()) {
+      await finalizeNativeTapListening();
+      return;
     }
 
     try {
@@ -3723,9 +4093,15 @@ const finalText = mergeChunks(chunks);
     return () => {
       try {
         holdActiveRef.current = false;
+        tapActiveRef.current = false;
+        nativeRestartRequestedRef.current = false;
         recognitionRef.current?.stop?.();
       } catch (e) {
         // ignore
+      }
+      if (isNativeSpeechMode()) {
+        void SpeechRecognition.removeAllListeners().catch(() => {});
+        void SpeechRecognition.stop().catch(() => {});
       }
     };
   }, []);
@@ -3812,7 +4188,12 @@ const finalText = mergeChunks(chunks);
 
   return (
     <div ref={appRootRef} className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible" dir="rtl">
-      {/* Header */}
+      {/* Sticky top chrome */}
+      <div
+        className="sticky top-0 z-40 bg-slate-50"
+        style={{ paddingTop: "max(env(safe-area-inset-top), 8px)" }}
+      >
+        {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
   <div className="flex items-center justify-between">
     {/* Left: More */}
@@ -3964,7 +4345,7 @@ const finalText = mergeChunks(chunks);
             onClick={() => {
               setMoreMenuOpen(false);
               setMoreMenuView("main");
-              void signOut(auth);
+              void signOutSmart();
             }}
             className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
           >
@@ -4004,7 +4385,7 @@ const finalText = mergeChunks(chunks);
   ) : null}
 </header>
 
-      {/* Voice hint */}
+        {/* Voice hint */}
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
@@ -4019,6 +4400,8 @@ const finalText = mergeChunks(chunks);
             {t("דוגמאות:")} {getVoiceExamplesText(lang)}
           </div>
         </div>
+      </div>
+
       </div>
 
       {/* Content */}
@@ -4470,8 +4853,11 @@ const finalText = mergeChunks(chunks);
       </main>
 
       {/* Bottom nav */}
-      <div className="fixed bottom-0 left-0 right-0 z-50">
-        <div className="max-w-md mx-auto px-4 pb-3">
+      <div
+        className="fixed bottom-0 left-0 right-0 z-50"
+        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+      >
+        <div className="max-w-md mx-auto px-4 pb-0">
           <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
             <div className="relative flex items-center justify-between px-6 py-2">
                {/* Favorites */}
@@ -4496,15 +4882,27 @@ const finalText = mergeChunks(chunks);
                 ) : null}
 
                 <button
+                  style={{ touchAction: "manipulation" }}
+                  onPointerDown={(e) => {
+                    e.preventDefault();
+
+                    if (Date.now() < micTapLockUntilRef.current) return;
+                    if (voiceUi === "review") return;
+
+                    if (voiceUi === "processing") {
+                      nativeRestartRequestedRef.current = true;
+                      return;
+                    }
+
+                    if (voiceUi === "idle") void startTapListening();
+                    else if (voiceUi === "recording") void stopTapListening();
+                  }}
                   onClick={(e) => {
                     e.preventDefault();
-                    if (voiceUi === "processing" || voiceUi === "review") return;
-                    if (voiceUi === "idle") startTapListening();
-                    else if (voiceUi === "recording") stopTapListening();
                   }}
                   className={`w-14 h-14 rounded-full border-4 border-white shadow-xl flex items-center justify-center ${
                     voiceUi === "recording" ? "bg-rose-500 text-white" : "bg-indigo-600 text-white hover:bg-indigo-700"
-                  } ${voiceUi === "processing" ? "opacity-60 pointer-events-none" : ""}`}
+                  } ${voiceUi === "processing" ? "opacity-60" : ""}`}
                   title={
                     voiceUi === "recording"
                       ? t(t("לחץ לסיום"))
@@ -4674,18 +5072,24 @@ const finalText = mergeChunks(chunks);
       ) : null}
 
       {undoToast ? (
-        <div className="fixed bottom-14 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50 flex items-center gap-3">
-          <span className="font-bold text-[13px]">{undoToast.msg}</span>
+        <div
+          className="fixed left-1/2 -translate-x-1/2 bg-black text-white px-3 py-1.5 rounded-2xl shadow-lg z-50 flex items-center gap-2 max-w-[92vw]"
+          style={{ bottom: "calc(92px + env(safe-area-inset-bottom))" }}
+        >
+          <span className="font-bold text-[12px] whitespace-nowrap overflow-hidden text-ellipsis">{undoToast.msg}</span>
           <button
             onClick={undoToast.onUndo}
-            className="px-3 py-1 rounded-xl bg-white/15 hover:bg-white/25 font-black text-[13px]"
+            className="px-2.5 py-1 rounded-xl bg-white/15 hover:bg-white/25 font-black text-[12px] shrink-0"
           >
             {undoToast.undoLabel}
           </button>
         </div>
       ) : null}
       {toast ? (
-        <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-black text-white px-4 py-2 rounded-2xl shadow-lg z-50">
+        <div
+          className="fixed left-1/2 -translate-x-1/2 bg-black text-white px-3 py-1.5 rounded-2xl shadow-lg z-50 text-[12px] font-bold whitespace-nowrap max-w-[92vw] overflow-hidden text-ellipsis"
+          style={{ bottom: "calc(92px + env(safe-area-inset-bottom))" }}
+        >
           {toast}
         </div>
       ) : null}

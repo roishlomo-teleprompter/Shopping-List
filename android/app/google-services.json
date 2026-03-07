@@ -1,0 +1,39 @@
+{
+  "project_info": {
+    "project_number": "883804592996",
+    "project_id": "shopping-list-218bd",
+    "storage_bucket": "shopping-list-218bd.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:883804592996:android:81477d97d56a158461b871",
+        "android_client_info": {
+          "package_name": "com.myeasylist.app"
+        }
+      },
+      "oauth_client": [
+        {
+          "client_id": "883804592996-pnv8jkhvtksc7pprhm6stlhfkpfvlm5p.apps.googleusercontent.com",
+          "client_type": 3
+        }
+      ],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCWmHCTh1A3iHVxbBvjtMnYmP5IGW71pSM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": [
+            {
+              "client_id": "883804592996-pnv8jkhvtksc7pprhm6stlhfkpfvlm5p.apps.googleusercontent.com",
+              "client_type": 3
+            }
+          ]
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
