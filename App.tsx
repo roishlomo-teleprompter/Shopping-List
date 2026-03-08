@@ -344,6 +344,27 @@ const normalize = (s: string) =>
     .replace(/[״"']/g, "")
     .replace(/\s+/g, " ");
 
+const stripWrappingBrackets = (s: string = "") =>
+  s
+    .replace(/^\s*[\(\[\{]\s*/, "")
+    .replace(/\s*[\)\]\}]\s*$/, "")
+    .trim();
+
+const cleanVoicePreviewText = (s: string = "") =>
+  stripWrappingBrackets(s)
+    .replace(/[()\[\]{}]/g, "")
+    .replace(/\s*,\s*/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+
+const cleanVoiceReviewText = (s: string = "") =>
+  stripWrappingBrackets(s)
+    .replace(/[()\[\]{}]/g, "")
+    .replace(/\s*,\s*/g, ", ")
+    .replace(/\s+/g, " ")
+    .replace(/\s+,/g, ",")
+    .trim();
+
 const normalizeVoiceText = (s: string) => {
   const t = (s || "").trim();
   return t
@@ -837,6 +858,31 @@ function parseItemsFromText(raw: string): ItemParse[] {
     for (const p of parsed) out.push(p);
   }
   return out;
+}
+
+
+function parseItemsForExecution(raw: string): ItemParse[] {
+  const source = normalizeVoiceText(raw || "");
+  if (!source) return [];
+
+  // In review mode, commas/newlines are intentional separators.
+  // If the user deletes a comma, the words stay in the same segment and become one item.
+  if (/[,\n]/.test(source)) {
+    const segments = source
+      .replace(/[，،]/g, ",")
+      .split(/[,\n]+/)
+      .map((x) => x.trim())
+      .filter(Boolean);
+
+    const out: ItemParse[] = [];
+    for (const seg of segments) {
+      const parsed = parseSingleItemFromSegment(seg);
+      if (parsed) out.push(parsed);
+    }
+    return out;
+  }
+
+  return parseItemsFromText(source);
 }
 
 
@@ -1822,6 +1868,7 @@ useEffect(() => {
   const heardClearTimerRef = useRef<number | null>(null);
   const MIC_TAP_DEBOUNCE_MS = 450;
   const NATIVE_RESTART_COOLDOWN_MS = 700;
+  const NATIVE_SMART_START_DELAY_MS = 420;
   const NATIVE_LATE_TRANSCRIPT_WAIT_MS = 900;
   const NATIVE_LATE_TRANSCRIPT_POLL_MS = 60;
 
@@ -2338,7 +2385,7 @@ const hideSuggestion = (s: SuggestView) => {
     }
     if (!list?.id) return;
 
-    const name = inputValue.trim();
+    const name = stripWrappingBrackets(inputValue.trim());
     if (!name) return;
 
     // If the item already exists in the list, increment quantity instead of creating a duplicate row
@@ -2638,57 +2685,75 @@ if (normalized) {
 
   // WhatsApp share
   
-  const buildGoogleCalendarTemplateUrl = (startLocal: string, durationMin: number) => {
-    // startLocal: 'YYYY-MM-DDTHH:mm' (local time)
+  const buildCalendarIcs = (startLocal: string, durationMin: number) => {
     const [datePart, timePart] = startLocal.split("T");
     const [y, mo, d] = datePart.split("-").map((x) => parseInt(x, 10));
     const [hh, mm] = timePart.split(":").map((x) => parseInt(x, 10));
+
     const start = new Date(y, mo - 1, d, hh, mm, 0, 0);
     const end = new Date(start.getTime() + Math.max(15, durationMin) * 60_000);
+    const stamp = new Date();
 
     const pad = (n: number) => String(n).padStart(2, "0");
-    const fmt = (dt: Date) =>
-      `${dt.getFullYear()}${pad(dt.getMonth() + 1)}${pad(dt.getDate())}T${pad(dt.getHours())}${pad(dt.getMinutes())}00`;
+    const toUtcIcs = (dt: Date) =>
+      `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}Z`;
 
-    const dates = `${fmt(start)}/${fmt(end)}`;
-    const text = encodeURIComponent(tReminder.eventTitle);
-    const details = encodeURIComponent(tReminder.eventDetails);
-    const ctz = encodeURIComponent("Asia/Jerusalem");
+    const escapeIcsText = (value: string) =>
+      String(value || "")
+        .replace(/\\/g, "\\\\")
+        .replace(/;/g, "\\;")
+        .replace(/,/g, "\\,")
+        .replace(/\r?\n/g, "\\n");
 
-    return `https://calendar.google.com/calendar/render?action=TEMPLATE&text=${text}&dates=${encodeURIComponent(dates)}&details=${details}&ctz=${ctz}`;
+    return [
+      "BEGIN:VCALENDAR",
+      "VERSION:2.0",
+      "PRODID:-//My Easy List//Shopping Reminder//EN",
+      "CALSCALE:GREGORIAN",
+      "BEGIN:VEVENT",
+      `UID:shopping-reminder-${start.getTime()}@myeasylist.app`,
+      `DTSTAMP:${toUtcIcs(stamp)}`,
+      `DTSTART:${toUtcIcs(start)}`,
+      `DTEND:${toUtcIcs(end)}`,
+      `SUMMARY:${escapeIcsText(tReminder.eventTitle)}`,
+      `DESCRIPTION:${escapeIcsText(tReminder.eventDetails)}`,
+      "END:VEVENT",
+      "END:VCALENDAR",
+    ].join("\r\n");
   };
 
-  const openGoogleCalendar = () => {
-    const webUrl = buildGoogleCalendarTemplateUrl(calendarDateTime, calendarDurationMin);
+  const downloadCalendarIcs = (icsText: string) => {
+    const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = "shopping-reminder.ics";
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+  };
 
-    const ua = navigator.userAgent || "";
-    const isAndroid = /Android/i.test(ua);
-    const isIOS = /iPhone|iPad|iPod/i.test(ua);
+  const openSystemCalendar = async () => {
+    const icsText = buildCalendarIcs(calendarDateTime, calendarDurationMin);
 
-    // Best-effort deep link to native Google Calendar app.
-    // If it fails (app not installed / browser blocks), fall back to the web URL.
-    if (isAndroid) {
-      const intentUrl =
-        webUrl.replace(/^https:\/\//i, "intent://") +
-        "#Intent;scheme=https;package=com.google.android.calendar;end";
-      window.location.href = intentUrl;
-      window.setTimeout(() => {
-        window.location.href = webUrl;
-      }, 700);
-      return;
+    try {
+      const file = new File([icsText], "shopping-reminder.ics", { type: "text/calendar" });
+      const nav: any = navigator;
+
+      if (nav?.canShare?.({ files: [file] }) && nav?.share) {
+        await nav.share({
+          title: tReminder.eventTitle,
+          text: tReminder.eventDetails,
+          files: [file],
+        });
+        return;
+      }
+    } catch (e) {
+      // fallback to download
     }
 
-    if (isIOS) {
-      // iOS deep-link support varies by browser/app installation.
-      // We try to open the app, then fall back to web.
-      window.location.href = "googlecalendar://";
-      window.setTimeout(() => {
-        window.location.href = webUrl;
-      }, 700);
-      return;
-    }
-
-    window.open(webUrl, "_blank", "noopener,noreferrer");
+    downloadCalendarIcs(icsText);
   };
 
 const shareListWhatsApp = () => {
@@ -2834,7 +2899,7 @@ ${footer}`;
   const addFavoriteToList = async (fav: { id: string; name: string }) => {
     if (!list?.id) return { targetId: null as string | null, created: false };
 
-    const favKey = normalizeItemName(fav.name);
+    const favKey = normalizeItemName(stripWrappingBrackets(fav.name));
 
     const existing = items.find((i) => !i.isPurchased && normalizeItemName(i.name) === favKey);
 
@@ -2874,7 +2939,7 @@ ${footer}`;
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
       id: itemId,
-      name: fav.name,
+      name: stripWrappingBrackets(fav.name),
       quantity: 1,
       isPurchased: false,
       isFavorite: false,
@@ -2986,7 +3051,7 @@ ${footer}`;
   // Voice actions
   // ---------------------------
   const findItemByName = (name: string) => {
-    const n = normalize(name);
+    const n = normalize(stripWrappingBrackets(name));
     const exact = items.find((i) => normalize(i.name) === n);
     if (exact) return exact;
     const contains = items.find((i) => normalize(i.name).includes(n) || n.includes(normalize(i.name)));
@@ -2998,7 +3063,7 @@ ${footer}`;
     if (!listId) return;
 
     const itemsNow = latestItemsRef.current || items;
-    const name = nameRaw.trim();
+    const name = stripWrappingBrackets(nameRaw.trim());
     if (!name) return;
 
     const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
@@ -3088,7 +3153,7 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-    const parsed = parseItemsFromText(payload);
+    const parsed = parseItemsForExecution(payload);
     if (parsed.length === 0) return;
 
     for (const p of parsed) {
@@ -3114,7 +3179,7 @@ ${footer}`;
 
   const restartNativeTapListeningSoon = () => {
     window.setTimeout(() => {
-      void startTapListening();
+      void startTapListening(bypassTapLock);
     }, 120);
   };
 
@@ -3327,7 +3392,7 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-    const parsed = parseItemsFromText(payload);
+    const parsed = parseItemsForExecution(payload);
     if (parsed.length === 0) return [];
 
     const actions: VoiceUndoAction[] = [];
@@ -3335,7 +3400,7 @@ ${footer}`;
     const itemsNow = latestItemsRef.current || items;
 
     for (const p of parsed) {
-      const name = (p.name || "").trim();
+      const name = stripWrappingBrackets((p.name || "").trim());
       if (!name) continue;
 
       const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
@@ -3446,12 +3511,12 @@ ${footer}`;
       return;
     }
 
-    setVoiceDraft(formatDraftForReview(combined));
+    setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
     setVoiceUi("review");
     nativeFinalizeRef.current = false;
   };
 
-  const scheduleNativeTapRestart = (delayMs: number) => {
+  const scheduleNativeTapRestart = (delayMs: number, bypassTapLock = true) => {
     if (pendingRestartTimerRef.current != null) {
       window.clearTimeout(pendingRestartTimerRef.current);
       pendingRestartTimerRef.current = null;
@@ -3463,11 +3528,13 @@ ${footer}`;
     }, Math.max(0, delayMs));
   };
 
-  const startTapListening = async () => {
+  const startTapListening = async (bypassTapLock = false) => {
     nativeRestartRequestedRef.current = false;
 
-    if (Date.now() < micTapLockUntilRef.current) return;
-    micTapLockUntilRef.current = Date.now() + MIC_TAP_DEBOUNCE_MS;
+    if (!bypassTapLock) {
+      if (Date.now() < micTapLockUntilRef.current) return;
+      micTapLockUntilRef.current = Date.now() + MIC_TAP_DEBOUNCE_MS;
+    }
 
     if (!isOnline) {
       setToast(t("__toast_no_internet__"));
@@ -3490,10 +3557,18 @@ ${footer}`;
       }
 
       const sinceLastStop = Date.now() - nativeLastStopAtRef.current;
-      if (nativeLastStopAtRef.current && sinceLastStop < NATIVE_RESTART_COOLDOWN_MS) {
-        scheduleNativeTapRestart(NATIVE_RESTART_COOLDOWN_MS - sinceLastStop);
-        setVoiceUi("processing");
-        return;
+      if (nativeLastStopAtRef.current) {
+        const requiredDelay = Math.max(
+          0,
+          Math.max(NATIVE_RESTART_COOLDOWN_MS - sinceLastStop, NATIVE_SMART_START_DELAY_MS - sinceLastStop)
+        );
+
+        if (requiredDelay > 0) {
+          setVoiceUi("processing");
+          setIsListening(false);
+          scheduleNativeTapRestart(requiredDelay, true);
+          return;
+        }
       }
 
       clearNativeSpeechState();
@@ -3531,7 +3606,7 @@ ${footer}`;
           const merged = mergeTranscriptParts(matches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
           if (!merged) return;
           nativeLastPartialRef.current = merged;
-          setLastHeard(merged);
+          setLastHeard(cleanVoicePreviewText(merged));
         });
 
         await SpeechRecognition.addListener("listeningState", (data: any) => {
@@ -3553,7 +3628,7 @@ ${footer}`;
         const initialMerged = mergeTranscriptParts(initialMatches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
         if (initialMerged) {
           nativeFinalTranscriptRef.current = initialMerged;
-          setLastHeard(initialMerged);
+          setLastHeard(cleanVoicePreviewText(initialMerged));
         }
       } catch (e) {
         console.error(e);
@@ -3653,7 +3728,7 @@ ${footer}`;
             ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
             : "");
 
-        if (last) setLastHeard(last);
+        if (last) setLastHeard(cleanVoicePreviewText(last));
 
         hadAnyResult = true;
         lastResultAt = Date.now();
@@ -3797,7 +3872,7 @@ const finalText = mergeChunks(chunks);
       return;
     }
 
-    setVoiceDraft(formatDraftForReview(combined));
+    setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
     setVoiceUi("review");
   };
 
@@ -3976,7 +4051,7 @@ const finalText = mergeChunks(chunks);
             ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
             : "");
 
-        if (last) setLastHeard(last);
+        if (last) setLastHeard(cleanVoicePreviewText(last));
 
         hadAnyResult = true;
         lastResultAt = Date.now();
@@ -4393,7 +4468,7 @@ const finalText = mergeChunks(chunks);
           </div>
           {lastHeard ? (
             <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
-              {t("שמענו:")} {lastHeard}
+              {t("שמענו:")} {cleanVoicePreviewText(lastHeard)}
             </div>
           ) : null}
           <div className="text-[10px] font-black text-slate-400 mt-1">
@@ -4991,7 +5066,7 @@ const finalText = mergeChunks(chunks);
                 <button
                   onClick={() => {
                     setShowCalendarModal(false);
-                    openGoogleCalendar();
+                    void openSystemCalendar();
                   }}
                   className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
                 >
