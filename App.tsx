@@ -35,8 +35,6 @@ const ListPlusIcon: React.FC<{ className?: string }> = ({ className }) => {
   )
 }
 
-
-
 import {
   onAuthStateChanged,
   signInWithPopup,
@@ -65,13 +63,24 @@ import {
   writeBatch,
 } from "firebase/firestore";
 
-import { Capacitor } from "@capacitor/core";
+import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Share } from "@capacitor/share";
 import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
 import { auth, db, googleProvider } from "./firebase.ts";
 import confetti from "canvas-confetti";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
+
+type CalendarPluginType = {
+  openCalendar: (options: {
+    title: string;
+    description?: string;
+    startTime: number;
+    endTime: number;
+  }) => Promise<void>;
+};
+
+const CalendarPlugin = registerPlugin<CalendarPluginType>("CalendarPlugin");
 
 /**
  * Force Firebase auth persistence to LOCAL (so you won't need to login every time).
@@ -248,7 +257,6 @@ const InvitePage: React.FC = () => {
   if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl" style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}>
-
 
       <style>{`
         html, body, #root {
@@ -495,10 +503,6 @@ const ADJECTIVES = new Set<string>([
   "קפוא","קפואה","קפואים","קפואות",
 ]);
 
-
-
-
-
 const NOUN_COMPOUND_TAILS = new Set<string>([
   "שיניים",
   "ידיים",
@@ -606,7 +610,6 @@ const byLang = (l: AppLang) => {
   return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
 }
 
-
 function formatDraftForReview(raw: string): string {
   const s = (raw || "").trim();
   if (!s) return raw;
@@ -623,7 +626,6 @@ function formatDraftForReview(raw: string): string {
   const parts = items.map((it) => (it.qty && it.qty > 1 ? `${it.qty} ${it.name}` : it.name));
   return parts.join(", ");
 }
-
 
 /**
  * Token-scan parser that handles:
@@ -746,7 +748,6 @@ function parseSingleItemFromSegment(segment: string): ItemParse | null {
   return { name, qty };
 }
 
-
 function isHebrewLikeToken(t: string) {
   return /[\u0590-\u05FF]/.test(t);
 }
@@ -860,7 +861,6 @@ function parseItemsFromText(raw: string): ItemParse[] {
   return out;
 }
 
-
 function parseItemsForExecution(raw: string): ItemParse[] {
   const source = normalizeVoiceText(raw || "");
   if (!source) return [];
@@ -885,9 +885,6 @@ function parseItemsForExecution(raw: string): ItemParse[] {
   return parseItemsFromText(source);
 }
 
-
-
-
 // ---------------------------
 // Autocomplete (Hebrew grocery suggestions)
 // ---------------------------
@@ -906,7 +903,6 @@ type SuggestCandidate = { name: string; key: string; sources: Set<SuggestSource>
 
 type SuggestView = { name: string; key: string; canHide: boolean; isInList: boolean; itemId?: string; currentQty?: number };
 
-
 function normalizeItemName(s: string) {
   return s
     .trim()
@@ -917,8 +913,6 @@ function normalizeItemName(s: string) {
 }
 
 const HISTORY_STORAGE_KEY = "shopping_list_item_history_v1";
-
-
 
 const HIDDEN_SUGGESTIONS_STORAGE_KEY = "shopping_list_hidden_suggestions_v1";
 
@@ -1065,7 +1059,6 @@ function getAutocompleteSuggestions(opts: {
     if (!inListByKey.has(k)) inListByKey.set(k, { id: it.id, quantity: it.quantity });
   }
 
-
   const score = (c: SuggestCandidate) => {
     const nameKey = c.key;
     const starts = nameKey.startsWith(q);
@@ -1109,108 +1102,6 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-
-
-const reminderI18n: Record<string, { 
-  reminderTitle: string;
-  scheduleTitle: string;
-  addToCalendar: string;
-  whenConvenient: string;
-  duration: string;
-  minutes: string;
-  openCalendar: string;
-  cancel: string;
-  eventTitle: string;
-  eventDetails: string;
-}> = {
-  he: {
-  "__toast_no_internet__": "אין חיבור לאינטרנט",
-  "__toast_online_back__": "חיבור לרשת חזר",
-  "STATUS_ONLINE": "מחובר",
-  "STATUS_OFFLINE": "לא מחובר",
-    "לא מחובר": "לא מחובר",
-    "מחובר": "מחובר",
-    reminderTitle: "תזכורת לביצוע קניות",
-    scheduleTitle: "תזמון קניות",
-    addToCalendar: "נוסיף תזכורת ביומן (בלי פריטי הרשימה)",
-    whenConvenient: "מתי נוח לך?",
-    duration: "משך",
-    minutes: "דק׳",
-    openCalendar: "פתח ביומן",
-    cancel: "ביטול",
-    eventTitle: "תזכורת לביצוע קניות",
-    eventDetails: "תזכורת לביצוע קניה - פתח את אפליקציית רשימת הקניות",
-    "אין חיבור לאינטרנט": "אין חיבור לאינטרנט",
-    "אין חיבור אינטרנט": "אין חיבור אינטרנט",
-    "חיבור לרשת חזר": "החיבור חזר",
-    "זיהוי קולי דורש חיבור לאינטרנט": "זיהוי קולי דורש חיבור לאינטרנט",
-    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.",
-  },
-  en: {
-  "__toast_no_internet__": "No internet connection",
-  "__toast_online_back__": "Back online",
-    "לא מחובר": "Offline",
-    "מחובר": "Online",
-    reminderTitle: "Shopping Reminder",
-    scheduleTitle: "Schedule Shopping",
-    addToCalendar: "We'll add a calendar reminder (without list items)",
-    whenConvenient: "When is it convenient?",
-    duration: "Duration",
-    minutes: "min",
-    openCalendar: "Open in Calendar",
-    cancel: "Cancel",
-    eventTitle: "Shopping Reminder",
-    eventDetails: "Shopping reminder - open your shopping list app",
-    "אין חיבור לאינטרנט": "No internet connection",
-    "אין חיבור אינטרנט": "No internet connection",
-    "חיבור לרשת חזר": "Connection restored",
-    "זיהוי קולי דורש חיבור לאינטרנט": "Voice input requires an internet connection",
-    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "Microphone permission is required. Please allow it and try again.",
-  },
-  ru: {
-  "__toast_no_internet__": "Нет подключения к интернету",
-  "__toast_online_back__": "Снова онлайн",
-    "לא מחובר": "Офлайн",
-    "מחובר": "Онлайн",
-    reminderTitle: "Напоминание о покупках",
-    scheduleTitle: "Запланировать покупки",
-    addToCalendar: "Добавим напоминание в календарь (без позиций списка)",
-    whenConvenient: "Когда вам удобно?",
-    duration: "Продолжительность",
-    minutes: "мин",
-    openCalendar: "Открыть в календаре",
-    cancel: "Отмена",
-    eventTitle: "Напоминание о покупках",
-    eventDetails: "Напоминание о покупках - откройте приложение списка покупок",
-    "אין חיבור לאינטרנט": "Нет подключения к интернету",
-    "אין חיבור אינטרנט": "Нет подключения к интернету",
-    "חיבור לרשת חזר": "Подключение восстановлено",
-    "זיהוי קולי דורש חיבור לאינטרנט": "Голосовой ввод требует подключения к интернету",
-    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "Нужен доступ к микрофону. Разрешите и попробуйте снова.",
-  },
-  ar: {
-  "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
-  "__toast_online_back__": "تم الاتصال بالإنترنت",
-    "לא מחובר": "غير متصل",
-    "מחובר": "متصل",
-    reminderTitle: "تذكير بالتسوق",
-    scheduleTitle: "جدولة التسوق",
-    addToCalendar: "سنضيف تذكيرًا في التقويم (بدون عناصر القائمة)",
-    whenConvenient: "متى يناسبك؟",
-    duration: "المدة",
-    minutes: "دقيقة",
-    openCalendar: "فتح في التقويم",
-    cancel: "إلغاء",
-    eventTitle: "تذكير بالتسوق",
-    eventDetails: "تذكير بالتسوق - افتح تطبيق قائمة التسوق",
-    "אין חיבור לאינטרנט": "لا يوجد اتصال بالإنترنت",
-    "אין חיבור אינטרנט": "لا يوجد اتصال بالإنترنت",
-    "חיבור לרשת חזר": "تمت استعادة الاتصال",
-    "זיהוי קולי דורש חיבור לאינטרנט": "الإدخال الصوتي يتطلب اتصالاً بالإنترنت",
-    "אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב.": "يلزم إذن الميكروفون. يرجى السماح ثم المحاولة مرة أخرى.",
-  },
-};
-
 
 const detectDeviceLang = (): AppLang => {
   try {
@@ -1548,10 +1439,6 @@ const [lang, setLang] = useState<AppLang>(() => {
   }
 });
 
-  // Reminder modal translations must follow the app-selected language
-  const tReminder = useMemo(() => reminderI18n[lang] ?? reminderI18n.he, [lang]);
-
-
 useEffect(() => {
   try {
     localStorage.setItem(APP_LANG_STORAGE_KEY, lang);
@@ -1569,6 +1456,32 @@ const t = useMemo(() => {
 }, [lang]);
 
 const speechLang = useMemo(() => SPEECH_LANG_BY_APP_LANG[lang] ?? "he-IL", [lang]);
+
+const calendarEventLabels = useMemo(() => {
+  switch (lang) {
+    case "en":
+      return {
+        title: "Shopping Reminder - My Easy List",
+        descriptionPrefix: "Shopping items:",
+      };
+    case "ru":
+      return {
+        title: "Напоминание о покупках - My Easy List",
+        descriptionPrefix: "Покупки:",
+      };
+    case "ar":
+      return {
+        title: "تذكير بالتسوق - My Easy List",
+        descriptionPrefix: "عناصر التسوق:",
+      };
+    case "he":
+    default:
+      return {
+        title: "תזכורת לקניות - My Easy List",
+        descriptionPrefix: "פריטי קניות:",
+      };
+  }
+}, [lang]);
 
 const [isOnline, setIsOnline] = useState<boolean>(() => {
   try {
@@ -1610,7 +1523,6 @@ const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const pendingEnterIdsRef = useRef<Set<string>>(new Set());
   const [enterAnim, setEnterAnim] = useState<Record<string, "from" | "to">>({});
 
-
   const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
@@ -1626,7 +1538,6 @@ const blurCloseTimerRef = useRef<number | null>(null);
 useEffect(() => {
   historyRef.current = loadItemHistory();
 }, []);
-
 
 useEffect(() => {
   if (pendingEnterIdsRef.current.size === 0) return;
@@ -1653,7 +1564,6 @@ useEffect(() => {
     }, 260);
   }
 }, [items]);
-
 
   const [isCopied, setIsCopied] = useState(false);
 
@@ -1780,24 +1690,7 @@ useEffect(() => {
     };
   }, [shareMenuOpen, moreMenuOpen, updateShareMenuPos, updateMoreMenuPos]);
 
-
 const [showClearConfirm, setShowClearConfirm] = useState(false);
-const [showCalendarModal, setShowCalendarModal] = useState(false);
-  const [calendarDateTime, setCalendarDateTime] = useState<string>(() => {
-    // default: today at 18:00 (local), or next hour if past
-    const now = new Date();
-    const d = new Date(now);
-    d.setMinutes(0, 0, 0);
-    d.setHours(18);
-    if (d.getTime() < now.getTime()) {
-      d.setHours(now.getHours() + 1);
-    }
-    // datetime-local format: YYYY-MM-DDTHH:mm
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  });
-  const [calendarDurationMin, setCalendarDurationMin] = useState<number>(60);
-
 
   const [authLoading, setAuthLoading] = useState(true);
     const [authInitialized, setAuthInitialized] = useState(false);
@@ -1822,7 +1715,6 @@ const showToastKey = useCallback(
   },
   [t]
 );
-
 
 useEffect(() => {
   if (!onlineToastInitRef.current) {
@@ -1872,7 +1764,6 @@ useEffect(() => {
   const NATIVE_LATE_TRANSCRIPT_WAIT_MS = 900;
   const NATIVE_LATE_TRANSCRIPT_POLL_MS = 60;
 
-
   useEffect(() => {
     lastHeardRef.current = lastHeard || "";
   }, [lastHeard]);
@@ -1884,7 +1775,6 @@ useEffect(() => {
       }
     };
   }, []);
-
 
   useEffect(() => {
     // Clear "שמענו: ..." automatically shortly after listening ends
@@ -1912,7 +1802,6 @@ useEffect(() => {
       }
     };
   }, [lastHeard, isListening]);
-
 
   // ---------------------------
   // Swipe gestures (active items): swipe left = delete, swipe right = favorite
@@ -2105,7 +1994,6 @@ useEffect(() => {
     setSwipeUi({ id: null, dx: 0 });
   };
 
-
   const onSwipePointerCancel = () => {
     swipeStartRef.current = null;
     swipeLastRef.current = null;
@@ -2117,7 +2005,6 @@ useEffect(() => {
     swipeCaptureRef.current = null;
     setSwipeUi({ id: null, dx: 0 });
   };
-
 
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
@@ -2271,8 +2158,6 @@ const activeItems = useMemo(
     [items]
   );
 
-
-
 const recordHistory = (rawName: string) => {
   const name = rawName.trim();
   if (!name) return;
@@ -2349,7 +2234,6 @@ const applySuggestion = async (s: SuggestView) => {
   window.requestAnimationFrame(() => inputRef.current?.focus());
 };
 
-
 const hideSuggestion = (s: SuggestView) => {
   const key = s.key || normalizeItemName(s.name);
   if (!key) return;
@@ -2373,8 +2257,6 @@ const hideSuggestion = (s: SuggestView) => {
   setActiveSuggestIndex(-1);
   window.requestAnimationFrame(() => inputRef.current?.focus());
 };
-
-
 
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
@@ -2470,7 +2352,6 @@ if (normalized) {
       });
     }, LEAVE_MS);
   };
-
 
   const updateQty = async (id: string, delta: number) => {
     if (!list?.id) return;
@@ -2604,7 +2485,6 @@ if (normalized) {
     }, 240);
   };
 
-
   const clearListServer = async () => {
     const listId = latestListIdRef.current || list?.id;
     if (!listId) return;
@@ -2685,76 +2565,49 @@ if (normalized) {
 
   // WhatsApp share
   
-  const buildCalendarIcs = (startLocal: string, durationMin: number) => {
-    const [datePart, timePart] = startLocal.split("T");
-    const [y, mo, d] = datePart.split("-").map((x) => parseInt(x, 10));
-    const [hh, mm] = timePart.split(":").map((x) => parseInt(x, 10));
+const openNativeCalendar = async () => {
+  const activeItemsForCalendar = items.filter((i) => !i.isPurchased);
+  const description = activeItemsForCalendar.length
+    ? `${calendarEventLabels.descriptionPrefix}\n${activeItemsForCalendar
+        .map((i) => `• ${i.name}${(i.quantity || 1) > 1 ? ` x${i.quantity}` : ""}`)
+        .join("\n")}`
+    : calendarEventLabels.descriptionPrefix;
 
-    const start = new Date(y, mo - 1, d, hh, mm, 0, 0);
-    const end = new Date(start.getTime() + Math.max(15, durationMin) * 60_000);
-    const stamp = new Date();
+  const start = new Date();
+  start.setMinutes(0, 0, 0);
+  start.setHours(Math.max(start.getHours() + 1, 18));
 
-    const pad = (n: number) => String(n).padStart(2, "0");
-    const toUtcIcs = (dt: Date) =>
-      `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}Z`;
+  const end = new Date(start.getTime() + 60 * 60 * 1000);
 
-    const escapeIcsText = (value: string) =>
-      String(value || "")
-        .replace(/\\/g, "\\\\")
-        .replace(/;/g, "\\;")
-        .replace(/,/g, "\\,")
-        .replace(/\r?\n/g, "\\n");
-
-    return [
-      "BEGIN:VCALENDAR",
-      "VERSION:2.0",
-      "PRODID:-//My Easy List//Shopping Reminder//EN",
-      "CALSCALE:GREGORIAN",
-      "BEGIN:VEVENT",
-      `UID:shopping-reminder-${start.getTime()}@myeasylist.app`,
-      `DTSTAMP:${toUtcIcs(stamp)}`,
-      `DTSTART:${toUtcIcs(start)}`,
-      `DTEND:${toUtcIcs(end)}`,
-      `SUMMARY:${escapeIcsText(tReminder.eventTitle)}`,
-      `DESCRIPTION:${escapeIcsText(tReminder.eventDetails)}`,
-      "END:VEVENT",
-      "END:VCALENDAR",
-    ].join("\r\n");
-  };
-
-  const downloadCalendarIcs = (icsText: string) => {
-    const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = "shopping-reminder.ics";
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-  };
-
-  const openSystemCalendar = async () => {
-    const icsText = buildCalendarIcs(calendarDateTime, calendarDurationMin);
-
+  if (Capacitor.isNativePlatform()) {
     try {
-      const file = new File([icsText], "shopping-reminder.ics", { type: "text/calendar" });
-      const nav: any = navigator;
-
-      if (nav?.canShare?.({ files: [file] }) && nav?.share) {
-        await nav.share({
-          title: tReminder.eventTitle,
-          text: tReminder.eventDetails,
-          files: [file],
-        });
-        return;
-      }
+      await CalendarPlugin.openCalendar({
+        title: calendarEventLabels.title,
+        description,
+        startTime: start.getTime(),
+        endTime: end.getTime(),
+      });
+      return;
     } catch (e) {
-      // fallback to download
+      console.error("CalendarPlugin failed", e);
+      setToast("CalendarPlugin נכשל באנדרואיד");
+      return;
     }
+  }
 
-    downloadCalendarIcs(icsText);
-  };
+  const pad = (n: number) => String(n).padStart(2, "0");
+  const toGoogleUtc = (dt: Date) =>
+    `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}Z`;
+
+  const params = new URLSearchParams({
+    action: "TEMPLATE",
+    text: calendarEventLabels.title,
+    details: description,
+    dates: `${toGoogleUtc(start)}/${toGoogleUtc(end)}`,
+  });
+
+  window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, "_blank");
+};
 
 const shareListWhatsApp = () => {
     const active = items.filter((i) => !i.isPurchased);
@@ -2799,12 +2652,6 @@ const shareListWhatsApp = () => {
     };
 
     const shareLang = getActiveLangForShare();
-
-    const reminderLang = (localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang) || shareLang;
-    const tReminder = reminderI18n[reminderLang] ?? reminderI18n.he;
-    const Treminder = tReminder;
-    (globalThis as any).Treminder = tReminder;
-
     const defaultTitleByLang: Record<AppLang, string> = {
       he: "My Easy List",
       en: "My list",
@@ -2883,7 +2730,6 @@ ${footer}`;
     openWhatsApp(text);
   };
 
-
   // ---------------------------
   // Swipe gestures (favorites): swipe right = remove from favorites (delete), swipe left = add to list
   // Pointer-only for Android stability.
@@ -2920,7 +2766,6 @@ ${footer}`;
 
       return { targetId: existing.id, created: false };
     }
-
 
     // Visual cue on the favorites card: item was moved to the main list (no text)
     setFavToListFlashIds((prev) => {
@@ -3046,7 +2891,6 @@ ${footer}`;
     setFavSwipeUi({ id: null, dx: 0, rawDx: 0 });
   };
 
-
   // ---------------------------
   // Voice actions
   // ---------------------------
@@ -3084,10 +2928,6 @@ ${footer}`;
 
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
-
-
-
-
 
   const executeVoiceText = async (raw: string) => {
     const listId = latestListIdRef.current || list?.id;
@@ -3162,7 +3002,6 @@ ${footer}`;
 
     // intentionally no toast for "added items" via microphone
   };
-
 
   const isNativeSpeechMode = () => {
     try {
@@ -3984,7 +3823,6 @@ const finalText = mergeChunks(chunks);
       sessionTimer = null;
     };
 
-
     // Clear timers related to voice UI (e.g. auto-clear of "שמענו")
     const clearVoiceTimers = () => {
       if (heardClearTimerRef.current != null) {
@@ -4163,7 +4001,6 @@ const finalText = mergeChunks(chunks);
     }
   };
 
-
   useEffect(() => {
     return () => {
       try {
@@ -4210,7 +4047,6 @@ const finalText = mergeChunks(chunks);
     return () => document.removeEventListener("pointerdown", onDocPointerDown_moreMenu);
   }, [moreMenuOpen]);
 
-
   if (!authInitialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl"
@@ -4222,8 +4058,6 @@ const finalText = mergeChunks(chunks);
       </div>
     );
   }
-
-
 
   if (!user) {
     return (
@@ -4392,7 +4226,7 @@ const finalText = mergeChunks(chunks);
             onClick={() => {
               setMoreMenuOpen(false);
               setMoreMenuView("main");
-              setShowCalendarModal(true);
+              void openNativeCalendar();
             }}
             className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
           >
@@ -5010,73 +4844,6 @@ const finalText = mergeChunks(chunks);
           </footer>
         </div>
       </div>
-
-      {/* Calendar Modal */}
-      {showCalendarModal ? (
-        <div className="fixed inset-0 z-[70] bg-black/50 flex items-center justify-center p-6" dir="rtl">
-          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
-            <div className="p-6 space-y-4">
-              <div className="flex items-start justify-between gap-3">
-                <div className="text-right">
-                  <div className="text-xl font-black text-slate-800">{tReminder.scheduleTitle}</div>
-                  <div className="text-sm font-bold text-slate-400">{tReminder.addToCalendar}</div>
-                </div>
-                <div className="w-10 h-10 rounded-2xl bg-indigo-50 text-indigo-600 flex items-center justify-center">
-                  <Calendar className="w-5 h-5" />
-                </div>
-              </div>
-
-              <div className="space-y-3">
-                <label className="block text-sm font-black text-slate-600">{tReminder.whenConvenient}</label>
-                <input
-                  type="datetime-local"
-                  value={calendarDateTime}
-                  onChange={(e) => setCalendarDateTime(e.target.value)}
-                  className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                />
-              </div>
-
-              <div className="space-y-3">
-                <div className="flex items-center justify-between">
-                  <span className="text-sm font-black text-slate-600">{tReminder.duration}</span>
-                  <span className="text-sm font-black text-slate-500">{calendarDurationMin} {tReminder.minutes}</span>
-                </div>
-                <div className="grid grid-cols-4 gap-2" dir="ltr">
-                  {[30, 45, 60, 90].map((m) => (
-                    <button
-                      key={m}
-                      onClick={() => setCalendarDurationMin(m)}
-                      className={`py-2 rounded-2xl font-black text-sm ${
-                        calendarDurationMin === m ? "bg-indigo-600 text-white" : "bg-slate-100 text-slate-700"
-                      }`}
-                    >
-                      {m}
-                    </button>
-                  ))}
-                </div>
-              </div>
-
-              <div className="flex gap-3 pt-2">
-                <button
-                  onClick={() => setShowCalendarModal(false)}
-                  className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-                >
-                  {tReminder.cancel}
-                </button>
-                <button
-                  onClick={() => {
-                    setShowCalendarModal(false);
-                    void openSystemCalendar();
-                  }}
-                  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
-                >
-                  {tReminder.openCalendar}
-                </button>
-              </div>
-            </div>
-          </div>
-        </div>
-      ) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
