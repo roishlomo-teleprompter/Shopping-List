@@ -1,0 +1,20 @@
+{
+	"appId": "com.myeasylist.app",
+	"appName": "My Easy List",
+	"webDir": "dist",
+	"bundledWebRuntime": false,
+	"plugins": {
+		"FirebaseAuthentication": {
+			"skipNativeAuth": false,
+			"providers": [
+				"google.com"
+			]
+		}
+	},
+	"packageClassList": [
+		"FirebaseAuthenticationPlugin",
+		"CAPBrowserPlugin",
+		"SharePlugin",
+		"SpeechRecognitionPlugin"
+	]
+}
