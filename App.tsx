@@ -69,15 +69,11 @@ import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
 import { auth, db, googleProvider } from "./firebase.ts";
 import confetti from "canvas-confetti";
+import appLogo from "./logo-header-transparent.png";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
 type CalendarPluginType = {
-  openCalendar: (options: {
-    title: string;
-    description?: string;
-    startTime: number;
-    endTime: number;
-  }) => Promise<void>;
+  openCalendar: (options?: { title?: string; description?: string }) => Promise<void>;
 };
 
 const CalendarPlugin = registerPlugin<CalendarPluginType>("CalendarPlugin");
@@ -278,8 +274,12 @@ const InvitePage: React.FC = () => {
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
       <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6">
-        <div className="w-20 h-20 bg-indigo-50 text-indigo-600 rounded-full flex items-center justify-center mx-auto">
-          <Share2 className="w-10 h-10" />
+        <div className="flex justify-center">
+          <img
+            src={appLogo}
+            alt="My Easy List"
+            className="w-24 h-24 object-contain drop-shadow-sm"
+          />
         </div>
 
         <h1 className="text-2xl font-black text-slate-800">הוזמנת לרשימה</h1>
@@ -865,12 +865,13 @@ function parseItemsForExecution(raw: string): ItemParse[] {
   const source = normalizeVoiceText(raw || "");
   if (!source) return [];
 
-  // In review mode, commas/newlines are intentional separators.
-  // If the user deletes a comma, the words stay in the same segment and become one item.
-  if (/[,\n]/.test(source)) {
+  // In the review window, only commas are intentional separators.
+  // If the user deletes a comma between words, those words stay together
+  // and are inserted as one item.
+  if (/,/.test(source)) {
     const segments = source
       .replace(/[，،]/g, ",")
-      .split(/[,\n]+/)
+      .split(/,+/)
       .map((x) => x.trim())
       .filter(Boolean);
 
@@ -882,7 +883,8 @@ function parseItemsForExecution(raw: string): ItemParse[] {
     return out;
   }
 
-  return parseItemsFromText(source);
+  const single = parseSingleItemFromSegment(source);
+  return single ? [single] : [];
 }
 
 // ---------------------------
@@ -1130,9 +1132,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחובר": "מחובר",
     "לא מחובר": "לא מחובר",
     "הרשימה ריקה": "הרשימה ריקה",
+    "הרשימה שלך עדיין ריקה": "הרשימה שלך עדיין ריקה",
+    "בוא נתחיל להוסיף מוצרים לקניות 🛒": "בוא נתחיל להוסיף מוצרים לקניות 🛒",
+    "תזכורת לקניות": "תזכורת לקניות",
     "התחבר עם גוגל": "התחבר עם גוגל",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
     "וואטסאפ": "וואטסאפ",
     "שפה": "שפה",
@@ -1155,7 +1160,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שיתוף": "שיתוף",
       "שתף רשימת קניות": "שתף רשימת קניות",
       "קישור לרשימה": "קישור לרשימה",
-      "קישור הצטרפות להרשימה שלי": "קישור הצטרפות להרשימה שלי",
+      "קישור הצטרפות להרשימה שלי:": "קישור הצטרפות להרשימה שלי:",
       "לנקות את כל הרשימה?": "לנקות את כל הרשימה?",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "הפעולה תמחק את כל הפריטים מהרשימה.",
       "ביטול": "ביטול",
@@ -1186,9 +1191,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחובר": "Online",
     "לא מחובר": "Offline",
     "הרשימה ריקה": "The list is empty",
+    "הרשימה שלך עדיין ריקה": "Your list is still empty",
+    "בוא נתחיל להוסיף מוצרים לקניות 🛒": "Let's start adding products for shopping 🛒",
+    "תזכורת לקניות": "Shopping Reminder",
     "התחבר עם גוגל": "Sign in with Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "To use the list and invite friends, please sign in with Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "Leave shared list",
     "וואטסאפ": "WhatsApp",
     "שפה": "Language",
@@ -1211,7 +1219,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שיתוף": "Share",
       "שתף רשימת קניות": "Share shopping list",
       "קישור לרשימה": "List link",
-      "קישור הצטרפות להרשימה שלי": "Join link to my list",
+      "קישור הצטרפות להרשימה שלי:": "Join link to my list",
       "לנקות את כל הרשימה?": "Clear the entire list?",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "This will delete all items from the list.",
       "ביטול": "Cancel",
@@ -1263,9 +1271,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחובר": "Онлайн",
     "לא מחובר": "Офлайн",
     "הרשימה ריקה": "Список пуст",
+    "הרשימה שלך עדיין ריקה": "Ваш список пока пуст",
+    "בוא נתחיל להוסיף מוצרים לקניות 🛒": "Давайте начнём добавлять товары к покупкам 🛒",
+    "תזכורת לקניות": "Напоминание о покупках",
     "התחבר עם גוגל": "Войти через Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "Чтобы пользоваться списком и приглашать друзей, войдите через Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
     "וואטסאפ": "WhatsApp",
     "שפה": "Язык",
@@ -1288,7 +1299,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שיתוף": "Поделиться",
       "שתף רשימת קניות": "Поделиться списком покупок",
       "קישור לרשימה": "Ссылка на список",
-      "קישור הצטרפות להרשימה שלי": "Ссылка для присоединения к моему списку",
+      "קישור הצטרפות להרשימה שלי:": "Ссылка для присоединения к моему списку",
       "לנקות את כל הרשימה?": "Очистить весь список?",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "Это удалит все элементы из списка.",
       "ביטול": "Отмена",
@@ -1340,9 +1351,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחובר": "متصل",
     "לא מחובר": "غير متصل",
     "הרשימה ריקה": "القائمة فارغة",
+    "הרשימה שלך עדיין ריקה": "قائمتك ما زالت فارغة",
+    "בוא נתחיל להוסיף מוצרים לקניות 🛒": "لنبدأ بإضافة منتجات للتسوق 🛒",
+    "תזכורת לקניות": "تذكير بالتسوق",
     "התחבר עם גוגל": "تسجيل الدخول عبر Google",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "لاستخدام القائمة ودعوة الأصدقاء، يرجى تسجيل الدخول عبر Google.",
-    "הרשימה שלי חכמה": "My Easy List",
+    "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
     "וואטסאפ": "واتساب",
     "שפה": "اللغة",
@@ -1365,7 +1379,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שיתוף": "مشاركة",
       "שתף רשימת קניות": "مشاركة قائمة التسوق",
       "קישור לרשימה": "رابط القائمة",
-      "קישור הצטרפות להרשימה שלי": "رابط الانضمام إلى قائمتي",
+      "קישור הצטרפות להרשימה שלי:": "رابط الانضمام إلى قائمتي",
       "לנקות את כל הרשימה?": "مسح القائمة بالكامل؟",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "سيتم حذف جميع العناصر من القائمة.",
       "ביטול": "إلغاء",
@@ -1456,32 +1470,6 @@ const t = useMemo(() => {
 }, [lang]);
 
 const speechLang = useMemo(() => SPEECH_LANG_BY_APP_LANG[lang] ?? "he-IL", [lang]);
-
-const calendarEventLabels = useMemo(() => {
-  switch (lang) {
-    case "en":
-      return {
-        title: "Shopping Reminder - My Easy List",
-        descriptionPrefix: "Shopping items:",
-      };
-    case "ru":
-      return {
-        title: "Напоминание о покупках - My Easy List",
-        descriptionPrefix: "Покупки:",
-      };
-    case "ar":
-      return {
-        title: "تذكير بالتسوق - My Easy List",
-        descriptionPrefix: "عناصر التسوق:",
-      };
-    case "he":
-    default:
-      return {
-        title: "תזכורת לקניות - My Easy List",
-        descriptionPrefix: "פריטי קניות:",
-      };
-  }
-}, [lang]);
 
 const [isOnline, setIsOnline] = useState<boolean>(() => {
   try {
@@ -2532,7 +2520,7 @@ if (normalized) {
     if (!link) return;
 
     const title = t("קישור לרשימה");
-    const text = t("קישור הצטרפות להרשימה שלי");
+    const text = t("קישור הצטרפות להרשימה שלי:");
 
     try {
       if (Capacitor.isNativePlatform()) {
@@ -2564,28 +2552,83 @@ if (normalized) {
   };
 
   // WhatsApp share
-  
 const openNativeCalendar = async () => {
   const activeItemsForCalendar = items.filter((i) => !i.isPurchased);
-  const description = activeItemsForCalendar.length
-    ? `${calendarEventLabels.descriptionPrefix}\n${activeItemsForCalendar
-        .map((i) => `• ${i.name}${(i.quantity || 1) > 1 ? ` x${i.quantity}` : ""}`)
-        .join("\n")}`
-    : calendarEventLabels.descriptionPrefix;
 
-  const start = new Date();
-  start.setMinutes(0, 0, 0);
-  start.setHours(Math.max(start.getHours() + 1, 18));
+  const calendarLang: AppLang = lang || "he";
 
-  const end = new Date(start.getTime() + 60 * 60 * 1000);
+  const myListNameByLang: Record<AppLang, string> = {
+    he: "הרשימה שלי",
+    en: "My List",
+    ru: "Мой список",
+    ar: "قائمتي",
+  };
 
-  if (Capacitor.isNativePlatform()) {
+  const emptyByLang: Record<AppLang, string> = {
+    he: "הרשימה כרגע ריקה",
+    en: "The list is currently empty",
+    ru: "Список сейчас пуст",
+    ar: "القائمة فارغة حاليًا",
+  };
+
+  const footerByLang: Record<AppLang, string> = {
+    he: `נשלח מ${myListNameByLang.he} 🛒`,
+    en: `Sent from ${myListNameByLang.en} 🛒`,
+    ru: `Отправлено из ${myListNameByLang.ru} 🛒`,
+    ar: `تم الإرسال من ${myListNameByLang.ar} 🛒`,
+  };
+
+  const defaultTitleByLang: Record<AppLang, string> = {
+    he: "My Easy List",
+    en: "My list",
+    ru: "Мой список",
+    ar: "قائمتي",
+  };
+
+  const rawTitle = (list?.title || "").trim();
+  const rawTitleNorm = rawTitle.toLowerCase();
+
+  const knownDefaultTitlesNorm = new Set(
+    [
+      defaultTitleByLang.he,
+      defaultTitleByLang.en,
+      defaultTitleByLang.ru,
+      defaultTitleByLang.ar,
+      myListNameByLang.he,
+      myListNameByLang.en,
+      myListNameByLang.ru,
+      myListNameByLang.ar,
+      `${myListNameByLang.he}:`,
+      `${myListNameByLang.en}:`,
+      `${myListNameByLang.ru}:`,
+      `${myListNameByLang.ar}:`,
+      "shopping-list",
+      "shopping list",
+      "my easy list",
+    ].map((s) => String(s || "").trim().toLowerCase())
+  );
+
+  const titleIsDefault = !rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm);
+  const shareLikeTitle = titleIsDefault
+    ? `${myListNameByLang[calendarLang] || myListNameByLang.he}:`
+    : rawTitle;
+
+  const itemsBlock = activeItemsForCalendar.length
+    ? activeItemsForCalendar
+        .map((i) => ((i.quantity || 1) > 1 ? `${i.name} ${i.quantity}X` : i.name))
+        .join("\n")
+    : `(${emptyByLang[calendarLang] || emptyByLang.he})`;
+
+  const calendarTitle = `${t("תזכורת לקניות")} - My Easy List`;
+  const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
+
+  const isNative = Capacitor.isNativePlatform();
+
+  if (isNative) {
     try {
       await CalendarPlugin.openCalendar({
-        title: calendarEventLabels.title,
-        description,
-        startTime: start.getTime(),
-        endTime: end.getTime(),
+        title: calendarTitle,
+        description: calendarDescription,
       });
       return;
     } catch (e) {
@@ -2595,18 +2638,18 @@ const openNativeCalendar = async () => {
     }
   }
 
-  const pad = (n: number) => String(n).padStart(2, "0");
-  const toGoogleUtc = (dt: Date) =>
-    `${dt.getUTCFullYear()}${pad(dt.getUTCMonth() + 1)}${pad(dt.getUTCDate())}T${pad(dt.getUTCHours())}${pad(dt.getUTCMinutes())}${pad(dt.getUTCSeconds())}Z`;
+  const start = new Date(Date.now() + 60 * 60 * 1000);
+  const end = new Date(start.getTime() + 30 * 60 * 1000);
+  const fmt = (d: Date) =>
+    d.toISOString().replace(/[-:]/g, "").replace(/\.\d{3}Z$/, "Z");
 
-  const params = new URLSearchParams({
-    action: "TEMPLATE",
-    text: calendarEventLabels.title,
-    details: description,
-    dates: `${toGoogleUtc(start)}/${toGoogleUtc(end)}`,
-  });
+  const googleUrl =
+    `https://calendar.google.com/calendar/render?action=TEMPLATE` +
+    `&text=${encodeURIComponent(calendarTitle)}` +
+    `&details=${encodeURIComponent(calendarDescription)}` +
+    `&dates=${fmt(start)}/${fmt(end)}`;
 
-  window.open(`https://calendar.google.com/calendar/render?${params.toString()}`, "_blank");
+  window.open(googleUrl, "_blank");
 };
 
 const shareListWhatsApp = () => {
@@ -2688,6 +2731,10 @@ const knownDefaultTitlesNorm = new Set(
     myListNameByLang.en,
     myListNameByLang.ru,
     myListNameByLang.ar,
+    `${myListNameByLang.he}:`,
+    `${myListNameByLang.en}:`,
+    `${myListNameByLang.ru}:`,
+    `${myListNameByLang.ar}:`,
     // Older/variant spellings that may exist in persisted data
     "shopping-list",
     "shopping list",
@@ -2700,7 +2747,7 @@ const titleIsDefault = !rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm)
 const appName = myListNameByLang[shareLang] || myListNameByLang.he;
 
 // If user didn't rename the list (or it matches a known default), localize it for sharing.
-const title = titleIsDefault ? appName : rawTitle;
+const title = titleIsDefault ? `${appName}:` : rawTitle;
 
 const lines =
   active.length > 0
@@ -2712,7 +2759,7 @@ const lines =
         .join("\n")
     : `${RLE}(${emptyByLang[shareLang] || emptyByLang.he})${PDF}`;
 
-const header = `*${title}:*`;
+const header = `*${title}*`;
 
 const footerByLang: Record<AppLang, string> = {
   he: `נשלח מ${appName} 🛒`,
@@ -4063,7 +4110,14 @@ const finalText = mergeChunks(chunks);
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
-          <h1 className="text-2xl font-black text-slate-800">{t("הרשימה שלי חכמה")}</h1>
+          <div className="flex justify-center">
+            <img
+              src={appLogo}
+              alt="My Easy List"
+              className="w-24 h-24 object-contain drop-shadow-sm"
+            />
+          </div>
+          <h1 className="text-2xl font-black text-slate-800">{t("הרשימה שלי: חכמה")}</h1>
           <p className="text-slate-500 font-bold">{t("כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.")}</p>
           <button
             onClick={async () => {
@@ -4097,6 +4151,12 @@ const finalText = mergeChunks(chunks);
 
   return (
     <div ref={appRootRef} className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible" dir="rtl">
+      <style>{`
+        @keyframes floatY {
+          0%, 100% { transform: translateY(0); }
+          50% { transform: translateY(-8px); }
+        }
+      `}</style>
       {/* Sticky top chrome */}
       <div
         className="sticky top-0 z-40 bg-slate-50"
@@ -4120,9 +4180,14 @@ const finalText = mergeChunks(chunks);
       </button>
     </div>
 
-    {/* Center: App title + offline dot */}
+    {/* Center: App title + logo + offline dot */}
     <div className="flex items-center gap-2 min-w-0">
       <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" />
+      <img
+        src={appLogo}
+        alt="My Easy List"
+        className="w-8 h-8 object-contain shrink-0"
+      />
       <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List</span>
     </div>
 
@@ -4448,9 +4513,18 @@ const finalText = mergeChunks(chunks);
             </form>
 
             {(items?.length ?? 0) === 0 ? (
-              <div className="text-center py-20 opacity-20">
-                <ShoppingCart className="w-20 h-20 mx-auto mb-4 stroke-1" />
-                <p className="text-lg font-bold">{t("הרשימה ריקה")}</p>
+              <div className="text-center py-16 px-4">
+                <div className="mx-auto w-full max-w-[260px]">
+                  <img
+                    src={appLogo}
+                    alt="My Easy List"
+                    className="w-40 h-40 mx-auto object-contain opacity-95 drop-shadow-sm animate-[floatY_3.6s_ease-in-out_infinite]"
+                  />
+                  <p className="mt-5 text-2xl font-black text-slate-400">{t("הרשימה שלך עדיין ריקה")}</p>
+                  <p className="mt-2 text-base font-bold text-slate-400 leading-relaxed px-3 break-words">
+                    {t("בוא נתחיל להוסיף מוצרים לקניות 🛒")}
+                  </p>
+                </div>
               </div>
             ) : (
               <div className="space-y-4">
