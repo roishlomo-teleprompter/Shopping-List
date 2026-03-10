@@ -13,34 +13,38 @@ public class CalendarPlugin extends Plugin {
 
     @PluginMethod
     public void openCalendar(PluginCall call) {
+        try {
+            String title = call.getString("title", "Shopping Reminder - My Easy List");
+            String description = call.getString("description", "");
 
-        String title = call.getString("title", "Shopping Reminder - My Easy List");
-        String description = call.getString("description", "");
-        Long startTime = call.getLong("startTime");
-        Long endTime = call.getLong("endTime");
+            Long startTime = call.getLong("startTime");
+            Long endTime = call.getLong("endTime");
 
-        Intent intent = new Intent(Intent.ACTION_INSERT)
-                .setData(CalendarContract.Events.CONTENT_URI)
-                .putExtra(CalendarContract.Events.TITLE, title);
+            if (startTime == null) {
+                startTime = System.currentTimeMillis() + 60 * 60 * 1000;
+            }
 
-        if (description != null && !description.isEmpty()) {
+            if (endTime == null) {
+                endTime = startTime + 60 * 60 * 1000;
+            }
+
+            // Open native calendar event editor
+            Intent intent = new Intent(Intent.ACTION_INSERT);
+            intent.setType("vnd.android.cursor.item/event");
+            intent.putExtra(CalendarContract.Events.TITLE, title);
             intent.putExtra(CalendarContract.Events.DESCRIPTION, description);
-        }
-
-        if (startTime != null) {
             intent.putExtra(CalendarContract.EXTRA_EVENT_BEGIN_TIME, startTime);
-        }
-
-        if (endTime != null) {
             intent.putExtra(CalendarContract.EXTRA_EVENT_END_TIME, endTime);
-        }
 
-        if (intent.resolveActivity(getActivity().getPackageManager()) != null) {
-            getActivity().startActivity(intent);
-            call.resolve();
-            return;
-        }
+            if (intent.resolveActivity(getActivity().getPackageManager()) != null) {
+                getActivity().startActivity(intent);
+                call.resolve();
+                return;
+            }
 
-        call.reject("No calendar app found");
+            call.reject("No calendar app found");
+        } catch (Exception e) {
+            call.reject("Calendar open failed: " + e.getMessage());
+        }
     }
 }

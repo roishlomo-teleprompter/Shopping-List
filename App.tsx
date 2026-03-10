@@ -620,11 +620,20 @@ function formatDraftForReview(raw: string): string {
   // If user already has punctuation/new lines, keep it as-is (manual edit mode).
   if (s.includes(",") || s.includes("\n")) return raw;
 
-  const items = parseItemsFromText(s);
+const items = parseItemsFromText(s);
 
-  // Present as comma-separated list so the user can quickly edit before sending.
-  const parts = items.map((it) => (it.qty && it.qty > 1 ? `${it.qty} ${it.name}` : it.name));
-  return parts.join(", ");
+// Remove duplicate items by name (preview only)
+const seen = new Set<string>();
+const parts: string[] = [];
+
+for (const it of items) {
+  const name = String(it?.name || "").trim().toLowerCase();
+  if (!name || seen.has(name)) continue;
+  seen.add(name);
+   parts.push(it.qty && it.qty > 1 ? `${it.qty} ${it.name}` : it.name);
+   }
+
+return parts.join(", ");
 }
 
 /**
@@ -1146,7 +1155,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מועדפים": "מועדפים",
     "פריטים שחוזרים לסל": "פריטים שחוזרים לסל",
     "אין מועדפים עדיין": "אין מועדפים עדיין",
-    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע",
+    "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק": "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק",
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "מקשיב עכשיו - דבר ושחרר כדי לבצע",
     "שמענו:": "שמענו:",
     "דוגמאות:": "דוגמאות:",
@@ -1205,7 +1214,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מועדפים": "Favorites",
     "פריטים שחוזרים לסל": "Items that return to the cart",
     "אין מועדפים עדיין": "No favorites yet",
-    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "Voice commands: hold the mic, release to run",
+    "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק": "Voice commands: Tap the microphone to start, tap again to stop",
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "Listening now - speak and release to run",
     "שמענו:": "Heard:",
     "דוגמאות:": "Examples:",
@@ -1285,7 +1294,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מועדפים": "Избранное",
     "פריטים שחוזרים לסל": "Товары возвращаются в корзину",
     "אין מועדפים עדיין": "Пока нет избранного",
-    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "Голосовые команды: удерживайте микрофон, отпустите чтобы выполнить",
+    "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק": "Нажмите на микрофон для начала, нажмите снова для остановки",
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "Слушаю - говорите и отпустите чтобы выполнить",
     "שמענו:": "Распознано:",
     "דוגמאות:": "Примеры:",
@@ -1365,7 +1374,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מועדפים": "المفضلة",
     "פריטים שחוזרים לסל": "عناصر تعود إلى السلة",
     "אין מועדפים עדיין": "لا توجد مفضلة بعد",
-    "פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע": "أوامر صوتية: اضغط مطولا على الميكروفون ثم اترك للتنفيذ",
+    "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק": "اضغط على الميكروفون للبدء، اضغط مرة أخرى للإيقاف",
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "يستمع الآن - تحدث واترك للتنفيذ",
     "שמענו:": "سُمِع:",
     "דוגמאות:": "أمثلة:",
@@ -2623,20 +2632,19 @@ const openNativeCalendar = async () => {
   const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
 
   const isNative = Capacitor.isNativePlatform();
-
-  if (isNative) {
-    try {
-      await CalendarPlugin.openCalendar({
-        title: calendarTitle,
-        description: calendarDescription,
-      });
-      return;
-    } catch (e) {
-      console.error("CalendarPlugin failed", e);
-      setToast("CalendarPlugin נכשל באנדרואיד");
-      return;
-    }
+if (isNative) {
+  try {
+    await CalendarPlugin.openCalendar({
+      title: calendarTitle,
+      description: calendarDescription,
+    });
+    return;
+  } catch (e) {
+    console.error("CalendarPlugin failed", e);
+    setToast("CalendarPlugin נכשל באנדרואיד");
+    return;
   }
+}
 
   const start = new Date(Date.now() + 60 * 60 * 1000);
   const end = new Date(start.getTime() + 30 * 60 * 1000);
@@ -4363,7 +4371,7 @@ const finalText = mergeChunks(chunks);
       <div className="px-5 pt-3">
         <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
           <div className="text-[11px] font-black text-slate-400">
-            {isListening ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע") : t("פקודות קוליות: לחץ והחזק את המיקרופון, שחרר לביצוע")}
+            {isListening ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע") : t("פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק")}
           </div>
           {lastHeard ? (
             <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>

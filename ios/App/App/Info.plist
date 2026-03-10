@@ -1,0 +1,8 @@
+<key>NSCalendarsFullAccessUsageDescription</key>
+<string>My Easy List needs calendar access to create shopping reminder events.</string>
+
+<key>NSCalendarsUsageDescription</key>
+<string>My Easy List needs calendar access to create shopping reminder events.</string>
+
+<key>NSContactsUsageDescription</key>
+<string>My Easy List may need contacts access when presenting the native calendar editor.</string>
