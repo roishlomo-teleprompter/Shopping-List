@@ -345,6 +345,110 @@ const HEB_NUMBER_WORDS: Record<string, number> = {
   עשרה: 10,
 };
 
+const EN_NUMBER_WORDS: Record<string, number> = {
+  one: 1,
+  two: 2,
+  three: 3,
+  four: 4,
+  for: 4,
+  five: 5,
+  six: 6,
+  seven: 7,
+  eight: 8,
+  ate: 8,
+  nine: 9,
+  ten: 10,
+  eleven: 11,
+  twelve: 12,
+  thirteen: 13,
+  fourteen: 14,
+  fifteen: 15,
+  sixteen: 16,
+  seventeen: 17,
+  eighteen: 18,
+  nineteen: 19,
+  twenty: 20,
+  thirty: 30,
+  forty: 40,
+  fifty: 50,
+  sixty: 60,
+  seventy: 70,
+  eighty: 80,
+  ninety: 90,
+};
+
+const RU_NUMBER_WORDS: Record<string, number> = {
+  один: 1,
+  одна: 1,
+  одно: 1,
+  два: 2,
+  две: 2,
+  три: 3,
+  четыре: 4,
+  пять: 5,
+  шесть: 6,
+  семь: 7,
+  восемь: 8,
+  девять: 9,
+  десять: 10,
+};
+
+const AR_NUMBER_WORDS: Record<string, number> = {
+  واحد: 1,
+  واحدة: 1,
+  اثنين: 2,
+  اثنان: 2,
+  اتنين: 2,
+  اتنان: 2,
+  اثنتين: 2,
+  اثنتان: 2,
+  ثلاثة: 3,
+  ثلاثه: 3,
+  ثلاث: 3,
+  أربعة: 4,
+  اربعة: 4,
+  أربع: 4,
+  اربعه: 4,
+  خمسة: 5,
+  خمسه: 5,
+  خمس: 5,
+  ستة: 6,
+  سته: 6,
+  ست: 6,
+  سبعة: 7,
+  سبعه: 7,
+  سبع: 7,
+  ثمانية: 8,
+  ثمانيه: 8,
+  ثماني: 8,
+  تسعة: 9,
+  تسعه: 9,
+  تسع: 9,
+  عشرة: 10,
+  عشره: 10,
+  عشر: 10,
+};
+
+const AMBIGUOUS_BOUNDARY_NUMBER_WORDS: Record<string, number> = {
+  for: 4,
+};
+
+const ALL_NUMBER_WORDS: Record<string, number> = {
+  ...HEB_NUMBER_WORDS,
+  ...EN_NUMBER_WORDS,
+  ...RU_NUMBER_WORDS,
+  ...AR_NUMBER_WORDS,
+};
+
+const ALL_NUMBER_WORD_KEYS = Array.from(
+  new Set([...Object.keys(ALL_NUMBER_WORDS), ...Object.keys(AMBIGUOUS_BOUNDARY_NUMBER_WORDS)])
+).sort((a, b) => b.length - a.length);
+
+const NUMBER_WORDS_REGEX = new RegExp(
+  `\b(${ALL_NUMBER_WORD_KEYS.join("|")})\b\s*,\s*`,
+  "gi"
+);
+
 const normalize = (s: string) =>
   (s || "")
     .trim()
@@ -358,12 +462,31 @@ const stripWrappingBrackets = (s: string = "") =>
     .replace(/\s*[\)\]\}]\s*$/, "")
     .trim();
 
-const cleanVoicePreviewText = (s: string = "") =>
-  stripWrappingBrackets(s)
+const cleanVoicePreviewText = (s: string = "") => {
+  const cleaned = stripWrappingBrackets(s)
     .replace(/[()\[\]{}]/g, "")
     .replace(/\s*,\s*/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+
+  const words = cleaned.split(" ");
+
+  const deduped = words.filter((w, i, arr) => {
+    if (i === 0) return true;
+
+    const prev = arr[i - 1];
+
+    // remove repeated word: avocado avocado
+    if (w === prev) return false;
+
+    // remove patterns like: clear clear list
+    if (i >= 2 && w === arr[i - 2]) return false;
+
+    return true;
+  });
+
+  return deduped.join(" ");
+};
 
 const cleanVoiceReviewText = (s: string = "") =>
   stripWrappingBrackets(s)
@@ -383,9 +506,9 @@ const normalizeVoiceText = (s: string) => {
     .replace(/\s+(בבקשה|פליז|תודה)\s*/g, " ")
     // Fix: commas between numeric quantity and item should not split items (e.g., "2, apples")
     .replace(/(\b\d+\b)\s*,\s*(?=[^\d\s])/g, "$1 ")
-    // Remove commas between quantity token and item name (so "2, עגבניות" becomes "2 עגבניות")
-.replace(/\b(\d+)\s*,\s*/g, "$1 ")
-.replace(/\b(אחד|אחת|שני|שניים|שתיים|שתים|שתי|שלוש|שלושה|ארבע|ארבעה|חמש|חמישה|שש|שישה|שבע|שבעה|שמונה|תשע|תשעה|עשר|עשרה)\s*,\s*/g, "$1 ")
+    // Remove commas between quantity token and item name in all supported languages.
+    .replace(/\b(\d+)\s*,\s*/g, "$1 ")
+    .replace(NUMBER_WORDS_REGEX, "$1 ")
     .replace(/\s+/g, " ")
     .trim();
 };
@@ -393,13 +516,27 @@ const normalizeVoiceText = (s: string) => {
 function isQtyToken(tok: string) {
   if (!tok) return false;
   if (/^\d+$/.test(tok)) return true;
-  return HEB_NUMBER_WORDS[tok] != null;
+  return ALL_NUMBER_WORDS[tok] != null;
 }
 
 function qtyFromToken(tok: string): number | null {
   if (!tok) return null;
   if (/^\d+$/.test(tok)) return Number(tok);
-  const n = HEB_NUMBER_WORDS[tok];
+  const n = ALL_NUMBER_WORDS[tok];
+  return n != null ? n : null;
+}
+
+function isBoundaryQtyToken(tok: string) {
+  if (!tok) return false;
+  if (isQtyToken(tok)) return true;
+  return AMBIGUOUS_BOUNDARY_NUMBER_WORDS[tok] != null;
+}
+
+function qtyFromBoundaryToken(tok: string): number | null {
+  if (!tok) return null;
+  const direct = qtyFromToken(tok);
+  if (direct != null) return direct;
+  const n = AMBIGUOUS_BOUNDARY_NUMBER_WORDS[tok];
   return n != null ? n : null;
 }
 
@@ -675,9 +812,14 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
   for (let i = 0; i < tokens.length; i++) {
     const tok = tokens[i];
 
-    if (isQtyToken(tok)) {
-      const q = Math.max(1, qtyFromToken(tok) || 1);
-      const nxt = nextToken(i);
+    const nxt = nextToken(i);
+    const directQty = qtyFromToken(tok);
+    const boundaryOnlyQty = directQty == null && (nameParts.length === 0 || !nxt)
+      ? qtyFromBoundaryToken(tok)
+      : null;
+
+    if (directQty != null || boundaryOnlyQty != null) {
+      const q = Math.max(1, Number(directQty ?? boundaryOnlyQty ?? 1));
 
       // Prefix qty (start of item)
       if (nameParts.length === 0) {
@@ -700,7 +842,7 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
     // normal word
     nameParts.push(tok);
-    const nxt = nextToken(i);
+    const nextTok = nextToken(i);
 
     // keep at least 2 words for known prefixes (רסק עגבניות, שמן זית וכו')
     if (nameParts.length === 1 && shouldKeepAsMultiwordByPrefix(nameParts[0])) {
@@ -712,7 +854,56 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     if (nxt === "של" || nxt === "עם") continue;
 
     // if next is qty, wait (suffix qty) or prefix qty handling will flush
-    if (isQtyToken(nxt)) continue;
+    if (isQtyToken(tok)) {
+  const nxt = nextToken(i);
+
+  // support compound English numbers like:
+  // "twenty five", "thirty two"
+  if (
+    EN_NUMBER_WORDS[tok] != null &&
+    EN_NUMBER_WORDS[nxt] != null &&
+    EN_NUMBER_WORDS[tok] >= 20 &&
+    EN_NUMBER_WORDS[nxt] < 10
+  ) {
+    const q = EN_NUMBER_WORDS[tok] + EN_NUMBER_WORDS[nxt];
+
+    if (nameParts.length === 0) {
+      pendingQty = q;
+      i += 1;
+      continue;
+    }
+
+    if (!nextToken(i + 1)) {
+      flush(q);
+      i += 1;
+      continue;
+    }
+
+    flush();
+    pendingQty = q;
+    i += 1;
+    continue;
+  }
+
+  const q = Math.max(1, qtyFromToken(tok) || 1);
+
+  // Prefix qty (start of item)
+  if (nameParts.length === 0) {
+    pendingQty = q;
+    continue;
+  }
+
+  // Suffix qty only if it's the last token
+  if (!nxt) {
+    flush(q);
+    continue;
+  }
+
+  // Otherwise treat qty as prefix for NEXT item
+  flush();
+  pendingQty = q;
+  continue;
+}
 
     // otherwise flush after each word/phrase - this splits "ביצים חלב עגבניה"
     flush();
@@ -739,14 +930,14 @@ function parseSingleItemFromSegment(segment: string): ItemParse | null {
   let qty = 1;
 
   // Quantity at the beginning: "2 milk"
-  if (tokens.length >= 2 && isQtyToken(tokens[0])) {
-    qty = qtyFromToken(tokens[0]);
+  if (tokens.length >= 2 && isBoundaryQtyToken(tokens[0])) {
+    qty = qtyFromBoundaryToken(tokens[0]);
     tokens = tokens.slice(1);
   }
 
   // Quantity at the end: "milk 2"
-  if (tokens.length >= 2 && isQtyToken(tokens[tokens.length - 1])) {
-    const tailQty = qtyFromToken(tokens[tokens.length - 1]);
+  if (tokens.length >= 2 && isBoundaryQtyToken(tokens[tokens.length - 1])) {
+    const tailQty = qtyFromBoundaryToken(tokens[tokens.length - 1]);
     if (qty === 1) qty = tailQty;
     tokens = tokens.slice(0, -1);
   }
@@ -868,6 +1059,35 @@ function parseItemsFromText(raw: string): ItemParse[] {
     for (const p of parsed) out.push(p);
   }
   return out;
+}
+
+function collapseParsedItemsForExecution(items: ItemParse[]): ItemParse[] {
+  const byName = new Map<string, ItemParse>();
+
+  for (const item of items) {
+    const name = stripWrappingBrackets(String(item?.name || "")).trim();
+    if (!name) continue;
+
+    const key = normalize(name);
+    if (!key) continue;
+
+    const qty = Math.max(1, Number(item?.qty || 1));
+    const existing = byName.get(key);
+
+    if (!existing) {
+      byName.set(key, { name, qty });
+      continue;
+    }
+
+    // Keep the higher quantity, don't sum.
+    // This avoids turning duplicated speech into double quantity.
+    byName.set(key, {
+      name: existing.name || name,
+      qty: Math.max(existing.qty || 1, qty),
+    });
+  }
+
+  return Array.from(byName.values());
 }
 
 function parseItemsForExecution(raw: string): ItemParse[] {
@@ -3048,12 +3268,12 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-    const parsed = parseItemsForExecution(payload);
-    if (parsed.length === 0) return;
+   const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload));
+if (parsed.length === 0) return;
 
-    for (const p of parsed) {
-      await addOrSetQuantity(p.name, p.qty);
-    }
+for (const p of parsed) {
+  await addOrSetQuantity(p.name, p.qty);
+}
 
     // intentionally no toast for "added items" via microphone
   };
@@ -3106,6 +3326,20 @@ ${footer}`;
       if (!stitched) acc = a + " " + c;
     }
     return acc.replace(/\s+/g, " ").trim();
+  };
+
+  const mergeFinalAndInterimTranscript = (finalText: string, interimText: string) => {
+    const f = String(finalText || "").trim();
+    const i = String(interimText || "").trim();
+
+    if (!f) return i;
+    if (!i) return f;
+
+    if (f === i) return f;
+    if (i.startsWith(f)) return i;
+    if (f.startsWith(i)) return f;
+
+    return `${f} ${i}`.replace(/\s+/g, " ").trim();
   };
 
   const ensureNativeSpeechReady = async () => {
@@ -3286,8 +3520,8 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-    const parsed = parseItemsForExecution(payload);
-    if (parsed.length === 0) return [];
+    const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload));
+if (parsed.length === 0) return [];
 
     const actions: VoiceUndoAction[] = [];
 
@@ -3596,39 +3830,54 @@ ${footer}`;
       }, SILENCE_MS + 50);
     };
 
-    rec.onresult = (event: any) => {
-      try {
-        let interimCombined = "";
-        const results = (event as any).results;
-        if (!results) return;
-        for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
-          const r = results[i];
-          const best = r?.[0];
-          const transcript = normalizeVoiceText(String(best?.transcript || ""));
-          if (!transcript) continue;
+rec.onresult = (event: any) => {
+  try {
+    let interimCombined = "";
+    const results = (event as any).results;
+    if (!results) return;
 
-          if (r.isFinal) {
-            transcriptBufferRef.current[i] = transcript;
-            lastInterimRef.current = "";
-          } else {
-            interimCombined = transcript;
-            lastInterimRef.current = transcript;
-          }
+    for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
+      const r = results[i];
+      const best = r?.[0];
+      const transcript = normalizeVoiceText(String(best?.transcript || ""));
+      if (!transcript) continue;
+
+      if (r.isFinal) {
+        // ignore duplicate final that is identical to what we already have
+        if (transcriptBufferRef.current[i] !== transcript) {
+          transcriptBufferRef.current[i] = transcript;
         }
+        lastInterimRef.current = "";
+      } else {
+        // ignore duplicate interim repeats that Chrome often emits in English
+        if (lastInterimRef.current !== transcript) {
+          interimCombined = transcript;
+          lastInterimRef.current = transcript;
+        }
+      }
+    }
 
-        const last =
-          interimCombined ||
-          (transcriptBufferRef.current.length
-            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
-            : "");
+    const mergedPreview = mergeTranscriptParts(
+      [
+        ...transcriptBufferRef.current.filter(Boolean),
+        interimCombined || lastInterimRef.current || "",
+      ].filter(Boolean)
+    );
 
-        if (last) setLastHeard(cleanVoicePreviewText(last));
+ const last = mergedPreview;
 
-        hadAnyResult = true;
-        lastResultAt = Date.now();
-        scheduleSilenceStop();
-      } catch (e) {}
-    };
+if (last) setLastHeard(cleanVoicePreviewText(last));
+
+hadAnyResult = true;
+lastResultAt = Date.now();
+scheduleSilenceStop();
+
+} catch (e) {
+  // ignore
+}
+};
+
+
 
     rec.onerror = (e: any) => {
       const err = String(e?.error || "");
@@ -3753,9 +4002,8 @@ const mergeChunks = (parts: string[]) => {
   return acc.replace(/\s+/g, " ").trim();
 };
 const finalText = mergeChunks(chunks);
-
-    const interimText = (lastInterimRef.current || "").trim();
-    const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
+const interimText = (lastInterimRef.current || "").trim();
+const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
     transcriptBufferRef.current = [];
     lastInterimRef.current = "";
@@ -4035,9 +4283,9 @@ const finalText = mergeChunks(chunks);
 
     // חשוב: מחברים Final + Interim יחד
     // זה מונע מצב כמו: "שתי" ב-final ו-"מלפפונים" ב-interim שנדבקים בטעות לפריט קודם
-    const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
-    const interimText = (lastInterimRef.current || "").trim();
-    const combined = `${finalText} ${interimText}`.replace(/\s+/g, " ").trim();
+  const finalText = transcriptBufferRef.current.filter(Boolean).join(" ").trim();
+const interimText = (lastInterimRef.current || "").trim();
+const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
     transcriptBufferRef.current = [];
     lastInterimRef.current = "";
