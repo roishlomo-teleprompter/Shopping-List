@@ -1,6 +1,11 @@
 import React, { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 import { HashRouter, Routes, Route, useNavigate, useSearchParams } from "react-router-dom";
+import { EN_PRODUCT_ALIASES } from "./data/product-aliases-en";
+import * as EN_PRODUCTS_MODULE from "./data/products-en";
+import * as HE_PRODUCTS_MODULE from "./data/products-he";
+import * as RU_PRODUCTS_MODULE from "./data/products-ru";
+import * as AR_PRODUCTS_MODULE from "./data/products-ar";
 import {
   Share2,
   Star,
@@ -93,10 +98,61 @@ const CalendarPlugin = registerPlugin<CalendarPluginType>("CalendarPlugin");
 // ---------------------------
 // Helpers
 // ---------------------------
+function pickProductTerms(moduleObj: Record<string, unknown>): string[] {
+  const values = Object.values(moduleObj || {});
+  for (const value of values) {
+    if (Array.isArray(value) && value.every((x) => typeof x === "string")) {
+      return value as string[];
+    }
+  }
+  return [];
+}
+
+const EN_PRODUCT_TERMS = pickProductTerms(EN_PRODUCTS_MODULE as Record<string, unknown>);
+const HE_PRODUCT_TERMS = pickProductTerms(HE_PRODUCTS_MODULE as Record<string, unknown>);
+const RU_PRODUCT_TERMS = pickProductTerms(RU_PRODUCTS_MODULE as Record<string, unknown>);
+const AR_PRODUCT_TERMS = pickProductTerms(AR_PRODUCTS_MODULE as Record<string, unknown>);
+
+function getProductTermsByLang(lang: AppLang): string[] {
+  switch (lang) {
+    case "he":
+      return HE_PRODUCT_TERMS;
+    case "ru":
+      return RU_PRODUCT_TERMS;
+    case "ar":
+      return AR_PRODUCT_TERMS;
+    case "en":
+    default:
+      return EN_PRODUCT_TERMS;
+  }
+}
+
+function getPublicAppBaseUrl() {
+  const envUrl = String((import.meta as any)?.env?.VITE_PUBLIC_APP_URL || "").trim();
+  if (envUrl) return envUrl.replace(/\/+$/, "");
+  return "https://myeasylist.app";
+}
+
+function isLocalDevHost() {
+  try {
+    const host = String(window.location.hostname || "").toLowerCase();
+    return host === "localhost" || host === "127.0.0.1" || host === "0.0.0.0";
+  } catch (e) {
+    return false;
+  }
+}
+
+function isNativeOrLocalAppRuntime() {
+  try {
+    return Capacitor.isNativePlatform() || isLocalDevHost();
+  } catch (e) {
+    return isLocalDevHost();
+  }
+}
+
 function buildInviteLink(listId: string, token: string) {
-  const basePath = import.meta.env.BASE_URL || "/";
-  const origin = window.location.origin;
-  return `${origin}${basePath}#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+  const publicBase = getPublicAppBaseUrl();
+  return `${publicBase}/#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
 }
 
 async function copyToClipboard(text: string) {
@@ -199,7 +255,18 @@ const InvitePage: React.FC = () => {
       setAuthLoading(false);
     });
   }, []);
-
+  useEffect(() => {
+  return () => {
+    try {
+      if (nativeTapStopTimerRef.current != null) {
+        window.clearTimeout(nativeTapStopTimerRef.current);
+        nativeTapStopTimerRef.current = null;
+      }
+    } catch (e) {
+      // ignore
+    }
+  };
+}, []);
   const handleLogin = async () => {
     setError(null);
     try {
@@ -309,6 +376,81 @@ const InvitePage: React.FC = () => {
   );
 };
 
+
+const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = false }) => {
+  const isAndroid = (() => {
+    try {
+      return /android/i.test(navigator.userAgent || "");
+    } catch (e) {
+      return false;
+    }
+  })();
+
+  const isIOS = (() => {
+    try {
+      return /iphone|ipad|ipod/i.test(navigator.userAgent || "");
+    } catch (e) {
+      return false;
+    }
+  })();
+
+  const installTitle = inviteMode
+    ? "Install My Easy List to open this shared list"
+    : "Install My Easy List";
+
+  const installSubtitle = inviteMode
+    ? "Shared lists open only inside the app."
+    : "My Easy List is available through the mobile app.";
+
+  const primaryStoreLabel = isAndroid
+    ? "Google Play - Coming soon"
+    : isIOS
+      ? "App Store - Coming soon"
+      : "Google Play - Coming soon";
+
+  const secondaryStoreLabel = isAndroid
+    ? "App Store - Coming soon"
+    : "Google Play - Coming soon";
+
+  const storeButtonClass =
+    "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
+
+  return (
+    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6" dir="ltr">
+      <div className="w-full max-w-md bg-white rounded-3xl shadow-xl border border-slate-100 p-8 text-center space-y-6">
+        <div className="flex justify-center">
+          <img
+            src={appLogo}
+            alt="My Easy List"
+            className="w-24 h-24 object-contain drop-shadow-sm"
+          />
+        </div>
+
+        <div className="space-y-2">
+          <h1 className="text-3xl font-black text-slate-800">My Easy List</h1>
+          <p className="text-lg font-bold text-slate-700">{installTitle}</p>
+          <p className="text-sm font-bold text-slate-400">{installSubtitle}</p>
+        </div>
+
+        <div className="space-y-3">
+          <button type="button" disabled className={storeButtonClass}>
+            {primaryStoreLabel}
+          </button>
+          <button type="button" disabled className={storeButtonClass}>
+            {secondaryStoreLabel}
+          </button>
+        </div>
+
+        <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
+          {inviteMode
+            ? "After installing the app, open the invite link again on your phone."
+            : "Install the app to create, share, and manage your shopping lists."}
+        </div>
+      </div>
+    </div>
+  );
+};
+
 // ---------------------------
 // Main List
 // ---------------------------
@@ -350,7 +492,6 @@ const EN_NUMBER_WORDS: Record<string, number> = {
   two: 2,
   three: 3,
   four: 4,
-  for: 4,
   five: 5,
   six: 6,
   seven: 7,
@@ -431,6 +572,8 @@ const AR_NUMBER_WORDS: Record<string, number> = {
 
 const AMBIGUOUS_BOUNDARY_NUMBER_WORDS: Record<string, number> = {
   for: 4,
+  to: 2,
+  too: 2,
 };
 
 const ALL_NUMBER_WORDS: Record<string, number> = {
@@ -462,8 +605,56 @@ const stripWrappingBrackets = (s: string = "") =>
     .replace(/\s*[\)\]\}]\s*$/, "")
     .trim();
 
+
+function applyEnglishAlias(name: string): string {
+  const raw = String(name || "").trim();
+  if (!raw) return raw;
+
+  const normalized = raw.toLowerCase().replace(/\s+/g, " ");
+
+  if (!/[a-z]/i.test(normalized)) {
+    return raw;
+  }
+
+  return EN_PRODUCT_ALIASES[normalized] || normalized;
+}
+
+const collapseExactRepeatedPhrase = (raw: string = "") => {
+  const value = String(raw || "").trim().replace(/\s+/g, " ");
+  if (!value) return value;
+
+  const tokens = value.split(" ").filter(Boolean);
+  if (tokens.length >= 2 && tokens.length % 2 === 0) {
+    const half = tokens.length / 2;
+    const first = tokens.slice(0, half).join(" ");
+    const second = tokens.slice(half).join(" ");
+    if (first === second) return first;
+  }
+
+  return value;
+};
+
+const shouldIgnoreStandaloneVoiceItem = (raw: string = "") => {
+  const value = normalize(String(raw || ""));
+  if (!value) return true;
+
+  const parts = value.split(" ").filter(Boolean);
+  if (parts.length !== 1) return false;
+
+  const token = parts[0];
+  if (!token) return true;
+
+  if (isQtyToken(token) || isBoundaryQtyToken(token)) return true;
+
+  if (EN_LINKING.has(token) || ["clear", "delete", "reset", "remove", "list", "the"].includes(token)) {
+    return true;
+  }
+
+  return false;
+};
+
 const cleanVoicePreviewText = (s: string = "") => {
-  const cleaned = stripWrappingBrackets(s)
+  const cleaned = collapseExactRepeatedPhrase(stripWrappingBrackets(s))
     .replace(/[()\[\]{}]/g, "")
     .replace(/\s*,\s*/g, " ")
     .replace(/\s+/g, " ")
@@ -748,11 +939,11 @@ const byLang = (l: AppLang) => {
 }
 
 function formatDraftForReview(raw: string): string {
-  const s = (raw || "").trim();
+  const s = collapseExactRepeatedPhrase((raw || "").trim());
   if (!s) return raw;
 
   // If this is a clear-list command, keep it exactly as spoken (do not add commas).
-  if (isClearListCommand(s)) return raw;
+  if (isClearListCommand(s)) return s;
 
   // If user already has punctuation/new lines, keep it as-is (manual edit mode).
   if (s.includes(",") || s.includes("\n")) return raw;
@@ -798,10 +989,13 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
   let nameParts: string[] = [];
 
   const flush = (qtyOverride?: number) => {
-    const name = nameParts.join(" ").trim();
+    let name = nameParts.join(" ").trim();
     if (name) {
-      const q = Math.max(1, Number(qtyOverride ?? pendingQty ?? 1));
-      out.push({ name, qty: q });
+      name = applyEnglishAlias(name);
+      if (name && !shouldIgnoreStandaloneVoiceItem(name)) {
+        const q = Math.max(1, Number(qtyOverride ?? pendingQty ?? 1));
+        out.push({ name, qty: q });
+      }
     }
     pendingQty = 1;
     nameParts = [];
@@ -913,7 +1107,8 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
 
   return out
     .map((x) => ({ name: x.name.replace(/\s+/g, " ").trim(), qty: Math.max(1, Number(x.qty || 1)) }))
-    .filter((x) => x.name.length > 0);
+    .filter((x) => x.name.length > 0)
+    .filter((x) => !shouldIgnoreStandaloneVoiceItem(x.name));
 }
 
 /**
@@ -921,11 +1116,13 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
  * Supports commas / וגם / ואז / אחר כך, and also no commas.
  */
 function parseSingleItemFromSegment(segment: string): ItemParse | null {
-  const raw = (segment || "").trim();
+  const raw = collapseExactRepeatedPhrase((segment || "").trim());
   if (!raw) return null;
+  if (isClearListCommand(raw)) return null;
 
   let tokens = mergeCompounds(raw.split(/\s+/).filter(Boolean));
   if (!tokens.length) return null;
+  if (tokens.length === 1 && isBoundaryQtyToken(tokens[0])) return null;
 
   let qty = 1;
 
@@ -942,8 +1139,13 @@ function parseSingleItemFromSegment(segment: string): ItemParse | null {
     tokens = tokens.slice(0, -1);
   }
 
-  const name = tokens.join(" ").trim();
+  let name = tokens.join(" ").trim();
   if (!name) return null;
+
+  name = applyEnglishAlias(name);
+
+  if (!name) return null;
+  if (shouldIgnoreStandaloneVoiceItem(name)) return null;
 
   return { name, qty };
 }
@@ -1037,7 +1239,10 @@ function segmentVoiceTextKeepingLinking(rawNorm: string): string[] {
 }
 
 function parseItemsFromText(raw: string): ItemParse[] {
-  const s0 = normalizeVoiceText(raw);
+  const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
+  if (isClearListCommand(collapsedRaw)) return [];
+
+  const s0 = normalizeVoiceText(collapsedRaw);
   if (!s0) return [];
 
   // Speech-to-text often injects commas between words ("שתי, עגבניות", "נייר, טואלט").
@@ -1091,7 +1296,10 @@ function collapseParsedItemsForExecution(items: ItemParse[]): ItemParse[] {
 }
 
 function parseItemsForExecution(raw: string): ItemParse[] {
-  const source = normalizeVoiceText(raw || "");
+  const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
+  if (isClearListCommand(collapsedRaw)) return [];
+
+  const source = normalizeVoiceText(collapsedRaw);
   if (!source) return [];
 
   // In the review window, only commas are intentional separators.
@@ -1959,7 +2167,8 @@ useEffect(() => {
 
   const tapActiveRef = useRef<boolean>(false);
   const noiseStreamRef = useRef<MediaStream | null>(null);
-
+  const nativeTapStopTimerRef = useRef<number | null>(null);
+  const nativeTranscriptChunksRef = useRef<string[]>([]);
   const recognitionRef = useRef<any>(null);
   const nativeSpeechAvailableRef = useRef<boolean | null>(null);
   const nativeFinalTranscriptRef = useRef<string>("");
@@ -3291,11 +3500,11 @@ for (const p of parsed) {
     nativeLastPartialRef.current = "";
   };
 
-  const restartNativeTapListeningSoon = () => {
-    window.setTimeout(() => {
-      void startTapListening(bypassTapLock);
-    }, 120);
-  };
+  const restartNativeTapListeningSoon = (bypassTapLock = true) => {
+  window.setTimeout(() => {
+    void startTapListening(bypassTapLock);
+  }, 120);
+};
 
   const mergeTranscriptParts = (parts: string[]) => {
     let acc = "";
@@ -3625,7 +3834,7 @@ if (parsed.length === 0) return [];
 
       if (nativeRestartRequestedRef.current) {
         nativeRestartRequestedRef.current = false;
-        restartNativeTapListeningSoon();
+      
       }
       return;
     }
@@ -3644,17 +3853,21 @@ if (parsed.length === 0) return [];
     nativeFinalizeRef.current = false;
   };
 
-  const scheduleNativeTapRestart = (delayMs: number, bypassTapLock = true) => {
-    if (pendingRestartTimerRef.current != null) {
-      window.clearTimeout(pendingRestartTimerRef.current);
-      pendingRestartTimerRef.current = null;
-    }
+  
+  
 
-    pendingRestartTimerRef.current = window.setTimeout(() => {
-      pendingRestartTimerRef.current = null;
-      void startTapListening();
-    }, Math.max(0, delayMs));
-  };
+   const scheduleNativeTapRestart = (delayMs: number, bypassTapLock = true) => {
+  if (pendingRestartTimerRef.current != null) {
+    window.clearTimeout(pendingRestartTimerRef.current);
+    pendingRestartTimerRef.current = null;
+  }
+
+  pendingRestartTimerRef.current = window.setTimeout(() => {
+    pendingRestartTimerRef.current = null;
+    void startTapListening(bypassTapLock);
+  }, Math.max(0, delayMs));
+};
+
 
   const startTapListening = async (bypassTapLock = false) => {
     nativeRestartRequestedRef.current = false;
@@ -3677,7 +3890,7 @@ if (parsed.length === 0) return [];
       return;
     }
 
-    if (isNativeSpeechMode()) {
+   if (isNativeSpeechMode()) {
       const ready = await ensureNativeSpeechReady();
       if (!ready) {
         alert(t("אין הרשאה למיקרופון. אשר הרשאה ואז נסה שוב."));
@@ -3688,7 +3901,10 @@ if (parsed.length === 0) return [];
       if (nativeLastStopAtRef.current) {
         const requiredDelay = Math.max(
           0,
-          Math.max(NATIVE_RESTART_COOLDOWN_MS - sinceLastStop, NATIVE_SMART_START_DELAY_MS - sinceLastStop)
+          Math.max(
+            NATIVE_RESTART_COOLDOWN_MS - sinceLastStop,
+            NATIVE_SMART_START_DELAY_MS - sinceLastStop
+          )
         );
 
         if (requiredDelay > 0) {
@@ -3704,6 +3920,7 @@ if (parsed.length === 0) return [];
       transcriptBufferRef.current = [];
       lastInterimRef.current = "";
       startGuardRef.current = false;
+      nativeTranscriptChunksRef.current = [];
 
       tapActiveRef.current = true;
       setVoiceDraft("");
@@ -3717,30 +3934,96 @@ if (parsed.length === 0) return [];
       }
 
       try {
-        try {
-          await Promise.race([
-            SpeechRecognition.stop().catch(() => {}),
-            new Promise((resolve) => setTimeout(resolve, 80)),
-          ]);
-        } catch (e) {
-          // ignore stale previous session stop
-        }
+        await Promise.race([
+          SpeechRecognition.stop().catch(() => {}),
+          new Promise((resolve) => setTimeout(resolve, 80)),
+        ]);
+      } catch (e) {
+        // ignore stale previous session stop
+      }
 
+      try {
         await SpeechRecognition.removeAllListeners();
         await new Promise((resolve) => setTimeout(resolve, 90));
 
-                await SpeechRecognition.addListener("partialResults", (data: any) => {
+        await SpeechRecognition.addListener("partialResults", (data: any) => {
           const matches = Array.isArray(data?.matches) ? data.matches : [];
-          const merged = mergeTranscriptParts(matches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
+          const merged = mergeTranscriptParts(
+            matches
+              .map((m: any) => normalizeVoiceText(String(m || "")))
+              .filter(Boolean)
+          ).trim();
+
           if (!merged) return;
+
           nativeLastPartialRef.current = merged;
-          setLastHeard(cleanVoicePreviewText(merged));
+
+          const preview = mergeTranscriptParts([
+            ...nativeTranscriptChunksRef.current,
+            merged,
+          ]);
+
+          setLastHeard(cleanVoicePreviewText(preview));
         });
 
-        await SpeechRecognition.addListener("listeningState", (data: any) => {
-          if (data?.status === "stopped" && tapActiveRef.current) {
-            tapActiveRef.current = false;
-            void finalizeNativeTapListening();
+        await SpeechRecognition.addListener("listeningState", async (data: any) => {
+          const status = String(data?.status || "");
+
+          if (status === "started" || status === "listening") {
+            if (nativeTapStopTimerRef.current != null) {
+              window.clearTimeout(nativeTapStopTimerRef.current);
+              nativeTapStopTimerRef.current = null;
+            }
+            nativeRestartRequestedRef.current = false;
+            return;
+          }
+
+          if (status === "stopped" && tapActiveRef.current) {
+            const partial = String(nativeLastPartialRef.current || "").trim();
+            const lastChunk =
+              nativeTranscriptChunksRef.current.length > 0
+                ? String(
+                    nativeTranscriptChunksRef.current[
+                      nativeTranscriptChunksRef.current.length - 1
+                    ] || ""
+                  ).trim()
+                : "";
+
+            if (partial && partial !== lastChunk) {
+              nativeTranscriptChunksRef.current.push(partial);
+            }
+
+            nativeLastPartialRef.current = "";
+
+            if (nativeRestartRequestedRef.current) return;
+            nativeRestartRequestedRef.current = true;
+
+            if (nativeTapStopTimerRef.current != null) {
+              window.clearTimeout(nativeTapStopTimerRef.current);
+            }
+
+            nativeTapStopTimerRef.current = window.setTimeout(async () => {
+              nativeTapStopTimerRef.current = null;
+
+              if (!tapActiveRef.current) {
+                nativeRestartRequestedRef.current = false;
+                return;
+              }
+
+              try {
+                await SpeechRecognition.start({
+                  language: speechLang,
+                  partialResults: true,
+                  popup: false,
+                  maxResults: 1,
+                  prompt: "",
+                });
+              } catch (e) {
+                // ignore
+              } finally {
+                nativeRestartRequestedRef.current = false;
+              }
+            }, 250);
           }
         });
 
@@ -3752,8 +4035,15 @@ if (parsed.length === 0) return [];
           popup: false,
         } as any);
 
-        const initialMatches = Array.isArray((started as any)?.matches) ? (started as any).matches : [];
-        const initialMerged = mergeTranscriptParts(initialMatches.map((m: any) => normalizeVoiceText(String(m || ""))).filter(Boolean));
+        const initialMatches = Array.isArray((started as any)?.matches)
+          ? (started as any).matches
+          : [];
+        const initialMerged = mergeTranscriptParts(
+          initialMatches
+            .map((m: any) => normalizeVoiceText(String(m || "")))
+            .filter(Boolean)
+        );
+
         if (initialMerged) {
           nativeFinalTranscriptRef.current = initialMerged;
           setLastHeard(cleanVoicePreviewText(initialMerged));
@@ -3800,35 +4090,17 @@ if (parsed.length === 0) return [];
     }
 
     const rec = new SR();
-    recognitionRef.current = rec;
+recognitionRef.current = rec;
 
-    rec.lang = speechLang;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
-    rec.continuous = true;
+rec.lang = speechLang;
+rec.interimResults = true;
+rec.maxAlternatives = 1;
+rec.continuous = true;
 
-    let hadAnyResult = false;
-    let lastResultAt = Date.now();
-
-    const SILENCE_MS = 3000;
-    let silenceTimer: number | null = null;
-
-    const clearLocalTimers = () => {
-      if (silenceTimer != null) window.clearTimeout(silenceTimer);
-      silenceTimer = null;
-    };
-
-    const scheduleSilenceStop = () => {
-      if (!tapActiveRef.current) return;
-      if (!hadAnyResult) return;
-
-      if (silenceTimer != null) window.clearTimeout(silenceTimer);
-      silenceTimer = window.setTimeout(() => {
-        if (!tapActiveRef.current) return;
-        const dt = Date.now() - lastResultAt;
-        if (dt >= SILENCE_MS) stopTapListening();
-      }, SILENCE_MS + 50);
-    };
+// Tap mode - אין עצירה אוטומטית על שקט
+const clearLocalTimers = () => {
+  // no-op
+};
 
 rec.onresult = (event: any) => {
   try {
@@ -3864,13 +4136,10 @@ rec.onresult = (event: any) => {
       ].filter(Boolean)
     );
 
- const last = mergedPreview;
+ 
+    const last = mergedPreview;
 
 if (last) setLastHeard(cleanVoicePreviewText(last));
-
-hadAnyResult = true;
-lastResultAt = Date.now();
-scheduleSilenceStop();
 
 } catch (e) {
   // ignore
@@ -3906,12 +4175,16 @@ scheduleSilenceStop();
     rec.onend = () => {
       clearLocalTimers();
 
-      // If user is still recording, try to restart (Chrome sometimes ends spontaneously)
-      if (!tapActiveRef.current) return;
+// If user is still recording, try to restart (Chrome sometimes ends spontaneously)
+if (!tapActiveRef.current) return;
 
-      if (startGuardRef.current) return;
-      startGuardRef.current = true;
+if (nativeTapStopTimerRef.current != null) {
+  window.clearTimeout(nativeTapStopTimerRef.current);
+  nativeTapStopTimerRef.current = null;
+}
 
+if (startGuardRef.current) return;
+startGuardRef.current = true;
       setTimeout(() => {
         if (!tapActiveRef.current) {
           startGuardRef.current = false;
@@ -3929,7 +4202,7 @@ scheduleSilenceStop();
 
     try {
       rec.start();
-      scheduleSilenceStop();
+      
     } catch (e) {
       console.error(e);
       clearLocalTimers();
@@ -3943,30 +4216,35 @@ scheduleSilenceStop();
   };
 
   const stopTapListening = async () => {
-    if (!tapActiveRef.current) return;
+  if (!tapActiveRef.current) return;
 
-    tapActiveRef.current = false;
-    setIsListening(false);
-    setVoiceUi("processing");
-    stopVoiceTimer();
+  if (nativeTapStopTimerRef.current != null) {
+    window.clearTimeout(nativeTapStopTimerRef.current);
+    nativeTapStopTimerRef.current = null;
+  }
 
-    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
-      navigator.vibrate(20);
-    }
+  tapActiveRef.current = false;
+  setIsListening(false);
+  setVoiceUi("processing");
+  stopVoiceTimer();
 
-    if (isNativeSpeechMode()) {
-      await finalizeNativeTapListening();
-      return;
-    }
+  if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+    navigator.vibrate(20);
+  }
 
-    try {
-      recognitionRef.current?.stop?.();
-    } catch (e) {}
+  if (isNativeSpeechMode()) {
+    await finalizeNativeTapListening();
+    return;
+  }
 
-    stopNoiseSuppressedMic();
+  try {
+    recognitionRef.current?.stop?.();
+  } catch (e) {}
 
-    // allow final events to flush
-    await new Promise((r) => setTimeout(r, 220));
+  stopNoiseSuppressedMic();
+
+  // allow final events to flush
+  await new Promise((r) => setTimeout(r, 650));
 
     const chunks = transcriptBufferRef.current.filter(Boolean);
 const mergeChunks = (parts: string[]) => {
@@ -4100,31 +4378,20 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
       recognitionRef.current = null;
     }
 
-    const rec = new SR();
-    recognitionRef.current = rec;
+  const rec = new SR();
+recognitionRef.current = rec;
 
-    rec.lang = speechLang;
-    rec.interimResults = true;
-    rec.maxAlternatives = 1;
-    rec.continuous = true;
+rec.lang = speechLang;
+rec.interimResults = true;
+rec.maxAlternatives = 1;
+rec.continuous = true;
 
-    // --- Step 2: יציבות + משפטים ארוכים ---
-    // לא עוצרים מיד על no-speech (זה נפוץ בדסקטופ)
-    // מוסיפים עצירה אוטומטית אחרי שקט קצר + רשת בטחון למשפטים ארוכים
-    const SILENCE_MS = 3000;
-    const MAX_SESSION_MS = 90_000;
-
-    let hadAnyResult = false;
-    let lastResultAt = Date.now();
-    let silenceTimer: number | null = null;
-    let sessionTimer: number | null = null;
-
-    const clearLocalTimers = () => {
-      if (silenceTimer != null) window.clearTimeout(silenceTimer);
-      if (sessionTimer != null) window.clearTimeout(sessionTimer);
-      silenceTimer = null;
-      sessionTimer = null;
-    };
+// --- Tap mode ---
+// במצב Tap לא עוצרים אוטומטית על שקט.
+// העצירה תתבצע רק בלחיצה יזומה של המשתמש.
+const clearLocalTimers = () => {
+  // no-op on purpose
+};
 
     // Clear timers related to voice UI (e.g. auto-clear of "שמענו")
     const clearVoiceTimers = () => {
@@ -4187,20 +4454,17 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
         }
 
         const last =
-          interimCombined ||
-          (transcriptBufferRef.current.length
-            ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
-            : "");
+  interimCombined ||
+  (transcriptBufferRef.current.length
+    ? transcriptBufferRef.current[transcriptBufferRef.current.length - 1]
+    : "");
 
-        if (last) setLastHeard(cleanVoicePreviewText(last));
+if (last) setLastHeard(cleanVoicePreviewText(last));
 
-        hadAnyResult = true;
-        lastResultAt = Date.now();
-        scheduleSilenceStop();
-      } catch (e) {
-        // ignore
-      }
-    };
+} catch (e) {
+  // ignore
+}
+};
 
     rec.onerror = (e: any) => {
       const err = String(e?.error || "");
@@ -5272,12 +5536,22 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 // ---------------------------
 // App Router
 // ---------------------------
+const RootRoute: React.FC = () => {
+  if (isNativeOrLocalAppRuntime()) return <MainList />;
+  return <InstallLandingPage />;
+};
+
+const InviteRoute: React.FC = () => {
+  if (isNativeOrLocalAppRuntime()) return <InvitePage />;
+  return <InstallLandingPage inviteMode />;
+};
+
 const App: React.FC = () => {
   return (
     <HashRouter>
       <Routes>
-        <Route path="/" element={<MainList />} />
-        <Route path="/invite" element={<InvitePage />} />
+        <Route path="/" element={<RootRoute />} />
+        <Route path="/invite" element={<InviteRoute />} />
       </Routes>
     </HashRouter>
   );
