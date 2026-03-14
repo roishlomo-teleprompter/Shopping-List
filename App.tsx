@@ -152,7 +152,7 @@ function isNativeOrLocalAppRuntime() {
 
 function buildInviteLink(listId: string, token: string) {
   const base = getPublicAppBaseUrl();
-  return `${base}/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+  return `${base}/#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
 }
 
 async function copyToClipboard(text: string) {
