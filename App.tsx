@@ -70,6 +70,7 @@ import {
 
 import { Capacitor, registerPlugin } from "@capacitor/core";
 import { Share } from "@capacitor/share";
+import { App as CapacitorApp } from "@capacitor/app";
 import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
 import { auth, db, googleProvider } from "./firebase.ts";
@@ -152,7 +153,23 @@ function isNativeOrLocalAppRuntime() {
 
 function buildInviteLink(listId: string, token: string) {
   const base = getPublicAppBaseUrl();
-  return `${base}/#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+  return `${base}/?openInvite=1&listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+}
+
+function buildInviteHashFromUrl(rawUrl: string): string | null {
+  try {
+    const url = new URL(rawUrl);
+    const listId = url.searchParams.get("listId");
+    const token = url.searchParams.get("token");
+    const openInvite = url.searchParams.get("openInvite");
+
+    if (!listId || !token) return null;
+    if (openInvite !== "1") return null;
+
+    return `#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+  } catch (e) {
+    return null;
+  }
 }
 
 async function copyToClipboard(text: string) {
@@ -4567,6 +4584,30 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
       setToast(`${t("שגיאה")}: ${String(e?.message || e || "")}`);
     }
   };
+    async function leaveSharedList() {
+  try {
+    if (!user || !list?.id) return;
+
+    const ref = doc(db, "lists", list.id);
+    const snap = await getDoc(ref);
+
+    if (!snap.exists()) return;
+
+    const data = snap.data();
+    const sharedWith = data.sharedWith || [];
+
+    const updated = sharedWith.filter((uid: string) => uid !== user.uid);
+
+    await updateDoc(ref, {
+      sharedWith: updated
+    });
+
+    setToast(t("התנתקת מהרשימה"));
+
+  } catch (e) {
+    console.error("leaveSharedList error", e);
+  }
+}
 
   useEffect(() => {
     return () => {
@@ -5547,6 +5588,45 @@ const InviteRoute: React.FC = () => {
 };
 
 const App: React.FC = () => {
+  useEffect(() => {
+    const applyInviteUrl = (rawUrl: string) => {
+      const inviteHash = buildInviteHashFromUrl(rawUrl);
+      if (!inviteHash) return;
+
+      if (window.location.hash !== inviteHash) {
+        window.location.hash = inviteHash;
+      }
+    };
+
+    try {
+      applyInviteUrl(window.location.href);
+    } catch (e) {
+      // ignore
+    }
+
+    let sub: { remove: () => Promise<void> } | null = null;
+
+    const setup = async () => {
+      try {
+        sub = await CapacitorApp.addListener("appUrlOpen", (event: { url: string }) => {
+          applyInviteUrl(event.url);
+        });
+      } catch (e) {
+        // ignore
+      }
+    };
+
+    void setup();
+
+    return () => {
+      try {
+        void sub?.remove();
+      } catch (e) {
+        // ignore
+      }
+    };
+  }, []);
+
   return (
     <HashRouter>
       <Routes>
