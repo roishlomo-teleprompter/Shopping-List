@@ -1605,6 +1605,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוא נתחיל להוסיף מוצרים לקניות 🛒": "בוא נתחיל להוסיף מוצרים לקניות 🛒",
     "תזכורת לקניות": "תזכורת לקניות",
     "התחבר עם גוגל": "התחבר עם גוגל",
+    "התנתקת מהרשימה": "התנתקת מהרשימה",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
@@ -1664,6 +1665,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוא נתחיל להוסיף מוצרים לקניות 🛒": "Let's start adding products for shopping 🛒",
     "תזכורת לקניות": "Shopping Reminder",
     "התחבר עם גוגל": "Sign in with Google",
+    "התנתקת מהרשימה": "You left the list",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "To use the list and invite friends, please sign in with Google.",
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "Leave shared list",
@@ -1744,6 +1746,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוא נתחיל להוסיף מוצרים לקניות 🛒": "Давайте начнём добавлять товары к покупкам 🛒",
     "תזכורת לקניות": "Напоминание о покупках",
     "התחבר עם גוגל": "Войти через Google",
+    "התנתקת מהרשימה": "Вы вышли из списка",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "Чтобы пользоваться списком и приглашать друзей, войдите через Google.",
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
@@ -1824,6 +1827,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוא נתחיל להוסיף מוצרים לקניות 🛒": "لنبدأ بإضافة منتجات للتسوق 🛒",
     "תזכורת לקניות": "تذكير بالتسوق",
     "התחבר עם גוגל": "تسجيل الدخول عبر Google",
+    "התנתקת מהרשימה": "غادرت القائمة",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "لاستخدام القائمة ودعوة الأصدقاء، يرجى تسجيل الدخول عبر Google.",
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
@@ -4603,22 +4607,55 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
   try {
     if (!user || !list?.id) return;
 
-    const ref = doc(db, "lists", list.id);
+    const leavingListId = list.id;
+    const ref = doc(db, "lists", leavingListId);
     const snap = await getDoc(ref);
 
     if (!snap.exists()) return;
 
     const data = snap.data();
-    const sharedWith = data.sharedWith || [];
+    const sharedWith = Array.isArray(data.sharedWith) ? data.sharedWith : [];
 
     const updated = sharedWith.filter((uid: string) => uid !== user.uid);
 
     await updateDoc(ref, {
-      sharedWith: updated
+      sharedWith: updated,
     });
 
-    setToast(t("התנתקת מהרשימה"));
+    // נקה מצב מקומי של הרשימה שממנה יצאנו
+    if (localStorage.getItem("activeListId") === leavingListId) {
+      localStorage.removeItem("activeListId");
+    }
+    setList(null);
+    setItems([]);
+    setFavorites([]);
 
+    // טען מחדש את כל הרשימות שעוד שייכות למשתמש
+    const q = query(collection(db, "lists"), where("sharedWith", "array-contains", user.uid));
+    const listsSnap = await getDocs(q);
+
+    if (listsSnap.empty) {
+      const newListRef = doc(collection(db, "lists"));
+      const newList: ShoppingList = {
+        id: newListRef.id,
+        title: "My Easy List",
+        ownerUid: user.uid,
+        sharedWith: [user.uid],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      await setDoc(newListRef, newList);
+      setList(newList);
+      localStorage.setItem("activeListId", newListRef.id);
+    } else {
+      const nextDoc = listsSnap.docs[0];
+      const nextList = { ...(nextDoc.data() as ShoppingList), id: nextDoc.id };
+      setList(nextList);
+      localStorage.setItem("activeListId", nextDoc.id);
+    }
+
+    setToast(t("התנתקת מהרשימה"));
   } catch (e) {
     console.error("leaveSharedList error", e);
   }

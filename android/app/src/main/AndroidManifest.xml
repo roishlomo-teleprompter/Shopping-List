@@ -47,9 +47,9 @@
                 <category android:name="android.intent.category.BROWSABLE" />
 
                 <data
-                    android:scheme="https"
-                    android:host="myeasylist.app"
-                    android:pathPrefix="/invite" />
+                 android:scheme="https"
+                 android:host="myeasylist.app" />    
+                 
             </intent-filter>
 
         </activity>
