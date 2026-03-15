@@ -255,6 +255,18 @@ function openWhatsApp(text: string) {
 // Invite Page
 // ---------------------------
 const InvitePage: React.FC = () => {
+  const lang = (() => {
+    try {
+      const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+      if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+      return detectDeviceLang();
+    } catch {
+      return detectDeviceLang();
+    }
+  })();
+
+  const t = (k: string) => translate(lang, k);
+
   const [searchParams] = useSearchParams();
   const navigate = useNavigate();
 
@@ -379,30 +391,27 @@ const handleJoin = async () => {
             alt="My Easy List"
             className="w-24 h-24 object-contain drop-shadow-sm"
           />
-        </div>
+           </div>
+        <h1 className="text-2xl font-black text-slate-800">{t("הוזמנת לרשימה")}</h1>
 
-        <h1 className="text-2xl font-black text-slate-800">הוזמנת לרשימה</h1>
+        {!listId || !token ? <p className="text-rose-500 font-bold">{t("קישור ההזמנה לא תקין")}</p> : null}
 
-        {!listId || !token ? <p className="text-rose-500 font-bold">קישור ההזמנה לא תקין</p> : null}
-        {error ? <p className="text-rose-500 font-bold break-words">{error}</p> : null}
+        <button
+          onClick={handleLogin}
+          className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
+        >
+          <LogIn className="w-4 h-4" />
+          {t("התחבר עם גוגל להצטרפות")}
+        </button>
 
-        {!user ? (
-          <button
-            onClick={handleLogin}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
-          >
-            <LogIn className="w-4 h-4" />
-            התחבר עם גוגל להצטרפות
-          </button>
-        ) : (
-          <button
-            onClick={handleJoin}
-            disabled={loading}
-            className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
-          >
-            {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : "הצטרף לרשימה"}
-          </button>
-        )}
+        <button
+          onClick={handleJoin}
+          disabled={loading}
+          className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
+        >
+          {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : t("הצטרף לרשימה")}
+        </button>
+
       </div>
     </div>
   );
@@ -410,10 +419,21 @@ const handleJoin = async () => {
 
 
 const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = false }) => {
+
+  const lang = (() => {
+    try {
+      const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+      if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+      return detectDeviceLang();
+    } catch {
+      return detectDeviceLang();
+    }
+  })();
+
   const isAndroid = (() => {
     try {
       return /android/i.test(navigator.userAgent || "");
-    } catch (e) {
+    } catch {
       return false;
     }
   })();
@@ -427,22 +447,22 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = f
   })();
 
   const installTitle = inviteMode
-    ? "Install My Easy List to open this shared list"
-    : "Install My Easy List";
+  ? translate(lang, "התקן את האפליקציה כדי לפתוח את הרשימה")
+  : translate(lang, "התקן את My Easy List");
 
-  const installSubtitle = inviteMode
-    ? "Shared lists open only inside the app."
-    : "My Easy List is available through the mobile app.";
+const installSubtitle = inviteMode
+  ? translate(lang, "רשימות משותפות נפתחות רק באפליקציה")
+  : translate(lang, "My Easy List זמין דרך האפליקציה");
 
-  const primaryStoreLabel = isAndroid
-    ? "Google Play - Coming soon"
-    : isIOS
-      ? "App Store - Coming soon"
-      : "Google Play - Coming soon";
+const primaryStoreLabel = isAndroid
+  ? translate(lang, "גוגל פליי - בקרוב")
+  : isIOS
+    ? translate(lang, "אפ סטור - בקרוב")
+    : translate(lang, "גוגל פליי - בקרוב");
 
-  const secondaryStoreLabel = isAndroid
-    ? "App Store - Coming soon"
-    : "Google Play - Coming soon";
+const secondaryStoreLabel = isAndroid
+  ? translate(lang, "אפ סטור - בקרוב")
+  : translate(lang, "גוגל פליי - בקרוב");
 
   const storeButtonClass =
     "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
@@ -475,8 +495,8 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = f
 
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
           {inviteMode
-            ? "After installing the app, open the invite link again on your phone."
-            : "Install the app to create, share, and manage your shopping lists."}
+        ? t("אחרי התקנת האפליקציה פתח שוב את הקישור")
+       : t("התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
         </div>
       </div>
     </div>
@@ -1610,12 +1630,25 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
     "וואטסאפ": "וואטסאפ",
+    "הזמנה לא בתוקף": "הזמנה לא בתוקף",
     "שפה": "שפה",
     "יציאה": "יציאה",
     "נקה רשימה": "נקה רשימה",
     "מועדפים": "מועדפים",
     "פריטים שחוזרים לסל": "פריטים שחוזרים לסל",
     "אין מועדפים עדיין": "אין מועדפים עדיין",
+    "הוזמנת לרשימה": "הוזמנת לרשימה",
+    "קישור ההזמנה לא תקין": "קישור ההזמנה לא תקין",
+    "התחבר עם גוגל להצטרפות": "התחבר עם גוגל להצטרפות",
+    "הצטרף לרשימה": "הצטרף לרשימה",
+    "התקן את האפליקציה כדי לפתוח את הרשימה": "התקן את האפליקציה כדי לפתוח את הרשימה",
+    "התקן את My Easy List": "התקן את My Easy List",
+    "רשימות משותפות נפתחות רק באפליקציה": "רשימות משותפות נפתחות רק באפליקציה",
+    "My Easy List זמין דרך האפליקציה": "My Easy List זמין דרך האפליקציה",
+    "גוגל פליי - בקרוב": "גוגל פליי - בקרוב",
+    "אפ סטור - בקרוב": "אפ סטור - בקרוב",
+    "אחרי התקנת האפליקציה פתח שוב את הקישור": "אחרי התקנת האפליקציה פתח שוב את הקישור",
+    "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "התקן את האפליקציה כדי ליצור, לשתף ולנהל רשימות קניות",
     "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק": "פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק",
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "מקשיב עכשיו - דבר ושחרר כדי לבצע",
     "שמענו:": "שמענו:",
@@ -1691,6 +1724,19 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שתף רשימת קניות": "Share shopping list",
       "קישור לרשימה": "List link",
       "קישור הצטרפות להרשימה שלי:": "Join link to my list",
+      "הזמנה לא בתוקף": "Invite link is invalid",
+      "הוזמנת לרשימה": "You were invited to a list",
+      "קישור ההזמנה לא תקין": "Invite link is invalid",
+      "התחבר עם גוגל להצטרפות": "Sign in with Google to join",
+      "הצטרף לרשימה": "Join list",
+      "התקן את האפליקציה כדי לפתוח את הרשימה": "Install the app to open this list",
+      "התקן את My Easy List": "Install My Easy List",
+      "רשימות משותפות נפתחות רק באפליקציה": "Shared lists open only inside the app",
+      "My Easy List זמין דרך האפליקציה": "My Easy List is available through the mobile app",
+      "גוגל פליי - בקרוב": "Google Play - Coming soon",
+      "אפ סטור - בקרוב": "App Store - Coming soon",
+      "אחרי התקנת האפליקציה פתח שוב את הקישור": "After installing the app, open the invite link again",
+      "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "Install the app to create, share, and manage your shopping lists",
       "לנקות את כל הרשימה?": "Clear the entire list?",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "This will delete all items from the list.",
       "ביטול": "Cancel",
@@ -1761,6 +1807,18 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מקשיב עכשיו - דבר ושחרר כדי לבצע": "Слушаю - говорите и отпустите чтобы выполнить",
     "שמענו:": "Распознано:",
     "דוגמאות:": "Примеры:",
+    "הוזמנת לרשימה": "Вы приглашены в список",
+    "קישור ההזמנה לא תקין": "Ссылка приглашения недействительна",
+    "התחבר עם גוגל להצטרפות": "Войти через Google",
+    "הצטרף לרשימה": "Присоединиться к списку",
+    "התקן את האפליקציה כדי לפתוח את הרשימה": "Установите приложение чтобы открыть список",
+    "התקן את My Easy List": "Установите My Easy List",
+    "רשימות משותפות נפתחות רק באפליקציה": "Общие списки открываются только в приложении",
+    "My Easy List זמין דרך האפליקציה": "My Easy List доступен через приложение",
+    "גוגל פליי - בקרוב": "Google Play - скоро",
+    "אפ סטור - בקרוב": "App Store - скоро",
+    "אחרי התקנת האפליקציה פתח שוב את הקישור": "После установки приложения откройте ссылку снова",
+    "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "Установите приложение чтобы создавать, делиться и управлять списками покупок",
     "דבר עכשיו - שחרר כדי לבצע": "Говорите - отпустите чтобы выполнить",
     "צריך להתחבר לפני פקודות קוליות": "Войдите в аккаунт для голосовых команд",
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Ваш браузер не поддерживает распознавание речи. Попробуйте Chrome или Edge.",
@@ -1786,6 +1844,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "המיקרופון לא זמין (אפליקציה אחרת אולי משתמשת בו)": "Микрофон недоступен (возможно, его использует другое приложение)",
     "לא הצלחתי להתחיל האזנה": "Не удалось начать прослушивание",
     "לא נקלט קול - נסה שוב": "Звук не распознан - попробуйте ещё раз",
+    "הזמנה לא בתוקף": "Ссылка приглашения недействительна",
     "מבצע...": "Выполняю...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "Можно отключиться только от общего списка, владельцем которого вы не являетесь",
     "שגיאה": "Ошибка",
@@ -1853,6 +1912,19 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שתף רשימת קניות": "مشاركة قائمة التسوق",
       "קישור לרשימה": "رابط القائمة",
       "קישור הצטרפות להרשימה שלי:": "رابط الانضمام إلى قائمتي",
+      "הוזמנת לרשימה": "تمت دعوتك إلى القائمة",
+      "קישור ההזמנה לא תקין": "رابط الدعوة غير صالح",
+      "התחבר עם גוגל להצטרפות": "تسجيل الدخول عبر Google",
+      "הצטרף לרשימה": "انضم إلى القائمة",
+      "התקן את האפליקציה כדי לפתוח את הרשימה": "قم بتثبيت التطبيق لفتح هذه القائمة",
+      "התקן את My Easy List": "قم بتثبيت My Easy List",
+      "רשימות משותפות נפתחות רק באפליקציה": "القوائم المشتركة تفتح فقط داخل التطبيق",
+      "My Easy List זמין דרך האפליקציה": "My Easy List متاح عبر التطبيق",
+      "גוגל פליי - בקרוב": "Google Play - قريباً",
+      "אפ סטור - בקרוב": "App Store - قريباً",
+      "אחרי התקנת האפליקציה פתח שוב את הקישור": "بعد تثبيت التطبيق افتح الرابط مرة أخرى",
+      "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "قم بتثبيت التطبيق لإنشاء ومشاركة وإدارة قوائم التسوق",
+      "הזמנה לא בתוקף": "رابط الدعوة غير صالح",
       "לנקות את כל הרשימה?": "مسح القائمة بالكامل؟",
       "הפעולה תמחק את כל הפריטים מהרשימה.": "سيتم حذف جميع العناصر من القائمة.",
       "ביטול": "إلغاء",
@@ -1899,6 +1971,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
 },
 };
 
+    function translate(lang: AppLang, key: string) {
+      const dict = I18N[lang] || I18N.he;
+      const k = String(key ?? "").trim();
+      return dict[k] ?? I18N.he[k] ?? k;
+    }
+
 const getVoiceExamplesText = (lang: AppLang) => {
   switch (lang) {
     case "en":
@@ -1925,6 +2003,7 @@ const [lang, setLang] = useState<AppLang>(() => {
     return detectDeviceLang();
   }
 });
+
 
 useEffect(() => {
   try {
