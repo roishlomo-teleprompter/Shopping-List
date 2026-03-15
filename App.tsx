@@ -57,6 +57,7 @@ import {
   deleteDoc,
   deleteField,
   doc,
+  getDoc,
   getDocs,
   onSnapshot,
   query,
@@ -285,56 +286,70 @@ const InvitePage: React.FC = () => {
   };
 }, []);
   const handleLogin = async () => {
+  setError(null);
+  try {
+    await signInSmart();
+  } catch (e: any) {
+    setError(e?.message || "שגיאת התחברות");
+  }
+};
+
+const handleJoin = async () => {
+  if (!listId || !token) {
+    setError("קישור ההזמנה חסר נתונים (listId או token)");
+    return;
+  }
+
+  let currentUser = user;
+
+  if (!currentUser) {
     setError(null);
     try {
       await signInSmart();
+      currentUser = auth.currentUser;
     } catch (e: any) {
       setError(e?.message || "שגיאת התחברות");
-    }
-  };
-
-  const handleJoin = async () => {
-    if (!listId || !token) {
-      setError("קישור ההזמנה חסר נתונים (listId או token)");
       return;
     }
-    if (!user) {
-      await handleLogin();
-      return;
-    }
+  }
 
-    setLoading(true);
-    setError(null);
+  if (!currentUser) {
+    setError("שגיאת התחברות");
+    return;
+  }
 
-    try {
-      await runTransaction(db, async (transaction) => {
-        const listDocRef = doc(db, "lists", listId);
-        const listSnap = await transaction.get(listDocRef);
+  setLoading(true);
+  setError(null);
 
-        if (!listSnap.exists()) throw new Error("הרשימה לא קיימת");
+  try {
+    await runTransaction(db, async (transaction) => {
+      const listDocRef = doc(db, "lists", listId);
+      const listSnap = await transaction.get(listDocRef);
 
-        const data = listSnap.data() as ShoppingList;
-        const invite = (data as any).pendingInvites?.[token];
+      if (!listSnap.exists()) throw new Error("הרשימה לא קיימת");
 
-        if (!invite) throw new Error("הזמנה לא בתוקף");
-        if (invite.expiresAt < Date.now()) throw new Error("פג תוקף ההזמנה");
+      const data = listSnap.data() as ShoppingList;
+      const invite = (data as any).pendingInvites?.[token];
 
-        transaction.update(listDocRef, {
-          sharedWith: arrayUnion(user.uid),
-          [`pendingInvites.${token}`]: deleteField(),
-        });
+      if (!invite) throw new Error("הזמנה לא בתוקף");
+      if (invite.expiresAt < Date.now()) throw new Error("פג תוקף ההזמנה");
+
+      transaction.update(listDocRef, {
+        sharedWith: arrayUnion(currentUser.uid),
+        [`pendingInvites.${token}`]: deleteField(),
       });
+    });
 
-      localStorage.setItem("activeListId", listId);
-      navigate("/");
-    } catch (e: any) {
-      setError(e?.message || "שגיאה לא ידועה");
-    } finally {
-      setLoading(false);
-    }
-  };
+    localStorage.setItem("activeListId", listId);
+    navigate("/");
+  } catch (e: any) {
+    setError(e?.message || "שגיאה לא ידועה");
+  } finally {
+    setLoading(false);
+  }
+};
 
-  if (authLoading) {
+      if (authLoading) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl" style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}>
 
