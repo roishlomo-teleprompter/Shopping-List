@@ -4676,7 +4676,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
            style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Heebo", "Rubik", Arial' }}>
         <div className="flex flex-col items-center gap-3 opacity-70">
           <Loader2 className="w-10 h-10 animate-spin" />
-          <div className="font-bold text-slate-500">טוען...</div>
+          <div className="font-bold text-slate-500">...Loading</div>
         </div>
       </div>
     );
