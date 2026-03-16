@@ -494,9 +494,9 @@ const secondaryStoreLabel = isAndroid
         </div>
 
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
-          {inviteMode
-        ? t("אחרי התקנת האפליקציה פתח שוב את הקישור")
-       : t("התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
+         {inviteMode
+        ? translate(lang, "אחרי התקנת האפליקציה פתח שוב את הקישור")
+        : translate(lang, "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
         </div>
       </div>
     </div>
