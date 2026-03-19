@@ -5030,7 +5030,10 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           setShareMenuOpen(false);
           shareListWhatsApp();
         }}
-        className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+        className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
+        lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+}`}
+dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
       >
         <MessageCircle className="w-4 h-4 text-emerald-600" />
         <span className="font-semibold text-[15px] leading-none">{t("וואטסאפ")}</span>
@@ -5042,7 +5045,10 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           setShareMenuOpen(false);
           await shareInviteLinkSystem();
         }}
-        className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+        className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
+        lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+}`}
+dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
       >
         <Share2 className="w-4 h-4 text-slate-500" />
         <span className="font-semibold text-[15px] leading-none">{t("שתף רשימת קניות")}</span>
@@ -5079,7 +5085,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
     (
 <div
       ref={moreMenuElRef}
-      className="fixed z-[100] w-[220px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
+      className="fixed z-[100] w-[300px] max-w-[calc(100%-20px)] rounded-2xl border border-slate-200 bg-white shadow-lg overflow-hidden text-[15px] leading-tight"
       style={{ top: moreMenuPos.top, left: moreMenuPos.left, maxWidth: moreMenuPos.maxWidth }}
     >
       {moreMenuView === "main" ? (
@@ -5087,25 +5093,41 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           <button
             type="button"
             onClick={() => setMoreMenuView("language")}
-            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
+            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+}`}
+dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
           >
             <Languages className="w-4 h-4 text-slate-500" />
-            <span className="font-semibold text-[15px] leading-none">{t("שפה")}</span>
-          </button>
+              <span
+                className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
+                  lang === "he" || lang === "ar" ? "" : "flex-1"
+                }`}
+              >
+                {t("שפה")}
+              </span>          </button>
 
-          <button
-            type="button"
-            onClick={() => {
-              setMoreMenuOpen(false);
-              setMoreMenuView("main");
-              void openNativeCalendar();
-            }}
-            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
-          >
-            <Calendar className="w-4 h-4 text-slate-500" />
-            <span className="font-semibold text-[15px] leading-none">{t("צור תזכורת ביומן")}</span>
-          </button>
-
+            <button
+                type="button"
+                onClick={() => {
+                  setMoreMenuOpen(false);
+                  setMoreMenuView("main");
+                  void openNativeCalendar();
+                }}
+                className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-3 ${
+                  lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+                }`}
+                dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
+              >
+                <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
+                <span
+                  className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
+                    lang === "he" || lang === "ar" ? "" : "flex-1"
+                  }`}
+                >
+                  {t("צור תזכורת ביומן")}
+                </span>
+              </button>
           <button
             type="button"
             onClick={() => {
@@ -5113,14 +5135,22 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
               setMoreMenuView("main");
               setShowClearConfirm(true);
             }}
-            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
+            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+}`}
+dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
           >
             <Trash2 className="w-4 h-4 text-rose-500" />
-            <span className="font-semibold text-[15px] leading-none">{t("נקה רשימה")}</span>
-          </button>
+              <span
+                className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
+                  lang === "he" || lang === "ar" ? "" : "flex-1"
+                }`}
+              >
+                {t("נקה רשימה")}
+              </span>          </button>
 
           <div className="h-px bg-slate-100" />
-
+        
           <button
             type="button"
             onClick={() => {
@@ -5128,11 +5158,19 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
               setMoreMenuView("main");
               void signOutSmart();
             }}
-            className="w-full text-right px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2"
+            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
+            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
+}`}
+dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
           >
             <LogOut className="w-4 h-4 text-slate-500" />
-            <span className="font-semibold text-[15px] leading-none">{t("יציאה")}</span>
-          </button>
+          <span
+            className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
+              lang === "he" || lang === "ar" ? "" : "flex-1"
+            }`}
+          >
+            {t("יציאה")}
+          </span>          </button>
         </>
       ) : (
         <>
