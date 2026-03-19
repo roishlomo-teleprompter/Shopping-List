@@ -1982,7 +1982,13 @@ const [lang, setLang] = useState<AppLang>(() => {
     return "en";
   }
 });
+const RTL_LANGS: AppLang[] = ["he", "ar"];
+const isRTL = RTL_LANGS.includes(lang);
 
+const rtlClasses = {
+  row: isRTL ? "justify-end text-right" : "justify-start text-left",
+  text: isRTL ? "text-right" : "text-left",
+};
 
 useEffect(() => {
   try {
@@ -5025,57 +5031,75 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
       style={{ top: shareMenuPos.top, left: shareMenuPos.left, maxWidth: shareMenuPos.maxWidth }}
     >
       <button
-        type="button"
-        onClick={() => {
-          setShareMenuOpen(false);
-          shareListWhatsApp();
-        }}
-        className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
-        lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-}`}
-dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-      >
-        <MessageCircle className="w-4 h-4 text-emerald-600" />
-        <span className="font-semibold text-[15px] leading-none">{t("וואטסאפ")}</span>
-      </button>
+  type="button"
+  onClick={() => {
+    setShareMenuOpen(false);
+    shareListWhatsApp();
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <MessageCircle className="w-4 h-4 text-green-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none">
+    {t("וואטסאפ")}
+  </span>
+</button>
+
+     <button
+  type="button"
+  onClick={async () => {
+    setShareMenuOpen(false);
+    await shareInviteLinkSystem();
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Share2 className="w-4 h-4 text-amber-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none">
+    {t("שתף רשימת קניות")}
+  </span>
+</button>
 
       <button
-        type="button"
-        onClick={async () => {
-          setShareMenuOpen(false);
-          await shareInviteLinkSystem();
-        }}
-        className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
-        lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-}`}
-dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-      >
-        <Share2 className="w-4 h-4 text-slate-500" />
-        <span className="font-semibold text-[15px] leading-none">{t("שתף רשימת קניות")}</span>
-      </button>
-
-      <button
-        type="button"
-        onClick={async () => {
-          const canLeave = !!(user && list?.ownerUid && user.uid !== list.ownerUid);
-          setShareMenuOpen(false);
-          if (!canLeave) {
-            setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
-            return;
-          }
-          const ok = window.confirm(`${t("התנתק מרשימת קניות משותפת")} ?`);
-          if (!ok) return;
-          await leaveSharedList();
-        }}
-        className={`w-full text-right px-4 py-3 flex items-center gap-2 ${
-          user && list?.ownerUid && user.uid !== list.ownerUid
-            ? "text-rose-700 hover:bg-rose-50"
-            : "text-slate-400 cursor-not-allowed"
-        }`}
-      >
-        <LogOut className={`w-4 h-4 ${user && list?.ownerUid && user.uid !== list.ownerUid ? "text-rose-600" : "text-slate-400"}`} />
-        <span className="font-semibold text-[15px] leading-none">{t("התנתק מרשימת קניות משותפת")}</span>
-      </button>
+  type="button"
+  onClick={async () => {
+    const canLeave = !!(user && list?.ownerUid && user.uid !== list.ownerUid);
+    setShareMenuOpen(false);
+    if (!canLeave) {
+      setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
+      return;
+    }
+    const ok = window.confirm(`${t("התנתק מרשימת קניות משותפת")} ?`);
+    if (!ok) return;
+    await leaveSharedList();
+  }}
+  className={`w-full py-3 flex items-center gap-3 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  } ${
+    user && list?.ownerUid && user.uid !== list.ownerUid
+      ? "text-rose-700 hover:bg-rose-50"
+      : "text-slate-400 cursor-not-allowed"
+  }`}
+>
+  <LogOut
+    className={`w-4 h-4 shrink-0 ${
+      user && list?.ownerUid && user.uid !== list.ownerUid
+        ? "text-rose-600"
+        : "text-slate-400"
+    }`}
+  />
+  <span className="font-semibold text-[15px] leading-none">
+    {t("התנתק מרשימת קניות משותפת")}
+  </span>
+</button>
     </div>
     ),
     document.body
@@ -5091,86 +5115,78 @@ dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
       {moreMenuView === "main" ? (
         <>
           <button
-            type="button"
-            onClick={() => setMoreMenuView("language")}
-            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
-            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-}`}
-dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-          >
-            <Languages className="w-4 h-4 text-slate-500" />
-              <span
-                className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
-                  lang === "he" || lang === "ar" ? "" : "flex-1"
-                }`}
-              >
-                {t("שפה")}
-              </span>          </button>
+  type="button"
+  onClick={() => setMoreMenuView("language")}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Languages className="w-4 h-4 text-sky-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("שפה")}
+  </span>
+</button>
 
             <button
-                type="button"
-                onClick={() => {
-                  setMoreMenuOpen(false);
-                  setMoreMenuView("main");
-                  void openNativeCalendar();
-                }}
-                className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-3 ${
-                  lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-                }`}
-                dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-              >
-                <Calendar className="w-4 h-4 text-slate-500 shrink-0" />
-                <span
-                  className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
-                    lang === "he" || lang === "ar" ? "" : "flex-1"
-                  }`}
-                >
-                  {t("צור תזכורת ביומן")}
-                </span>
-              </button>
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    void openNativeCalendar();
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Calendar className="w-4 h-4 text-violet-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("צור תזכורת ביומן")}
+  </span>
+</button>
           <button
-            type="button"
-            onClick={() => {
-              setMoreMenuOpen(false);
-              setMoreMenuView("main");
-              setShowClearConfirm(true);
-            }}
-            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
-            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-}`}
-dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-          >
-            <Trash2 className="w-4 h-4 text-rose-500" />
-              <span
-                className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
-                  lang === "he" || lang === "ar" ? "" : "flex-1"
-                }`}
-              >
-                {t("נקה רשימה")}
-              </span>          </button>
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    setShowClearConfirm(true);
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("נקה רשימה")}
+  </span>
+</button>
 
-          <div className="h-px bg-slate-100" />
+<div className="h-px bg-slate-100" />
+
         
           <button
-            type="button"
-            onClick={() => {
-              setMoreMenuOpen(false);
-              setMoreMenuView("main");
-              void signOutSmart();
-            }}
-            className={`w-full px-4 py-3 text-slate-700 hover:bg-slate-50 flex items-center gap-2 whitespace-nowrap ${
-            lang === "he" || lang === "ar" ? "text-right flex-row-reverse" : "text-left"
-}`}
-dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
-          >
-            <LogOut className="w-4 h-4 text-slate-500" />
-          <span
-            className={`font-semibold text-[15px] leading-none whitespace-nowrap ${
-              lang === "he" || lang === "ar" ? "" : "flex-1"
-            }`}
-          >
-            {t("יציאה")}
-          </span>          </button>
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    void signOutSmart();
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <LogOut className="w-4 h-4 text-amber-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("יציאה")}
+  </span>
+</button>
         </>
       ) : (
         <>
@@ -5193,7 +5209,7 @@ dir={lang === "he" || lang === "ar" ? "rtl" : "ltr"}
               }`}
             >
               <span>{opt.label}</span>
-              {lang === opt.code ? <Check className="w-4 h-4 text-emerald-500" /> : null}
+              {lang === opt.code ? <Check className="w-4 h-4 text-emerald-500 shrink-0" /> : null}
             </button>
           ))}
         </>
