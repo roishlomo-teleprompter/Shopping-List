@@ -256,14 +256,14 @@ function openWhatsApp(text: string) {
 // ---------------------------
 const InvitePage: React.FC = () => {
   const lang = (() => {
-    try {
-      const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
-      if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-      return detectDeviceLang();
-    } catch {
-      return detectDeviceLang();
-    }
-  })();
+  try {
+    const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+    if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+    return "en";
+  } catch {
+    return "en";
+  }
+})();
 
   const t = (k: string) => translate(lang, k);
 
@@ -410,14 +410,15 @@ const handleJoin = async () => {
 const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = false }) => {
 
   const lang = (() => {
-    try {
-      const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
-      if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-      return detectDeviceLang();
-    } catch {
-      return detectDeviceLang();
-    }
-  })();
+  try {
+    const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+    if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+    return "en";
+  } catch {
+    return "en";
+  }
+})();
+
 
   const isAndroid = (() => {
     try {
