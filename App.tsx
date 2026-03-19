@@ -285,18 +285,7 @@ const InvitePage: React.FC = () => {
       setAuthLoading(false);
     });
   }, []);
-  useEffect(() => {
-  return () => {
-    try {
-      if (nativeTapStopTimerRef.current != null) {
-        window.clearTimeout(nativeTapStopTimerRef.current);
-        nativeTapStopTimerRef.current = null;
-      }
-    } catch (e) {
-      // ignore
-    }
-  };
-}, []);
+
   const handleLogin = async () => {
   setError(null);
   try {
@@ -949,24 +938,18 @@ function isClearListCommand(raw: string, lang?: AppLang) {
   // Normalize punctuation so phrases like "רק, רשימה" are treated correctly.
   const s = s0.replace(/[\n,]+/g, " ").replace(/\s+/g, " ").trim();
 
-  const tokens = s.split(" ").filter(Boolean);
-  const listWords = new Set(["רשימה", "הרשימה", "list", "список", "القائمة", "قائمة"]);
-
-  // Per requirement: ANY phrase that includes "list"/"רשימה" should clear the list
-  if (tokens.some((t) => listWords.has(t))) return true;
-
-const byLang = (l: AppLang) => {
-    if (l === "he") {
-      return (
-        /(מחק|נקה|אפס).{0,12}(רשימה|הרשימה|את הרשימה)/.test(s) ||
-        /מחק.{0,12}הכל/.test(s) ||
-        /נקה.{0,12}הכל/.test(s)
-      );
-    }
+  const byLang = (l: AppLang) => {
+   if (l === "he") {
+  return (
+    /(מחק|מרחק|נקה|אפס|רק).{0,12}(רשימה|הרשימה|את הרשימה)/.test(s) ||
+    /(מחק|מרחק|נקה|אפס).{0,12}(הכל|את הכל)/.test(s) ||
+    /^רשימה$/.test(s)
+  );
+}
     if (l === "en") {
       return (
-        /\b(clear|delete|reset)\b.{0,16}\b(list|the list)\b/.test(s) ||
-        /\bremove\b.{0,16}\b(all|everything)\b/.test(s)
+        /\b(clear|delete|reset)\b.{0,16}\b(list|the list|my list)\b/.test(s) ||
+        /\b(remove)\b.{0,16}\b(all|everything)\b/.test(s)
       );
     }
     if (l === "ru") {
@@ -974,17 +957,12 @@ const byLang = (l: AppLang) => {
         /\b(очисти|очистить|удали|удалить|сбрось|сбросить)\b.{0,16}\b(список|весь список)\b/.test(s)
       );
     }
-    // ar
     return (
       /\b(امسح|احذف|افرغ)\b.{0,16}\b(القائمة|قائمة)\b/.test(s) ||
       /\b(امسح|احذف)\b.{0,16}\b(الكل|كلها)\b/.test(s)
     );
   };
 
-  // Prefer explicit lang, otherwise try all languages (keeps behavior robust)
-  if (lang) return byLang(lang);
-
-  return byLang("he") || byLang("en") || byLang("ru") || byLang("ar"); // try all languages (keeps behavior robust)
   if (lang) return byLang(lang);
 
   return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
@@ -1998,9 +1976,9 @@ const [lang, setLang] = useState<AppLang>(() => {
   try {
     const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
     if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-    return detectDeviceLang();
+    return "en";
   } catch {
-    return detectDeviceLang();
+    return "en";
   }
 });
 
@@ -2304,6 +2282,9 @@ useEffect(() => {
   const NATIVE_SMART_START_DELAY_MS = 420;
   const NATIVE_LATE_TRANSCRIPT_WAIT_MS = 900;
   const NATIVE_LATE_TRANSCRIPT_POLL_MS = 60;
+  const SILENCE_MS_HE = 3000;
+  const SILENCE_MS_EN = 5000;
+  const MAX_SESSION_MS = 15000;
 
   useEffect(() => {
     lastHeardRef.current = lastHeard || "";
@@ -3652,6 +3633,32 @@ for (const p of parsed) {
     return acc.replace(/\s+/g, " ").trim();
   };
 
+  const mergeTranscriptCandidate = (prevRaw: string, nextRaw: string) => {
+  const prev = normalizeVoiceText(String(prevRaw || "")).trim();
+  const next = normalizeVoiceText(String(nextRaw || "")).trim();
+
+  if (!prev) return next;
+  if (!next) return prev;
+
+  if (prev === next) return prev;
+  if (next.startsWith(prev)) return next;
+  if (prev.startsWith(next)) return prev;
+
+  const prevWords = prev.split(" ").filter(Boolean);
+  const nextWords = next.split(" ").filter(Boolean);
+
+  const maxWordOverlap = Math.min(prevWords.length, nextWords.length);
+  for (let k = maxWordOverlap; k >= 2; k--) {
+    const prevTail = prevWords.slice(-k).join(" ");
+    const nextHead = nextWords.slice(0, k).join(" ");
+    if (prevTail === nextHead) {
+      return [...prevWords, ...nextWords.slice(k)].join(" ").trim();
+    }
+  }
+
+  return mergeTranscriptParts([prev, next]);
+};
+
   const mergeFinalAndInterimTranscript = (finalText: string, interimText: string) => {
     const f = String(finalText || "").trim();
     const i = String(interimText || "").trim();
@@ -3853,6 +3860,8 @@ if (parsed.length === 0) return [];
 
     for (const p of parsed) {
       const name = stripWrappingBrackets((p.name || "").trim());
+      const lower = name.toLowerCase();
+      if (lower === "list" || lower === "the list") continue;
       if (!name) continue;
 
       const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
@@ -3884,14 +3893,15 @@ if (parsed.length === 0) return [];
 
     while (Date.now() - startedAt < maxWaitMs) {
       latest = mergeTranscriptParts(
-        [
-          nativeFinalTranscriptRef.current,
-          nativeLastPartialRef.current,
-          lastHeardRef.current,
-        ]
-          .map((x) => normalizeVoiceText(String(x || "")))
-          .filter(Boolean)
-      );
+  [
+    ...nativeTranscriptChunksRef.current,
+    nativeFinalTranscriptRef.current,
+    nativeLastPartialRef.current,
+
+  ]
+    .map((x) => normalizeVoiceText(String(x || "")))
+    .filter(Boolean)
+);
 
       if (latest) return latest;
       await new Promise((resolve) => setTimeout(resolve, NATIVE_LATE_TRANSCRIPT_POLL_MS));
@@ -3921,14 +3931,15 @@ if (parsed.length === 0) return [];
     await new Promise((resolve) => setTimeout(resolve, 90));
 
     let combined = mergeTranscriptParts(
-      [
-        nativeFinalTranscriptRef.current,
-        nativeLastPartialRef.current,
-        lastHeardRef.current,
-      ]
-        .map((x) => normalizeVoiceText(String(x || "")))
-        .filter(Boolean)
-    );
+  [
+    ...nativeTranscriptChunksRef.current,
+    nativeFinalTranscriptRef.current,
+    nativeLastPartialRef.current,
+  
+  ]
+    .map((x) => normalizeVoiceText(String(x || "")))
+    .filter(Boolean)
+);
 
     if (!combined) {
       combined = await waitForLateNativeTranscript();
@@ -3940,37 +3951,63 @@ if (parsed.length === 0) return [];
       // ignore
     }
 
-    clearNativeSpeechState();
+combined = combined
+  .replace(/clear list\s+clear list/gi, "clear list")
+  .trim();
 
-    if (!combined) {
-      setVoiceUi("idle");
-      setToast(t("לא נקלט קול - נסה שוב"));
-      nativeFinalizeRef.current = false;
+if (!combined) {
+  setVoiceUi("idle");
+  setToast(t("לא נקלט קול - נסה שוב"));
+  nativeFinalizeRef.current = false;
 
-      if (nativeRestartRequestedRef.current) {
-        nativeRestartRequestedRef.current = false;
-      
-      }
-      return;
-    }
+  if (nativeRestartRequestedRef.current) {
+    nativeRestartRequestedRef.current = false;
+  }
+  return;
+}
 
-    if (nativeRestartRequestedRef.current) {
-      nativeRestartRequestedRef.current = false;
-      setVoiceDraft("");
-      setVoiceUi("idle");
-      nativeFinalizeRef.current = false;
-      scheduleNativeTapRestart(0);
-      return;
-    }
+const normalizedCmd = combined
+  .toLowerCase()
+  .replace(/\bthe\b/g, "")
+  .replace(/\bmy\b/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
 
-    setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
-    setVoiceUi("review");
-    nativeFinalizeRef.current = false;
-  };
+if (normalizedCmd.includes("clear list")) {
+  await clearListServer();
+  setVoiceUi("idle");
+  nativeFinalizeRef.current = false;
+  return;
+}
+
+clearNativeSpeechState();
+
+   if (nativeRestartRequestedRef.current) {
+  nativeRestartRequestedRef.current = false;
+  setVoiceDraft("");
+  setVoiceUi("idle");
+  nativeFinalizeRef.current = false;
+  scheduleNativeTapRestart(0);
+  return;
+}
+
+if (isClearListCommand(combined, lang)) {
+  await clearListServer();
+  setVoiceDraft("");
+  setVoiceUi("idle");
+  nativeFinalizeRef.current = false;
+  setToast(t("הרשימה נמחקה"));
+  return;
+}
+
+setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
+setVoiceUi("review");
+nativeFinalizeRef.current = false;
+};
 
   
   
-
+ 
    const scheduleNativeTapRestart = (delayMs: number, bypassTapLock = true) => {
   if (pendingRestartTimerRef.current != null) {
     window.clearTimeout(pendingRestartTimerRef.current);
@@ -4073,12 +4110,14 @@ if (parsed.length === 0) return [];
 
           nativeLastPartialRef.current = merged;
 
-          const preview = mergeTranscriptParts([
-            ...nativeTranscriptChunksRef.current,
-            merged,
-          ]);
+          const previewBase =
+          nativeTranscriptChunksRef.current.length > 0
+          ? nativeTranscriptChunksRef.current[nativeTranscriptChunksRef.current.length - 1]
+          : "";
 
-          setLastHeard(cleanVoicePreviewText(preview));
+const preview = mergeTranscriptCandidate(previewBase, merged);
+
+          setLastHeard(preview);
         });
 
         await SpeechRecognition.addListener("listeningState", async (data: any) => {
@@ -4104,8 +4143,21 @@ if (parsed.length === 0) return [];
                   ).trim()
                 : "";
 
-            if (partial && partial !== lastChunk) {
-              nativeTranscriptChunksRef.current.push(partial);
+            // Ignore very short partials (English produces many unstable fragments)
+            if (
+              partial &&
+              partial !== lastChunk &&
+              (lang !== "en" || partial.split(" ").length >= 2 || partial.length >= 8)
+            ) {
+              const mergedChunk = mergeTranscriptCandidate(lastChunk, partial);
+
+              if (!lastChunk) {
+                nativeTranscriptChunksRef.current.push(mergedChunk);
+              } else {
+                nativeTranscriptChunksRef.current[
+                  nativeTranscriptChunksRef.current.length - 1
+                ] = mergedChunk;
+              }
             }
 
             nativeLastPartialRef.current = "";
@@ -4116,6 +4168,11 @@ if (parsed.length === 0) return [];
             if (nativeTapStopTimerRef.current != null) {
               window.clearTimeout(nativeTapStopTimerRef.current);
             }
+
+            if (!partial || partial.length < 2) {
+            nativeRestartRequestedRef.current = false;
+            return;
+             }
 
             nativeTapStopTimerRef.current = window.setTimeout(async () => {
               nativeTapStopTimerRef.current = null;
@@ -4138,7 +4195,7 @@ if (parsed.length === 0) return [];
               } finally {
                 nativeRestartRequestedRef.current = false;
               }
-            }, 250);
+            }, lang === "en" ? 1000 : 700);
           }
         });
 
@@ -4161,7 +4218,7 @@ if (parsed.length === 0) return [];
 
         if (initialMerged) {
           nativeFinalTranscriptRef.current = initialMerged;
-          setLastHeard(cleanVoicePreviewText(initialMerged));
+          setLastHeard(initialMerged);
         }
       } catch (e) {
         console.error(e);
@@ -4402,14 +4459,62 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
     lastInterimRef.current = "";
 
     if (!combined) {
-      setVoiceUi("idle");
-      setToast(t("לא נקלט קול - נסה שוב"));
-      return;
-    }
+  setVoiceUi("idle");
+  setToast(t("לא נקלט קול - נסה שוב"));
+  return;
+}
 
-    setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
-    setVoiceUi("review");
-  };
+if (isClearListCommand(combined, lang)) {
+  await clearListServer();
+  setVoiceDraft("");
+  setVoiceUi("idle");
+  setToast(t("הרשימה נמחקה"));
+  return;
+}
+
+const normalizedCmd = combined
+  .toLowerCase()
+  .replace(/\b(the|my|a)\b/g, "")
+  .replace(/\s+/g, " ")
+  .trim();
+
+if (
+  normalizedCmd.includes("clear list") ||
+  normalizedCmd.includes("delete list") ||
+  normalizedCmd.includes("מחק רשימה") ||
+  normalizedCmd.includes("רק רשימה") ||
+  normalizedCmd.includes("מרחק רשימה") ||
+  normalizedCmd === "רשימה"
+) {
+  await clearListServer();
+
+  setVoiceDraft("");
+  setVoiceUi("idle");
+  nativeFinalizeRef.current = false;
+  setToast(t("הרשימה נמחקה"));
+  return;
+}
+
+if (
+  normalizedCmd.includes("clear list") ||
+  normalizedCmd.includes("delete list") ||
+  normalizedCmd.includes("מחק רשימה") ||
+  normalizedCmd.includes("רק רשימה") ||
+  normalizedCmd.includes("מרחק רשימה") ||
+  normalizedCmd === "רשימה"
+) {
+  await clearListServer();
+
+  setVoiceDraft("");
+  setVoiceUi("idle");
+  nativeFinalizeRef.current = false;
+  setToast(t("הרשימה נמחקה"));
+  return;
+}
+
+setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
+setVoiceUi("review");
+};
 
   const confirmVoiceDraft = async () => {
     const draft = voiceDraft.trim();
@@ -4501,11 +4606,20 @@ rec.interimResults = true;
 rec.maxAlternatives = 1;
 rec.continuous = true;
 
-// --- Tap mode ---
-// במצב Tap לא עוצרים אוטומטית על שקט.
-// העצירה תתבצע רק בלחיצה יזומה של המשתמש.
+let silenceTimer: number | null = null;
+let sessionTimer: number | null = null;
+let hadAnyResult = false;
+let lastResultAt = Date.now();
+
 const clearLocalTimers = () => {
-  // no-op on purpose
+  if (silenceTimer != null) {
+    window.clearTimeout(silenceTimer);
+    silenceTimer = null;
+  }
+  if (sessionTimer != null) {
+    window.clearTimeout(sessionTimer);
+    sessionTimer = null;
+  }
 };
 
     // Clear timers related to voice UI (e.g. auto-clear of "שמענו")
@@ -4517,17 +4631,19 @@ const clearLocalTimers = () => {
     };
 
     const scheduleSilenceStop = () => {
-      // עוצרים בגלל שקט רק אחרי שכבר קיבלנו לפחות תוצאה אחת
-      if (!holdActiveRef.current) return;
-      if (!hadAnyResult) return;
+  if (!holdActiveRef.current) return;
+  if (!hadAnyResult) return;
 
-      if (silenceTimer != null) window.clearTimeout(silenceTimer);
-      silenceTimer = window.setTimeout(() => {
-        if (!holdActiveRef.current) return;
-        const dt = Date.now() - lastResultAt;
-        if (dt >= SILENCE_MS) stopHoldListening();
-      }, SILENCE_MS + 50);
-    };
+  if (silenceTimer != null) window.clearTimeout(silenceTimer);
+
+  const silenceMs = lang === "en" ? SILENCE_MS_EN : SILENCE_MS_HE;
+
+  silenceTimer = window.setTimeout(() => {
+    if (!holdActiveRef.current) return;
+    const dt = Date.now() - lastResultAt;
+    if (dt >= silenceMs) stopHoldListening();
+  }, silenceMs + 50);
+};
 
     sessionTimer = window.setTimeout(() => {
       if (!holdActiveRef.current) return;
@@ -4558,6 +4674,8 @@ const clearLocalTimers = () => {
           const best = r?.[0];
           const transcript = normalizeVoiceText(String(best?.transcript || ""));
           if (!transcript) continue;
+          hadAnyResult = true;
+          lastResultAt = Date.now();
 
           if (r.isFinal) {
             transcriptBufferRef.current[i] = transcript;
@@ -5766,6 +5884,6 @@ const App: React.FC = () => {
       </Routes>
     </HashRouter>
   );
+  
 };
-
 export default App;
