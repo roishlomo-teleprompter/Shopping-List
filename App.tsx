@@ -2279,8 +2279,8 @@ useEffect(() => {
   const HEARD_CLEAR_MS = 1800;
   const heardClearTimerRef = useRef<number | null>(null);
   const MIC_TAP_DEBOUNCE_MS = 450;
-  const NATIVE_RESTART_COOLDOWN_MS = 700;
-  const NATIVE_SMART_START_DELAY_MS = 420;
+  const NATIVE_RESTART_COOLDOWN_MS = 250;
+  const NATIVE_SMART_START_DELAY_MS = 120;
   const NATIVE_LATE_TRANSCRIPT_WAIT_MS = 900;
   const NATIVE_LATE_TRANSCRIPT_POLL_MS = 60;
   const SILENCE_MS_HE = 3000;
@@ -4145,12 +4145,8 @@ const preview = mergeTranscriptCandidate(previewBase, merged);
                 : "";
 
             // Ignore very short partials (English produces many unstable fragments)
-            if (
-              partial &&
-              partial !== lastChunk &&
-              (lang !== "en" || partial.split(" ").length >= 2 || partial.length >= 8)
-            ) {
-              const mergedChunk = mergeTranscriptCandidate(lastChunk, partial);
+            if (partial && partial !== lastChunk) {
+            const mergedChunk = mergeTranscriptCandidate(lastChunk, partial);
 
               if (!lastChunk) {
                 nativeTranscriptChunksRef.current.push(mergedChunk);
@@ -4196,7 +4192,7 @@ const preview = mergeTranscriptCandidate(previewBase, merged);
               } finally {
                 nativeRestartRequestedRef.current = false;
               }
-            }, lang === "en" ? 1000 : 700);
+            }, lang === "en" ? 350 : 250);
           }
         });
 
@@ -4295,10 +4291,10 @@ rec.onresult = (event: any) => {
         lastInterimRef.current = "";
       } else {
         // ignore duplicate interim repeats that Chrome often emits in English
-        if (lastInterimRef.current !== transcript) {
+        
           interimCombined = transcript;
           lastInterimRef.current = transcript;
-        }
+        
       }
     }
 
@@ -4370,7 +4366,7 @@ startGuardRef.current = true;
         } finally {
           startGuardRef.current = false;
         }
-      }, 180);
+      }, 40);
     };
 
     try {
@@ -4751,7 +4747,7 @@ if (last) setLastHeard(cleanVoicePreviewText(last));
         } finally {
           startGuardRef.current = false;
         }
-      }, 180);
+      }, 40);
     };
 
     try {
