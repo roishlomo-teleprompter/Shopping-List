@@ -2130,7 +2130,7 @@ useEffect(() => {
     if (!shareMenuOpen) return;
     const r = shareBtnRef.current?.getBoundingClientRect();
     const measuredW = shareMenuElRef.current?.offsetWidth;
-    const menuW = measuredW && measuredW > 0 ? measuredW : 260;
+    const menuW = measuredW && measuredW > 0 ? measuredW : 320;
     setShareMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "right" }));
   }, [shareMenuOpen]);
 
@@ -2152,7 +2152,7 @@ useEffect(() => {
     if (!moreMenuOpen) return;
     const r = moreBtnRef.current?.getBoundingClientRect();
     const measuredW = moreMenuElRef.current?.offsetWidth;
-    const menuW = measuredW && measuredW > 0 ? measuredW : 220;
+    const menuW = measuredW && measuredW > 0 ? measuredW : 320;
     setMoreMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "left" }));
   }, [moreMenuOpen]);
 
@@ -2176,7 +2176,7 @@ useEffect(() => {
     requestAnimationFrame(() => {
       const r = shareBtnRef.current?.getBoundingClientRect();
       const measuredW = shareMenuElRef.current?.offsetWidth;
-      const menuW = measuredW && measuredW > 0 ? measuredW : 260;
+      const menuW = measuredW && measuredW > 0 ? measuredW : 320;
       setShareMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "right" }));
     });
   }, [shareMenuOpen]);
@@ -2186,7 +2186,7 @@ useEffect(() => {
     requestAnimationFrame(() => {
       const r = moreBtnRef.current?.getBoundingClientRect();
       const measuredW = moreMenuElRef.current?.offsetWidth;
-      const menuW = measuredW && measuredW > 0 ? measuredW : 220;
+      const menuW = measuredW && measuredW > 0 ? measuredW : 320;
       setMoreMenuPos(calcFixedMenuPos({ anchorRect: r, menuWidth: menuW, align: "left" }));
     });
   }, [moreMenuOpen]);
