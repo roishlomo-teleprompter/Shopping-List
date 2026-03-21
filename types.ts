@@ -1,3 +1,9 @@
+export type CategoryKey =
+  | "vegetables_fruits"
+  | "dairy_eggs"
+  | "meat_fish"
+  | "bakery_bread"
+  | "other";
 
 export interface ShoppingItem {
   id: string;
@@ -7,6 +13,7 @@ export interface ShoppingItem {
   isFavorite: boolean;
   createdAt: number;
   purchasedAt?: number;
+  category?: CategoryKey; // ← שדה אחד בלבד
 }
 
 export interface ShoppingList {

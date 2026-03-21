@@ -1573,6 +1573,114 @@ function getAutocompleteSuggestions(opts: {
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
 
+type CategoryKey =
+  | "vegetables_fruits"
+  | "dairy_eggs"
+  | "meat_fish"
+  | "bakery_bread"
+  | "other";
+
+const CATEGORY_ORDER: CategoryKey[] = [
+  "vegetables_fruits",
+  "dairy_eggs",
+  "meat_fish",
+  "bakery_bread",
+  "other",
+];
+
+const categoryLabelByLang: Record<AppLang, Record<CategoryKey, string>> = {
+  he: {
+    vegetables_fruits: "ירקות ופירות",
+    dairy_eggs: "חלב וביצים",
+    meat_fish: "בשר ודגים",
+    bakery_bread: "מאפיה ולחם",
+    other: "אחר",
+  },
+  en: {
+    vegetables_fruits: "Vegetables & Fruits",
+    dairy_eggs: "Dairy & Eggs",
+    meat_fish: "Meat & Fish",
+    bakery_bread: "Bakery & Bread",
+    other: "Other",
+  },
+  ru: {
+    vegetables_fruits: "Овощи и фрукты",
+    dairy_eggs: "Молочные продукты и яйца",
+    meat_fish: "Мясо и рыба",
+    bakery_bread: "Выпечка и хлеб",
+    other: "Другое",
+  },
+  ar: {
+    vegetables_fruits: "خضروات وفواكه",
+    dairy_eggs: "ألبان وبيض",
+    meat_fish: "لحوم وأسماك",
+    bakery_bread: "مخبوزات وخبز",
+    other: "أخرى",
+  },
+};
+
+const categoryKeywords: Record<CategoryKey, string[]> = {
+  vegetables_fruits: [
+    "עגבניה","עגבניות","מלפפון","מלפפונים","בצל","בצלים","שום","גזר","תפוח","תפוחים","בננה","בננות","אבוקדו","פלפל","פלפלים","חסה","לימון","תפוז",
+    "tomato","tomatoes","cucumber","cucumbers","onion","onions","garlic","carrot","carrots","apple","apples","banana","bananas","avocado","pepper","peppers","lettuce","lemon","orange",
+    "помидор","помидоры","огурец","огурцы","лук","чеснок","морковь","яблоко","яблоки","банан","бананы","авокадо","перец","салат","лимон","апельсин",
+    "طماطم","خيار","بصل","ثوم","جزر","تفاح","موز","أفوكادو","افوكادو","فلفل","خس","ليمون","برتقال"
+  ],
+  dairy_eggs: [
+    "חלב","גבינה","גבינות","יוגורט","יוגורטים","ביצה","ביצים","קוטג","קוטג'","שמנת","חמאה",
+    "milk","cheese","cheeses","yogurt","yoghurt","egg","eggs","cottage","cream","butter",
+    "молоко","сыр","йогурт","яйцо","яйца","творог","сливки","масло",
+    "حليب","جبنة","جبن","لبن","بيض","قشطة","زبدة"
+  ],
+  meat_fish: [
+    "עוף","חזה עוף","בשר","בשר טחון","דג","דגים","סלמון","טונה","נקניקיות",
+    "chicken","meat","ground beef","beef","fish","salmon","tuna","sausages",
+    "курица","мясо","фарш","рыба","лосось","тунец","сосиски",
+    "دجاج","لحم","لحم مفروم","سمك","سلمون","تونة","نقانق"
+  ],
+  bakery_bread: [
+    "לחם","לחמים","פיתה","פיתות","חלה","חלות","בגט","לחמניה","לחמניות","טוסט","טורטיה",
+    "bread","breads","pita","pitas","challah","baguette","roll","rolls","bun","buns","toast","tortilla",
+    "хлеб","пита","батон","багет","булка","булочки","тост","тортилья",
+    "خبز","بيتا","باغيت","لفافة","لفافات","توست","تورتيلا"
+  ],
+  other: [],
+};
+
+const detectCategory = (rawName: string): CategoryKey => {
+  const name = String(rawName || "").trim().toLowerCase();
+  if (!name) return "other";
+
+  for (const category of CATEGORY_ORDER) {
+    if (category === "other") continue;
+    const keywords = categoryKeywords[category];
+    if (keywords.some((k) => name.includes(k.toLowerCase()))) {
+      return category;
+    }
+  }
+
+  return "other";
+};
+
+const normalizeCategoryPreferenceKey = (rawName: string) =>
+  normalizeItemName(stripWrappingBrackets(String(rawName || "")));
+
+type UserCategoryMap = Partial<Record<string, CategoryKey>>;
+
+const resolveItemCategory = (
+  item: ShoppingItem,
+  userCategoryMap: UserCategoryMap
+): CategoryKey => {
+  const explicit = (item as any)?.category as CategoryKey | undefined;
+  if (explicit && CATEGORY_ORDER.includes(explicit)) return explicit;
+
+  const prefKey = normalizeCategoryPreferenceKey(item.name);
+  const preferred = prefKey ? userCategoryMap[prefKey] : undefined;
+  if (preferred && CATEGORY_ORDER.includes(preferred)) return preferred;
+
+  return detectCategory(item.name);
+};
+
 const detectDeviceLang = (): AppLang => {
   try {
     const navLang = (navigator.language || "").toLowerCase();
@@ -1647,24 +1755,20 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "הפעולה תמחק את כל הפריטים מהרשימה.": "הפעולה תמחק את כל הפריטים מהרשימה.",
       "ביטול": "ביטול",
       "מחק הכל": "מחק הכל",
-  
-    "מקליט": "מקליט",
-  
-    "לחץ לסיום": "לחץ לסיום",
-  
-    "לחץ כדי לדבר": "לחץ כדי לדבר",
-  
-    "מעבד": "מעבד…",
-  
-    "בדיקה לפני שליחה": "בדיקה לפני שליחה",
-  
-    "אפשר לערוך או לבטל": "אפשר לערוך או לבטל",
-  
-    "מה אמרת?": "מה אמרת?",
-  
-    "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
-
-    "צור תזכורת ביומן": "צור תזכורת ביומן",
+      "מקליט": "מקליט",
+      "לחץ לסיום": "לחץ לסיום",
+      "לחץ כדי לדבר": "לחץ כדי לדבר",
+      "מעבד": "מעבד…",
+      "בדיקה לפני שליחה": "בדיקה לפני שליחה",
+      "אפשר לערוך או לבטל": "אפשר לערוך או לבטל",
+      "מה אמרת?": "מה אמרת?",
+      "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
+      "צור תזכורת ביומן": "צור תזכורת ביומן",
+      "העבר לקטגוריה": "העבר לקטגוריה",
+      "זכור לי תמיד עבור פריט זה": "זכור לי תמיד עבור פריט זה",
+      "שמור": "שמור",
+      "נסגר": "סגור",
+      "הקטגוריה עודכנה": "הקטגוריה עודכנה",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -1695,32 +1799,31 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "דבר עכשיו - שחרר כדי לבצע": "Speak now - release to run",
     "צריך להתחבר לפני פקודות קוליות": "Please sign in before voice commands",
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Your browser does not support speech recognition. Try Chrome or Edge.",
-      "מה להוסיף לרשימה?": "What to add to the list?",
-      "רשימה": "List",
+    "מה להוסיף לרשימה?": "What to add to the list?",
+    "רשימה": "List",
     "נקנו": "Bought",
-      "יומן": "Calendar",
-      "שיתוף": "Share",
-      "שתף רשימת קניות": "Share shopping list",
-      "קישור לרשימה": "List link",
-      "קישור הצטרפות להרשימה שלי:": "Join link to my list",
-      "הזמנה לא בתוקף": "Invite link is invalid",
-      "הוזמנת לרשימה": "You were invited to a list",
-      "קישור ההזמנה לא תקין": "Invite link is invalid",
-      "התחבר עם גוגל להצטרפות": "Sign in with Google to join",
-      "הצטרף לרשימה": "Join list",
-      "התקן את האפליקציה כדי לפתוח את הרשימה": "Install the app to open this list",
-      "התקן את My Easy List": "Install My Easy List",
-      "רשימות משותפות נפתחות רק באפליקציה": "Shared lists open only inside the app",
-      "My Easy List זמין דרך האפליקציה": "My Easy List is available through the mobile app",
-      "גוגל פליי - בקרוב": "Google Play - Coming soon",
-      "אפ סטור - בקרוב": "App Store - Coming soon",
-      "אחרי התקנת האפליקציה פתח שוב את הקישור": "After installing the app, open the invite link again",
-      "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "Install the app to create, share, and manage your shopping lists",
-      "לנקות את כל הרשימה?": "Clear the entire list?",
-      "הפעולה תמחק את כל הפריטים מהרשימה.": "This will delete all items from the list.",
-      "ביטול": "Cancel",
-      "מחק הכל": "Delete all",
-  
+    "יומן": "Calendar",
+    "שיתוף": "Share",
+    "שתף רשימת קניות": "Share shopping list",
+    "קישור לרשימה": "List link",
+    "קישור הצטרפות להרשימה שלי:": "Join link to my list",
+    "הזמנה לא בתוקף": "Invite link is invalid",
+    "הוזמנת לרשימה": "You were invited to a list",
+    "קישור ההזמנה לא תקין": "Invite link is invalid",
+    "התחבר עם גוגל להצטרפות": "Sign in with Google to join",
+    "הצטרף לרשימה": "Join list",
+    "התקן את האפליקציה כדי לפתוח את הרשימה": "Install the app to open this list",
+    "התקן את My Easy List": "Install My Easy List",
+    "רשימות משותפות נפתחות רק באפליקציה": "Shared lists open only inside the app",
+    "My Easy List זמין דרך האפליקציה": "My Easy List is available through the mobile app",
+    "גוגל פליי - בקרוב": "Google Play - Coming soon",
+    "אפ סטור - בקרוב": "App Store - Coming soon",
+    "אחרי התקנת האפליקציה פתח שוב את הקישור": "After installing the app, open the invite link again",
+    "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "Install the app to create, share, and manage your shopping lists",
+    "לנקות את כל הרשימה?": "Clear the entire list?",
+    "הפעולה תמחק את כל הפריטים מהרשימה.": "This will delete all items from the list.",
+    "ביטול": "Cancel",
+    "מחק הכל": "Delete all",
     "הרשימה נמחקה": "List cleared",
     "לא מצאתי פריט למחיקה": "Could not find an item to delete",
     "לא מצאתי פריט לסימון": "Could not find an item to mark",
@@ -1733,32 +1836,25 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "Running...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "You can disconnect only from a shared list you do not own",
     "שגיאה": "Error",
-
     "מקליט": "Recording",
-  
     "לחץ לסיום": "Tap to stop",
-  
     "לחץ כדי לדבר": "Tap to speak",
-  
     "מעבד": "Processing…",
-  
     "בדיקה לפני שליחה": "Review before sending",
-  
     "אפשר לערוך או לבטל": "You can edit or cancel",
-  
     "מה אמרת?": "What did you say?",
-  
     "שלח": "Send",
-  
     "בוצע. ניתן לבטל למשך 3 שניות": "Done. You can undo for 3 seconds",
-  
     "בטל": "Undo",
-  
     "בוטל": "Undone",
-  
     "בוצע": "Done",
-
     "צור תזכורת ביומן": "Create calendar reminder",
+    "העבר לקטגוריה": "Move to category",
+    "זכור לי תמיד עבור פריט זה": "Always remember this item",
+    "שמור": "Save",
+    "נסגר": "Close",
+    "הקטגוריה עודכנה": "Category updated",
+
 },
   ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -1801,19 +1897,18 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "דבר עכשיו - שחרר כדי לבצע": "Говорите - отпустите чтобы выполнить",
     "צריך להתחבר לפני פקודות קוליות": "Войдите в аккаунт для голосовых команд",
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "Ваш браузер не поддерживает распознавание речи. Попробуйте Chrome или Edge.",
-      "מה להוסיף לרשימה?": "Что добавить в список?",
-      "רשימה": "Список",
+    "מה להוסיף לרשימה?": "Что добавить в список?",
+    "רשימה": "Список",
     "נקנו": "Куплено",
-      "יומן": "Календарь",
-      "שיתוף": "Поделиться",
-      "שתף רשימת קניות": "Поделиться списком покупок",
-      "קישור לרשימה": "Ссылка на список",
-      "קישור הצטרפות להרשימה שלי:": "Ссылка для присоединения к моему списку",
-      "לנקות את כל הרשימה?": "Очистить весь список?",
-      "הפעולה תמחק את כל הפריטים מהרשימה.": "Это удалит все элементы из списка.",
-      "ביטול": "Отмена",
-      "מחק הכל": "Удалить всё",
-  
+    "יומן": "Календарь",
+    "שיתוף": "Поделиться",
+    "שתף רשימת קניות": "Поделиться списком покупок",
+    "קישור לרשימה": "Ссылка на список",
+    "קישור הצטרפות להרשימה שלי:": "Ссылка для присоединения к моему списку",
+    "לנקות את כל הרשימה?": "Очистить весь список?",
+    "הפעולה תמחק את כל הפריטים מהרשימה.": "Это удалит все элементы из списка.",
+    "ביטול": "Отмена",
+    "מחק הכל": "Удалить всё",
     "הרשימה נמחקה": "Список очищен",
     "לא מצאתי פריט למחיקה": "Не нашёл элемент для удаления",
     "לא מצאתי פריט לסימון": "Не нашёл элемент для отметки",
@@ -1827,37 +1922,28 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "Выполняю...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "Можно отключиться только от общего списка, владельцем которого вы не являетесь",
     "שגיאה": "Ошибка",
-
     "מקליט": "Запись",
-  
     "לחץ לסיום": "Нажмите, чтобы остановить",
-  
     "לחץ כדי לדבר": "Нажмите, чтобы говорить",
-  
     "מעבד": "Обработка…",
-  
     "בדיקה לפני שליחה": "Проверка перед отправкой",
-  
     "אפשר לערוך או לבטל": "Можно отредактировать или отменить",
-  
     "מה אמרת?": "Что вы сказали?",
-  
     "שלח": "Отправить",
-  
     "בוצע. ניתן לבטל למשך 3 שניות": "Готово. Можно отменить в течение 3 секунд",
-  
     "בטל": "Отменить",
-  
     "בוטל": "Отменено",
-  
     "בוצע": "Готово",
-
     "צור תזכורת ביומן": "Создать напоминание в календаре",
+    "העבר לקטגוריה": "Переместить в категорию",
+    "זכור לי תמיד עבור פריט זה": "Всегда запоминать для этого товара",
+    "שמור": "Сохранить",
+    "נסגר": "Закрыть",
+    "הקטגוריה עודכנה": "Категория обновлена",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
     "__toast_online_back__": "تم الاتصال بالإنترنت من جديد",
-
     "מחובר": "متصل",
     "לא מחובר": "غير متصل",
     "הרשימה ריקה": "القائمة فارغة",
@@ -1883,32 +1969,31 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "דבר עכשיו - שחרר כדי לבצע": "تحدث الآن - اترك للتنفيذ",
     "צריך להתחבר לפני פקודות קוליות": "يرجى تسجيل الدخول قبل الأوامر الصوتية",
     "הדפדפן לא תומך בזיהוי דיבור. נסה Chrome או Edge.": "متصفحك لا يدعم التعرف على الكلام. جرّب Chrome أو Edge.",
-      "מה להוסיף לרשימה?": "ماذا تريد أن تضيف إلى القائمة؟",
-      "רשימה": "القائمة",
+    "מה להוסיף לרשימה?": "ماذا تريد أن تضيف إلى القائمة؟",
+    "רשימה": "القائمة",
     "נקנו": "تم الشراء",
-      "יומן": "التقويم",
-      "שיתוף": "مشاركة",
-      "שתף רשימת קניות": "مشاركة قائمة التسوق",
-      "קישור לרשימה": "رابط القائمة",
-      "קישור הצטרפות להרשימה שלי:": "رابط الانضمام إلى قائمتي",
-      "הוזמנת לרשימה": "تمت دعوتك إلى القائمة",
-      "קישור ההזמנה לא תקין": "رابط الدعوة غير صالح",
-      "התחבר עם גוגל להצטרפות": "تسجيل الدخول عبر Google",
-      "הצטרף לרשימה": "انضم إلى القائمة",
-      "התקן את האפליקציה כדי לפתוח את הרשימה": "قم بتثبيت التطبيق لفتح هذه القائمة",
-      "התקן את My Easy List": "قم بتثبيت My Easy List",
-      "רשימות משותפות נפתחות רק באפליקציה": "القوائم المشتركة تفتح فقط داخل التطبيق",
-      "My Easy List זמין דרך האפליקציה": "My Easy List متاح عبر التطبيق",
-      "גוגל פליי - בקרוב": "Google Play - قريباً",
-      "אפ סטור - בקרוב": "App Store - قريباً",
-      "אחרי התקנת האפליקציה פתח שוב את הקישור": "بعد تثبيت التطبيق افتح الرابط مرة أخرى",
-      "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "قم بتثبيت التطبيق لإنشاء ومشاركة وإدارة قوائم التسوق",
-      "הזמנה לא בתוקף": "رابط الدعوة غير صالح",
-      "לנקות את כל הרשימה?": "مسح القائمة بالكامل؟",
-      "הפעולה תמחק את כל הפריטים מהרשימה.": "سيتم حذف جميع العناصر من القائمة.",
-      "ביטול": "إلغاء",
-      "מחק הכל": "حذف الكل",
-  
+    "יומן": "التقويم",
+    "שיתוף": "مشاركة",
+    "שתף רשימת קניות": "مشاركة قائمة التسوق",
+    "קישור לרשימה": "رابط القائمة",
+    "קישור הצטרפות להרשימה שלי:": "رابط الانضمام إلى قائمتي",
+    "הוזמנת לרשימה": "تمت دعوتك إلى القائمة",
+    "קישור ההזמנה לא תקין": "رابط الدعوة غير صالح",
+    "התחבר עם גוגל להצטרפות": "تسجيل الدخول عبر Google",
+    "הצטרף לרשימה": "انضم إلى القائمة",
+    "התקן את האפליקציה כדי לפתוח את הרשימה": "قم بتثبيت التطبيق لفتح هذه القائمة",
+    "התקן את My Easy List": "قم بتثبيت My Easy List",
+    "רשימות משותפות נפתחות רק באפליקציה": "القوائم المشتركة تفتح فقط داخل التطبيق",
+    "My Easy List זמין דרך האפליקציה": "My Easy List متاح عبر التطبيق",
+    "גוגל פליי - בקרוב": "Google Play - قريباً",
+    "אפ סטור - בקרוב": "App Store - قريباً",
+    "אחרי התקנת האפליקציה פתח שוב את הקישור": "بعد تثبيت التطبيق افتح الرابط مرة أخرى",
+    "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "قم بتثبيت التطبيق لإنشاء ومشاركة وإدارة قوائم التسوق",
+    "הזמנה לא בתוקף": "رابط الدعوة غير صالح",
+    "לנקות את כל הרשימה?": "مسح القائمة بالكامل؟",
+    "הפעולה תמחק את כל הפריטים מהרשימה.": "سيتم حذف جميع العناصر من القائمة.",
+    "ביטול": "إلغاء",
+    "מחק הכל": "حذف الكل",
     "הרשימה נמחקה": "تم مسح القائمة",
     "לא מצאתי פריט למחיקה": "لم أجد عنصرًا للحذف",
     "לא מצאתי פריט לסימון": "لم أجد عنصرًا للتحديد",
@@ -1921,32 +2006,24 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מבצע...": "جاري التنفيذ...",
     "אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה": "يمكنك قطع الاتصال فقط عن قائمة مشتركة لست مالكها",
     "שגיאה": "خطأ",
-
     "מקליט": "جارٍ التسجيل",
-  
     "לחץ לסיום": "اضغط للإيقاف",
-  
     "לחץ כדי לדבר": "اضغط للتحدث",
-  
     "מעבד": "جارٍ المعالجة…",
-  
     "בדיקה לפני שליחה": "مراجعة قبل الإرسال",
-  
     "אפשר לערוך או לבטל": "يمكنك التعديل أو الإلغاء",
-  
     "מה אמרת?": "ماذا قلت؟",
-  
     "שלח": "إرسال",
-  
     "בוצע. ניתן לבטל למשך 3 שניות": "تم. يمكنك التراجع خلال 3 ثوانٍ",
-  
     "בטל": "تراجع",
-  
     "בוטל": "تم التراجع",
-  
     "בוצע": "تم",
-
     "צור תזכורת ביומן": "إنشاء تذكير في التقويم",
+    "העבר לקטגוריה": "انقل إلى فئة",
+    "זכור לי תמיד עבור פריט זה": "تذكر هذا العنصر دائمًا",
+    "שמור": "حفظ",
+    "נסגר": "إغلاق",
+    "הקטגוריה עודכנה": "تم تحديث الفئة",
 },
 };
 
@@ -2059,6 +2136,21 @@ const [isSuggestOpen, setIsSuggestOpen] = useState(false);
 const [activeSuggestIndex, setActiveSuggestIndex] = useState(-1);
 const historyRef = useRef<Record<string, ItemHistoryEntry>>({});
 const blurCloseTimerRef = useRef<number | null>(null);
+const [userCategoryMap, setUserCategoryMap] = useState<UserCategoryMap>({});
+const [categorySheetOpen, setCategorySheetOpen] = useState(false);
+const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
+const [categorySheetValue, setCategorySheetValue] = useState<CategoryKey>("other");
+const [rememberCategoryForUser, setRememberCategoryForUser] = useState(false);
+
+const longPressTimerRef = useRef<number | null>(null);
+const longPressTriggeredRef = useRef(false);
+
+const LONG_PRESS_MS = 450;
+
+const touchLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+const TOUCH_LONG_PRESS_MOVE_TOLERANCE = 12;
+const pointerLongPressStartRef = useRef<{ x: number; y: number } | null>(null);
+const POINTER_LONG_PRESS_MOVE_TOLERANCE = 8;
 
 useEffect(() => {
   historyRef.current = loadItemHistory();
@@ -2089,6 +2181,97 @@ useEffect(() => {
     }, 260);
   }
 }, [items]);
+
+const openCategorySheetForItem = (item: ShoppingItem) => {
+  const current = resolveItemCategory(item, userCategoryMap);
+  setCategorySheetItem(item);
+  setCategorySheetValue(current);
+  setRememberCategoryForUser(false);
+  setCategorySheetOpen(true);
+};
+
+const closeCategorySheet = () => {
+  setCategorySheetOpen(false);
+  setCategorySheetItem(null);
+  setRememberCategoryForUser(false);
+};
+
+const saveItemCategory = async () => {
+  if (!list?.id || !categorySheetItem) return;
+
+  const itemRef = doc(db, "lists", list.id, "items", categorySheetItem.id);
+
+  await updateDoc(itemRef, {
+    category: categorySheetValue,
+  });
+
+  if (rememberCategoryForUser && user?.uid) {
+    const prefKey = normalizeCategoryPreferenceKey(categorySheetItem.name);
+    if (prefKey) {
+      const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+      await setDoc(
+        prefRef,
+        {
+          itemCategoryMap: {
+            [prefKey]: categorySheetValue,
+          },
+          updatedAt: Date.now(),
+        },
+        { merge: true }
+      );
+    }
+  }
+
+  setToast(t("הקטגוריה עודכנה"));
+  closeCategorySheet();
+};
+
+const startItemLongPress = (item: ShoppingItem) => () => {
+  longPressTriggeredRef.current = false;
+
+  if (longPressTimerRef.current != null) {
+    window.clearTimeout(longPressTimerRef.current);
+  }
+
+  longPressTimerRef.current = window.setTimeout(() => {
+    longPressTriggeredRef.current = true;
+    openCategorySheetForItem(item);
+    if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
+      navigator.vibrate(20);
+    }
+    longPressTimerRef.current = null;
+  }, LONG_PRESS_MS);
+};
+
+const clearItemLongPress = () => {
+  if (longPressTimerRef.current != null) {
+    window.clearTimeout(longPressTimerRef.current);
+    longPressTimerRef.current = null;
+  }
+};
+
+
+
+useEffect(() => {
+  if (!user?.uid) {
+    setUserCategoryMap({});
+    return;
+  }
+
+  const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+
+  const unsub = onSnapshot(prefRef, (snap) => {
+    const data = snap.data() as any;
+    const map = data?.itemCategoryMap;
+    if (map && typeof map === "object") {
+      setUserCategoryMap(map as UserCategoryMap);
+    } else {
+      setUserCategoryMap({});
+    }
+  });
+
+  return () => unsub();
+}, [user?.uid]);
 
   const [isCopied, setIsCopied] = useState(false);
 
@@ -2687,6 +2870,23 @@ const activeItems = useMemo(
     [items]
   );
 
+  const groupedActiveItems = useMemo(() => {
+  const groups: Record<CategoryKey, ShoppingItem[]> = {
+    vegetables_fruits: [],
+    dairy_eggs: [],
+    meat_fish: [],
+    bakery_bread: [],
+    other: [],
+  };
+
+  for (const item of activeItems) {
+    const category = resolveItemCategory(item, userCategoryMap);
+    groups[category].push(item);
+  }
+
+ return groups;
+}, [activeItems, userCategoryMap]);
+
 const recordHistory = (rawName: string) => {
   const name = rawName.trim();
   if (!name) return;
@@ -2825,6 +3025,7 @@ if (normalized) {
       isPurchased: false,
       isFavorite: false,
       createdAt: Date.now(),
+      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
     };
 
     // Clear the add box immediately (especially important offline where Firestore writes may not resolve quickly)
@@ -3376,6 +3577,7 @@ ${footer}`;
       isPurchased: false,
       isFavorite: false,
       createdAt: Date.now(),
+      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
     };
 
     // Queue enter animation for when Firestore pushes the new item into state
@@ -3511,6 +3713,7 @@ ${footer}`;
       isPurchased: false,
       isFavorite: false,
       createdAt: Date.now(),
+      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
     };
 
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
@@ -3885,6 +4088,7 @@ if (parsed.length === 0) return [];
           isPurchased: false,
           isFavorite: false,
           createdAt: Date.now(),
+          category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
         };
         await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
         actions.push({ type: "delete_item", id: itemId });
@@ -5390,145 +5594,223 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
             ) : (
               <div className="space-y-4">
                 <div className="space-y-3">
-                  {activeItems.map((item) => (
-                    <div
-                      key={item.id}
-                      className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
-                        leavingIds.has(item.id)
-                          ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
-                          : enterAnim[item.id] === "from"
-                            ? "opacity-0 translate-y-1 scale-[0.99]"
-                            : "opacity-100 translate-y-0 scale-100"
-                      }`}
-                      dir="rtl"
-                      onPointerDown={onSwipePointerDown(item.id)}
-                      onPointerMove={onSwipePointerMove(item.id)}
-                      onPointerUp={onSwipePointerUp(item.id)}
-                      onPointerCancel={onSwipePointerCancel}
-                    
-                          onTouchStart={onSwipeTouchStart(item.id)}
-                          onTouchMove={onSwipeTouchMove(item.id)}
-                          onTouchEnd={onSwipeTouchEnd(item.id)}
-                         style={{ touchAction: "pan-y" }}
+                  {CATEGORY_ORDER.map((categoryKey) => {
+  const categoryItems = groupedActiveItems[categoryKey];
+  if (!categoryItems?.length) return null;
 
-                        >
-                      {/* Swipe cue (background strips + icons) */}
-                      <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
-                        {/* Revealed background (never covers icons) */}
-                        <div
-                          className="absolute left-0 top-0 bottom-0 bg-rose-50"
-                          style={{
-                            width:
-                              swipeUi.id === item.id && swipeUi.dx > 0
-                                ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
-                                : 0,
-                            opacity: 0.9,
-                            zIndex: 0,
-                          }}
-                        />
-                        <div
-                          className="absolute right-0 top-0 bottom-0 bg-emerald-50"
-                          style={{
-                            width:
-                              swipeUi.id === item.id && swipeUi.dx < 0
-                                ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
-                                : 0,
-                            opacity: 0.9,
-                            zIndex: 0,
-                          }}
-                        />
+  return (
+    <div key={categoryKey} className="space-y-3">
+      <div className="px-1 pt-2">
+        <h3 className="text-sm font-black text-slate-400 text-right">
+          {categoryLabelByLang[lang]?.[categoryKey] || categoryLabelByLang.he[categoryKey]}
+        </h3>
+      </div>
 
-                        {/* Icons: swipe RIGHT = delete (left side), swipe LEFT = add to favorites (right side) */}
-                        <div className="absolute inset-0 flex items-center justify-between px-4 flex-row-reverse">
-                          <div
-                            className="text-rose-600"
-                            style={{
-                              zIndex: 2,
-                              opacity:
-                                swipeUi.id === item.id && swipeUi.dx > 0
-                                  ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                                    ? 1
-                                    : 0.65
-                                  : 0,
-                              transform:
-                                swipeUi.id === item.id && swipeUi.dx > 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                                  ? "scale(1.15)"
-                                  : "scale(1)",                              transition: "transform 120ms ease, opacity 120ms ease",
-                            }}
-                          >
-                            <Trash2 className="w-6 h-6" />
-                          </div>
+      {categoryItems.map((item) => (
+        <div
+          key={item.id}
+          className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
+            leavingIds.has(item.id)
+              ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
+              : enterAnim[item.id] === "from"
+                ? "opacity-0 translate-y-1 scale-[0.99]"
+                : "opacity-100 translate-y-0 scale-100"
+          }`}
+          dir="rtl"
+  onPointerDown={(e) => {
+  pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+  onSwipePointerDown(item.id)(e);
+  startItemLongPress(item)();
+}}
+onPointerMove={(e) => {
+  const s = pointerLongPressStartRef.current;
 
-                          <div
-                            className="text-emerald-600"
-                            style={{
-                              zIndex: 2,
-                              opacity:
-                                swipeUi.id === item.id && swipeUi.dx < 0
-                                  ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                                    ? 1
-                                    : 0.65
-                                  : 0,
-                              transform:
-                                swipeUi.id === item.id && swipeUi.dx < 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                                  ? "scale(1.15)"
-                                  : "scale(1)",                              transition: "transform 120ms ease, opacity 120ms ease",
-                            }}
-                          >
-                            <Star className="w-6 h-6" />
-                          </div>
-                        </div>
-                      </div>
+  if (s) {
+    const dx = Math.abs(e.clientX - s.x);
+    const dy = Math.abs(e.clientY - s.y);
 
-                      {/* Foreground content (slides with finger/mouse) */}
-                      <div
-                        className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
-                        style={{
-                          transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-                          transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
-                        }}
-                      >
-                        <div
-                          className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
-                          style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                          onClick={() => {
-                            if (swipeConsumedRef.current) return;
-                            if (deleteFlashIds.has(item.id)) return;
-                            markPurchasedWithAnimation(item.id);
-                          }}
-                        >
-                          {item.name}
-                        </div>
+    if (dx > POINTER_LONG_PRESS_MOVE_TOLERANCE || dy > POINTER_LONG_PRESS_MOVE_TOLERANCE) {
+      clearItemLongPress();
+    }
+  }
 
-                        <div
-                          className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
-                          data-noswipe="true"
-                        >
-                          <button disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
-                            onClick={() => updateQty(item.id, -1)}
-                            className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
-                            title="הפחת"
-                            data-noswipe="true"
-                          >
-                            <Minus className="w-3 h-3" />
-                          </button>
+  onSwipePointerMove(item.id)(e);
+}}
+onPointerUp={(e) => {
+  pointerLongPressStartRef.current = null;
+  onSwipePointerUp(item.id)(e);
+  clearItemLongPress();
+}}
+onPointerCancel={() => {
+  pointerLongPressStartRef.current = null;
+  onSwipePointerCancel();
+  clearItemLongPress();
+}}
+onPointerLeave={() => {
+  pointerLongPressStartRef.current = null;
+  clearItemLongPress();
+}}
+onTouchStart={(e) => {
+  const t = e.touches[0];
+  touchLongPressStartRef.current = t ? { x: t.clientX, y: t.clientY } : null;
 
-                          <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+  onSwipeTouchStart(item.id)(e);
+  startItemLongPress(item)();
+}}
+onTouchMove={(e) => {
+  const t = e.touches[0];
+  const s = touchLongPressStartRef.current;
 
-                          <button disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
-                            onClick={() => updateQty(item.id, 1)}
-                            className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
-                            title="הוסף"
-                            data-noswipe="true"
-                          >
-                            <Plus className="w-3 h-3" />
-                          </button>
-                        </div>
-                      </div>
-</div>
-                  ))}
+  if (t && s) {
+    const dx = Math.abs(t.clientX - s.x);
+    const dy = Math.abs(t.clientY - s.y);
 
-                  {purchasedItems.length > 0 ? (
+    if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
+      clearItemLongPress();
+    }
+  }
+
+  onSwipeTouchMove(item.id)(e);
+}}
+onTouchEnd={(e) => {
+  touchLongPressStartRef.current = null;
+  onSwipeTouchEnd(item.id)(e);
+  clearItemLongPress();
+}}
+onTouchCancel={() => {
+  touchLongPressStartRef.current = null;
+  clearItemLongPress();
+}}
+style={{ touchAction: "pan-y" }}
+        >
+          {/* Swipe cue (background strips + icons) */}
+          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+            {/* Revealed background (never covers icons) */}
+            <div
+              className="absolute left-0 top-0 bottom-0 bg-rose-50"
+              style={{
+                width:
+                  swipeUi.id === item.id && swipeUi.dx > 0
+                    ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
+                    : 0,
+                opacity: 0.9,
+                zIndex: 0,
+              }}
+            />
+            <div
+              className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+              style={{
+                width:
+                  swipeUi.id === item.id && swipeUi.dx < 0
+                    ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
+                    : 0,
+                opacity: 0.9,
+                zIndex: 0,
+              }}
+            />
+
+            {/* Icons: swipe RIGHT = delete (left side), swipe LEFT = add to favorites (right side) */}
+            <div className="absolute inset-0 flex items-center justify-between px-4 flex-row-reverse">
+              <div
+                className="text-rose-600"
+                style={{
+                  zIndex: 2,
+                  opacity:
+                    swipeUi.id === item.id && swipeUi.dx > 0
+                      ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                        ? 1
+                        : 0.65
+                      : 0,
+                  transform:
+                    swipeUi.id === item.id && swipeUi.dx > 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                      ? "scale(1.15)"
+                      : "scale(1)",
+                  transition: "transform 120ms ease, opacity 120ms ease",
+                }}
+              >
+                <Trash2 className="w-6 h-6" />
+              </div>
+
+              <div
+                className="text-emerald-600"
+                style={{
+                  zIndex: 2,
+                  opacity:
+                    swipeUi.id === item.id && swipeUi.dx < 0
+                      ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                        ? 1
+                        : 0.65
+                      : 0,
+                  transform:
+                    swipeUi.id === item.id && swipeUi.dx < 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+                      ? "scale(1.15)"
+                      : "scale(1)",
+                  transition: "transform 120ms ease, opacity 120ms ease",
+                }}
+              >
+                <Star className="w-6 h-6" />
+              </div>
+            </div>
+          </div>
+
+          {/* Foreground content (slides with finger/mouse) */}
+          <div
+            className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
+            style={{
+              transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
+              transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
+            }}
+          >
+            <div
+              className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
+              style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+              onClick={() => {
+              if (swipeConsumedRef.current) return;
+              if (deleteFlashIds.has(item.id)) return;
+              if (longPressTriggeredRef.current) {
+                longPressTriggeredRef.current = false;
+                return;
+              }
+              markPurchasedWithAnimation(item.id);
+            }}
+            >
+              {item.name}
+            </div>
+
+            <div
+              className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
+              data-noswipe="true"
+            >
+              <button
+                disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
+                onClick={() => updateQty(item.id, -1)}
+                className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
+                title="הפחת"
+                data-noswipe="true"
+              >
+                <Minus className="w-3 h-3" />
+              </button>
+
+              <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+
+              <button
+                disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
+                onClick={() => updateQty(item.id, 1)}
+                className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
+                title="הוסף"
+                data-noswipe="true"
+              >
+                <Plus className="w-3 h-3" />
+              </button>
+            </div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+})}
+
+{purchasedItems.length > 0 ? (
                     <div className="space-y-2 pt-4 border-t border-slate-200">
                       <h3 className="text-lg font-bold text-slate-700 text-right mb-2">{t("נקנו")} ({purchasedItems.length})</h3>
 
@@ -5779,6 +6061,73 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           </footer>
         </div>
       </div>
+      
+      {categorySheetOpen && categorySheetItem ? (
+  <div
+    className="absolute inset-0 z-[85] bg-black/25 flex items-center justify-center overflow-hidden px-3 pt-4 pb-[calc(env(safe-area-inset-bottom)+12px)]"
+    dir={isRTL ? "rtl" : "ltr"}
+    onClick={closeCategorySheet}
+  >
+    <div
+      className="w-full max-w-md mx-auto rounded-3xl bg-white shadow-2xl border border-slate-100 p-5 space-y-4 max-h-[85%] overflow-y-auto"
+      onClick={(e) => e.stopPropagation()}
+    >
+      <div className="text-right">
+        <div className="text-lg font-black text-slate-800">{t("העבר לקטגוריה")}</div>
+        <div className="text-sm font-bold text-slate-400">{categorySheetItem.name}</div>
+      </div>
+
+      <div className="space-y-2">
+        {CATEGORY_ORDER.map((cat) => (
+          <button
+            key={cat}
+            type="button"
+            onClick={() => setCategorySheetValue(cat)}
+            className={`w-full px-4 py-3 rounded-2xl border flex items-center justify-between ${
+              categorySheetValue === cat
+                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 bg-white text-slate-700"
+            }`}
+          >
+            <span className="font-bold">
+              {categoryLabelByLang[lang]?.[cat] || categoryLabelByLang.he[cat]}
+            </span>
+            {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
+          </button>
+        ))}
+      </div>
+
+      <label className="flex items-center gap-3 px-1">
+        <input
+          type="checkbox"
+          checked={rememberCategoryForUser}
+          onChange={(e) => setRememberCategoryForUser(e.target.checked)}
+        />
+        <span className="text-sm font-bold text-slate-600">
+          {t("זכור לי תמיד עבור פריט זה")}
+        </span>
+      </label>
+
+      <div className="flex gap-3 pt-2">
+        <button
+          type="button"
+          onClick={closeCategorySheet}
+          className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+        >
+          {t("נסגר")}
+        </button>
+        <button
+          type="button"
+          onClick={saveItemCategory}
+          className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
+        >
+          {t("שמור")}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
