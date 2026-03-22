@@ -500,6 +500,8 @@ type FavoriteDoc = {
   id: string; // itemId
   name: string;
   createdAt: number;
+  updatedAt?: number;
+  category?: CategoryKey;
 };
 
 type VoiceMode = "hold_to_talk";
@@ -2140,6 +2142,7 @@ const [userCategoryMap, setUserCategoryMap] = useState<UserCategoryMap>({});
 const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
 const [categorySheetValue, setCategorySheetValue] = useState<CategoryKey>("other");
+const [categorySheetPos, setCategorySheetPos] = useState<{ x: number; y: number } | null>(null);
 const [rememberCategoryForUser, setRememberCategoryForUser] = useState(false);
 
 const longPressTimerRef = useRef<number | null>(null);
@@ -2182,8 +2185,20 @@ useEffect(() => {
   }
 }, [items]);
 
-const openCategorySheetForItem = (item: ShoppingItem) => {
+const openCategorySheetForItem = (item: ShoppingItem, e?: any) => {
   const current = resolveItemCategory(item, userCategoryMap);
+
+  if (e?.currentTarget?.getBoundingClientRect) {
+    const rect = e.currentTarget.getBoundingClientRect();
+
+    setCategorySheetPos({
+      x: rect.left + rect.width / 2,
+      y: rect.top - 8,
+    });
+  } else {
+    setCategorySheetPos(null);
+  }
+
   setCategorySheetItem(item);
   setCategorySheetValue(current);
   setRememberCategoryForUser(false);
@@ -2193,6 +2208,7 @@ const openCategorySheetForItem = (item: ShoppingItem) => {
 const closeCategorySheet = () => {
   setCategorySheetOpen(false);
   setCategorySheetItem(null);
+  setCategorySheetPos(null);
   setRememberCategoryForUser(false);
 };
 
@@ -2204,6 +2220,43 @@ const saveItemCategory = async () => {
   await updateDoc(itemRef, {
     category: categorySheetValue,
   });
+
+if (rememberCategoryForUser) {
+  const normalizedTargetName = normalize(categorySheetItem.name);
+
+  const matchingFavorites = favorites.filter(
+    (f) => normalize(f.name) === normalizedTargetName
+  );
+
+  if (matchingFavorites.length > 0) {
+    await Promise.all(
+      matchingFavorites.map((fav) =>
+        setDoc(
+          doc(db, "lists", list.id, "favorites", fav.id),
+          {
+            name: categorySheetItem.name,
+            category: categorySheetValue,
+            updatedAt: Date.now(),
+          },
+          { merge: true }
+        )
+      )
+    );
+  } else {
+    await setDoc(
+      doc(db, "lists", list.id, "favorites", categorySheetItem.id),
+      {
+        name: categorySheetItem.name,
+        createdAt: Date.now(),
+        category: categorySheetValue,
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
+  }
+}
+
+
 
   if (rememberCategoryForUser && user?.uid) {
     const prefKey = normalizeCategoryPreferenceKey(categorySheetItem.name);
@@ -2226,7 +2279,7 @@ const saveItemCategory = async () => {
   closeCategorySheet();
 };
 
-const startItemLongPress = (item: ShoppingItem) => () => {
+const startItemLongPress = (item: ShoppingItem, e?: any) => () => {
   longPressTriggeredRef.current = false;
 
   if (longPressTimerRef.current != null) {
@@ -2235,7 +2288,7 @@ const startItemLongPress = (item: ShoppingItem) => () => {
 
   longPressTimerRef.current = window.setTimeout(() => {
     longPressTriggeredRef.current = true;
-    openCategorySheetForItem(item);
+    openCategorySheetForItem(item, e);
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(20);
     }
@@ -2823,14 +2876,16 @@ setList(newList);
 
     const unsubFavs = onSnapshot(favsCol, (snap) => {
       const favDocs: FavoriteDoc[] = snap.docs.map((d) => {
-        const data = d.data() as any;
-        return {
-          id: d.id,
-          name: String(data?.name || ""),
-          createdAt: Number(data?.createdAt || 0),
-        };
-      });
-      favDocs.sort((a, b) => b.createdAt - a.createdAt);
+  const data = d.data() as any;
+  return {
+    id: d.id,
+    name: String(data?.name || ""),
+    createdAt: Number(data?.createdAt || 0),
+    updatedAt: Number(data?.updatedAt || 0),
+    category: data?.category as CategoryKey | undefined,
+  };
+});
+favDocs.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
       setFavorites(favDocs);
     });
 
@@ -3184,8 +3239,15 @@ if (normalized) {
     }, 260);
 
     // Write in background (offline-friendly)
-    void setDoc(favRef, { name: itemName, createdAt }, { merge: true }).catch((e) =>
-      console.warn("favorite add failed", e)
+void setDoc(
+  favRef,
+  {
+    name: itemName,
+    createdAt,
+    category: item?.category || resolveItemCategory(item as ShoppingItem, userCategoryMap),
+  },
+  { merge: true }
+).catch((e) =>      console.warn("favorite add failed", e)
     );
   };
 
@@ -3530,7 +3592,7 @@ ${footer}`;
   const FAV_SWIPE_THRESHOLD_PX = 60;
   const FAV_SWIPE_MAX_SHIFT_PX = 110;
 
-  const addFavoriteToList = async (fav: { id: string; name: string }) => {
+  const addFavoriteToList = async (fav: FavoriteDoc) => {
     if (!list?.id) return { targetId: null as string | null, created: false };
 
     const favKey = normalizeItemName(stripWrappingBrackets(fav.name));
@@ -3570,15 +3632,20 @@ ${footer}`;
     }, 260);
 
     const itemId = crypto.randomUUID();
-    const newItem: ShoppingItem = {
-      id: itemId,
-      name: stripWrappingBrackets(fav.name),
-      quantity: 1,
-      isPurchased: false,
-      isFavorite: false,
-      createdAt: Date.now(),
-      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
-    };
+    const cleanFavName = stripWrappingBrackets(fav.name);
+
+      const newItem: ShoppingItem = {
+        id: itemId,
+        name: cleanFavName,
+        quantity: 1,
+        isPurchased: false,
+        isFavorite: false,
+        createdAt: Date.now(),
+        category:
+          fav.category ||
+          userCategoryMap[normalizeCategoryPreferenceKey(cleanFavName)] ||
+          detectCategory(cleanFavName),
+      };
 
     // Queue enter animation for when Firestore pushes the new item into state
     pendingEnterIdsRef.current.add(itemId);
@@ -5606,7 +5673,10 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
         </h3>
       </div>
 
-      {categoryItems.map((item) => (
+      {categoryItems.map((item) => {
+      const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
+
+  return (
         <div
           key={item.id}
           className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
@@ -5618,11 +5688,16 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           }`}
           dir="rtl"
   onPointerDown={(e) => {
+  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
+
   pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
   onSwipePointerDown(item.id)(e);
-  startItemLongPress(item)();
+  startItemLongPress(item, e)();
 }}
+
 onPointerMove={(e) => {
+  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
+
   const s = pointerLongPressStartRef.current;
 
   if (s) {
@@ -5636,6 +5711,7 @@ onPointerMove={(e) => {
 
   onSwipePointerMove(item.id)(e);
 }}
+
 onPointerUp={(e) => {
   pointerLongPressStartRef.current = null;
   onSwipePointerUp(item.id)(e);
@@ -5651,13 +5727,17 @@ onPointerLeave={() => {
   clearItemLongPress();
 }}
 onTouchStart={(e) => {
+  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
+
   const t = e.touches[0];
   touchLongPressStartRef.current = t ? { x: t.clientX, y: t.clientY } : null;
 
   onSwipeTouchStart(item.id)(e);
-  startItemLongPress(item)();
+  startItemLongPress(item, e)();
 }}
 onTouchMove={(e) => {
+  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
+
   const t = e.touches[0];
   const s = touchLongPressStartRef.current;
 
@@ -5767,10 +5847,17 @@ style={{ touchAction: "pan-y" }}
               onClick={() => {
               if (swipeConsumedRef.current) return;
               if (deleteFlashIds.has(item.id)) return;
+
               if (longPressTriggeredRef.current) {
                 longPressTriggeredRef.current = false;
                 return;
               }
+
+              if (categorySheetOpen && categorySheetItem?.id === item.id) {
+                closeCategorySheet();
+                return;
+              }
+
               markPurchasedWithAnimation(item.id);
             }}
             >
@@ -5804,8 +5891,71 @@ style={{ touchAction: "pan-y" }}
               </button>
             </div>
           </div>
+            {isCategoryOpen ? (
+          <div
+            className="border-t border-slate-100 px-4 pb-4 pt-3 bg-slate-50 rounded-b-2xl"
+            data-noswipe="true"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className={`text-sm font-black text-slate-700 mb-3 ${isRTL ? "text-right" : "text-left"}`}>
+              {t("העבר לקטגוריה")}
+            </div>
+
+            <div className="space-y-2">
+              {CATEGORY_ORDER.map((cat) => (
+                <button
+                  key={cat}
+                  type="button"
+                  data-noswipe="true"
+                  onClick={() => setCategorySheetValue(cat)}
+                  className={`w-full px-4 py-3 rounded-2xl border flex items-center justify-between ${
+                    categorySheetValue === cat
+                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                      : "border-slate-200 bg-white text-slate-700"
+                  }`}
+                >
+                  <span className="font-bold">
+                    {categoryLabelByLang[lang]?.[cat] || categoryLabelByLang.he[cat]}
+                  </span>
+                  {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
+                </button>
+              ))}
+            </div>
+
+            <label className="flex items-center gap-3 px-1 pt-3">
+              <input
+                type="checkbox"
+                checked={rememberCategoryForUser}
+                onChange={(e) => setRememberCategoryForUser(e.target.checked)}
+              />
+              <span className="text-sm font-bold text-slate-600">
+                {t("זכור לי תמיד עבור פריט זה")}
+              </span>
+            </label>
+
+            <div className="flex gap-3 pt-3">
+              <button
+                type="button"
+                data-noswipe="true"
+                onClick={closeCategorySheet}
+                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+              >
+                {t("נסגר")}
+              </button>
+              <button
+                type="button"
+                data-noswipe="true"
+                onClick={saveItemCategory}
+                className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
+              >
+                {t("שמור")}
+              </button>
+            </div>
+          </div>
+        ) : null}
         </div>
-      ))}
+            );
+      })}
     </div>
   );
 })}
@@ -6061,72 +6211,6 @@ style={{ touchAction: "pan-y" }}
           </footer>
         </div>
       </div>
-      
-      {categorySheetOpen && categorySheetItem ? (
-  <div
-    className="absolute inset-0 z-[85] bg-black/25 flex items-center justify-center overflow-hidden px-3 pt-4 pb-[calc(env(safe-area-inset-bottom)+12px)]"
-    dir={isRTL ? "rtl" : "ltr"}
-    onClick={closeCategorySheet}
-  >
-    <div
-      className="w-full max-w-md mx-auto rounded-3xl bg-white shadow-2xl border border-slate-100 p-5 space-y-4 max-h-[85%] overflow-y-auto"
-      onClick={(e) => e.stopPropagation()}
-    >
-      <div className="text-right">
-        <div className="text-lg font-black text-slate-800">{t("העבר לקטגוריה")}</div>
-        <div className="text-sm font-bold text-slate-400">{categorySheetItem.name}</div>
-      </div>
-
-      <div className="space-y-2">
-        {CATEGORY_ORDER.map((cat) => (
-          <button
-            key={cat}
-            type="button"
-            onClick={() => setCategorySheetValue(cat)}
-            className={`w-full px-4 py-3 rounded-2xl border flex items-center justify-between ${
-              categorySheetValue === cat
-                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                : "border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            <span className="font-bold">
-              {categoryLabelByLang[lang]?.[cat] || categoryLabelByLang.he[cat]}
-            </span>
-            {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
-          </button>
-        ))}
-      </div>
-
-      <label className="flex items-center gap-3 px-1">
-        <input
-          type="checkbox"
-          checked={rememberCategoryForUser}
-          onChange={(e) => setRememberCategoryForUser(e.target.checked)}
-        />
-        <span className="text-sm font-bold text-slate-600">
-          {t("זכור לי תמיד עבור פריט זה")}
-        </span>
-      </label>
-
-      <div className="flex gap-3 pt-2">
-        <button
-          type="button"
-          onClick={closeCategorySheet}
-          className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-        >
-          {t("נסגר")}
-        </button>
-        <button
-          type="button"
-          onClick={saveItemCategory}
-          className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
-        >
-          {t("שמור")}
-        </button>
-      </div>
-    </div>
-  </div>
-) : null}
 
 
       {/* Clear Confirm Modal */}
