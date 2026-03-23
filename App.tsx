@@ -2065,7 +2065,9 @@ const RTL_LANGS: AppLang[] = ["he", "ar"];
 const isRTL = RTL_LANGS.includes(lang);
 
 const rtlClasses = {
-  row: isRTL ? "justify-end text-right" : "justify-start text-left",
+  row: isRTL
+    ? "flex-row justify-between text-right"
+    : "flex-row-reverse justify-between text-left",
   text: isRTL ? "text-right" : "text-left",
 };
 
@@ -5234,8 +5236,13 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
   }
 
   return (
-    <div ref={appRootRef} className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible" dir="rtl">
-      <style>{`
+    <div
+  ref={appRootRef}
+  className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible"
+  dir={isRTL ? "rtl" : "ltr"}
+  style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}
+>
+    <style>{`
         @keyframes floatY {
           0%, 100% { transform: translateY(0); }
           50% { transform: translateY(-8px); }
@@ -5248,8 +5255,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
       >
         {/* Header */}
       <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
-  <div className="flex items-center justify-between">
-    {/* Left: More */}
+    <div className="flex items-center justify-between">   {/* Left: More */}
     <div className="flex items-center gap-2">
       <button
         ref={moreBtnRef}
@@ -5493,12 +5499,15 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
         {/* Voice hint */}
       <div className="px-5 pt-3">
-        <div className="bg-white border border-slate-100 rounded-2xl px-4 py-2 text-right shadow-sm">
+        <div className={`bg-white border border-slate-100 rounded-2xl px-4 py-2 shadow-sm ${isRTL ? "text-right" : "text-left"}`} dir={isRTL ? "rtl" : "ltr"}>
           <div className="text-[11px] font-black text-slate-400">
             {isListening ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע") : t("פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק")}
           </div>
           {lastHeard ? (
-            <div className="text-sm font-bold text-slate-700 mt-1" style={{ direction: "rtl", unicodeBidi: "plaintext" }}>
+            <div
+  className={`text-sm font-bold text-slate-700 mt-1 ${isRTL ? "text-right" : "text-left"}`}
+  style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
+>
               {t("שמענו:")} {cleanVoicePreviewText(lastHeard)}
             </div>
           ) : null}
@@ -5571,8 +5580,8 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
                   setActiveSuggestIndex(-1);
                 }}
                 placeholder={t("מה להוסיף לרשימה?")}
-                className="w-full p-4 pr-12 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white text-right"
-                dir="rtl"
+                className={`w-full p-4 pr-12 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white ${isRTL ? "text-right" : "text-left"}`}
+                dir={isRTL ? "rtl" : "ltr"}
               />
 
               <button
@@ -5606,8 +5615,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
     >
       <button
         type="button"
-        className="flex-1 text-right px-4 py-3 flex items-center justify-between"
-        onPointerDown={(e) => {
+        className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}        onPointerDown={(e) => {
           e.preventDefault();
           applySuggestion(s);
         }}
@@ -5668,7 +5676,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
   return (
     <div key={categoryKey} className="space-y-3">
       <div className="px-1 pt-2">
-        <h3 className="text-sm font-black text-slate-400 text-right">
+        <h3 className={`text-sm font-black text-slate-400 ${isRTL ? "text-right" : "text-left"}`}>
           {categoryLabelByLang[lang]?.[categoryKey] || categoryLabelByLang.he[categoryKey]}
         </h3>
       </div>
@@ -5835,15 +5843,25 @@ style={{ touchAction: "pan-y" }}
 
           {/* Foreground content (slides with finger/mouse) */}
           <div
-            className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${deleteFlashIds.has(item.id) ? "bg-rose-50" : favoriteFlashIds.has(item.id) ? "bg-emerald-100" : listFlashIds.has(item.id) ? "bg-emerald-50" : "bg-white"}`}
-            style={{
+          className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${
+  deleteFlashIds.has(item.id)
+    ? "bg-rose-50"
+    : favoriteFlashIds.has(item.id)
+      ? "bg-emerald-100"
+      : listFlashIds.has(item.id)
+        ? "bg-emerald-50"
+        : "bg-white"
+}`}
+dir={isRTL ? "rtl" : "ltr"}           
+          
+          style={{
               transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
               transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
             }}
           >
             <div
-              className="flex-1 text-right font-bold text-slate-700 truncate cursor-pointer px-3"
-              style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+              className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate cursor-pointer px-3`}
+              style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
               onClick={() => {
               if (swipeConsumedRef.current) return;
               if (deleteFlashIds.has(item.id)) return;
@@ -5893,7 +5911,7 @@ style={{ touchAction: "pan-y" }}
           </div>
             {isCategoryOpen ? (
           <div
-            className="border-t border-slate-100 px-4 pb-4 pt-3 bg-slate-50 rounded-b-2xl"
+            className="border-t-2 border-indigo-200 px-4 pb-4 pt-3 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200"
             data-noswipe="true"
             onClick={(e) => e.stopPropagation()}
           >
@@ -5908,8 +5926,9 @@ style={{ touchAction: "pan-y" }}
                   type="button"
                   data-noswipe="true"
                   onClick={() => setCategorySheetValue(cat)}
-                  className={`w-full px-4 py-3 rounded-2xl border flex items-center justify-between ${
-                    categorySheetValue === cat
+                  className={`w-full px-4 py-3 rounded-2xl border flex items-center ${
+                    isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
+                  } ${                    categorySheetValue === cat
                       ? "border-indigo-500 bg-indigo-50 text-indigo-700"
                       : "border-slate-200 bg-white text-slate-700"
                   }`}
@@ -5922,8 +5941,7 @@ style={{ touchAction: "pan-y" }}
               ))}
             </div>
 
-            <label className="flex items-center gap-3 px-1 pt-3">
-              <input
+                <label className={`flex items-center gap-3 px-1 pt-3 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>              <input
                 type="checkbox"
                 checked={rememberCategoryForUser}
                 onChange={(e) => setRememberCategoryForUser(e.target.checked)}
@@ -5933,24 +5951,22 @@ style={{ touchAction: "pan-y" }}
               </span>
             </label>
 
-            <div className="flex gap-3 pt-3">
-              <button
-                type="button"
-                data-noswipe="true"
-                onClick={closeCategorySheet}
-                className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-              >
-                {t("נסגר")}
-              </button>
-              <button
-                type="button"
-                data-noswipe="true"
-                onClick={saveItemCategory}
-                className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
-              >
-                {t("שמור")}
-              </button>
-            </div>
+           <div className={`flex gap-3 pt-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+            <button
+              type="button"
+              onClick={saveItemCategory}
+              className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
+            >
+              {t("שמור")}
+            </button>
+            <button
+              type="button"
+              onClick={closeCategorySheet}
+              className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+            >
+              {t("נסגר")}
+            </button>
+          </div>
           </div>
         ) : null}
         </div>
@@ -5962,7 +5978,7 @@ style={{ touchAction: "pan-y" }}
 
 {purchasedItems.length > 0 ? (
                     <div className="space-y-2 pt-4 border-t border-slate-200">
-                      <h3 className="text-lg font-bold text-slate-700 text-right mb-2">{t("נקנו")} ({purchasedItems.length})</h3>
+                      <h3 className={`text-lg font-bold text-slate-700 ${rtlClasses.text} mb-2`}>{t("נקנו")} ({purchasedItems.length})</h3>
 
                       {purchasedItems.map((item) => (
                         <div
@@ -6002,7 +6018,7 @@ style={{ touchAction: "pan-y" }}
           </>
         ) : (
           <div className="space-y-6">
-            <div className="text-right">
+            <div className={rtlClasses.text}>
               <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
               <p className="text-sm text-slate-400 font-bold"><span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span></p>
             </div>
@@ -6112,7 +6128,7 @@ style={{ touchAction: "pan-y" }}
 <div className="flex items-center gap-2" />
 
                       <div
-                        className="flex-1 text-right font-bold text-slate-700 truncate px-3 text-base"
+                        className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate px-3 text-base`}
                         style={{ direction: "rtl", unicodeBidi: "plaintext" }}
                       >
                         {fav.name}
@@ -6140,8 +6156,8 @@ style={{ touchAction: "pan-y" }}
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
-                  activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
-                }`}
+                activeTab === "favorites" ? "text-indigo-600" : "text-slate-300"
+              } ${isRTL ? "order-1" : "order-3"}`}
                 title={t("מועדפים")}
               >
                 <Star className={`w-7 h-7 ${activeTab === "favorites" ? "fill-indigo-600 text-indigo-600" : "text-slate-300"}`} />
@@ -6149,7 +6165,7 @@ style={{ touchAction: "pan-y" }}
               </button>
 
               {/* Voice button (tap-to-record) */}
-              <div className="relative flex flex-col items-center justify-center">
+              <div className="order-2 relative flex flex-col items-center justify-center">
                 {voiceUi === "recording" ? (
                   <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/80 text-white text-[12px] font-black flex items-center gap-2 whitespace-nowrap">
                     <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
@@ -6201,7 +6217,7 @@ style={{ touchAction: "pan-y" }}
                 onClick={() => setActiveTab("list")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
                   activeTab === "list" ? "text-indigo-600" : "text-slate-300"
-                }`}
+                } ${isRTL ? "order-3" : "order-1"}`}
                 title={t("רשימה")}
               >
                 <ListChecks className="w-7 h-7" />
@@ -6215,19 +6231,21 @@ style={{ touchAction: "pan-y" }}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
-        <div className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6" dir="rtl">
-          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+<div
+            className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6"
+            dir={isRTL ? "rtl" : "ltr"}
+>          <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
             <div className="flex items-center gap-3">
               <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
                 <AlertCircle className="w-5 h-5" />
               </div>
-              <div className="text-right">
+              <div className={rtlClasses.text}>
                 <div className="text-lg font-black text-slate-800">{t("לנקות את כל הרשימה?")}</div>
                 <div className="text-sm font-bold text-slate-400">{t("הפעולה תמחק את כל הפריטים מהרשימה.")}</div>
               </div>
             </div>
 
-            <div className="flex gap-3">
+            <div className={`flex gap-3 pt-3 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
               <button onClick={() => setShowClearConfirm(false)} className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700">
                 {t("ביטול")}
               </button>
@@ -6245,7 +6263,7 @@ style={{ touchAction: "pan-y" }}
           <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
             <div className="p-6 space-y-4">
               <div className="flex items-start justify-between gap-3">
-                <div className="text-right">
+                <div className={rtlClasses.text}>
                   <div className="text-xl font-black text-slate-800">{t(t("בדיקה לפני שליחה"))}</div>
                   <div className="text-sm font-bold text-slate-400">{t(t("אפשר לערוך או לבטל"))}</div>
                 </div>
