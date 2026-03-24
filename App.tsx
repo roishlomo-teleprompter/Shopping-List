@@ -2138,17 +2138,17 @@ function translate(lang: AppLang, key: string) {
 }
 
 const getVoiceExamplesText = (lang: AppLang) => {
-  switch (lang) {
-    case "en":
-      return '"eggs tomato bell pepper two cucumbers" | "two cucumbers" | "clear list"';
-    case "ru":
-      return '"яйца помидор перец два огурца" | "два огурца" | "очистить список"';
-    case "ar":
-      return '"بيض طماطم فلفل خيارين" | "خيارين" | "امسح القائمة"';
-    case "he":
-    default:
-      return '"ביצים עגבניה גמבה שתי מלפפונים" | "מלפפונים שתיים" | "מחק רשימה"';
-  }
+switch (lang) {
+  case "en":
+    return '"bell pepper milk two eggs" | "clear list"';
+  case "ru":
+    return '"перец молоко два яйца" | "очистить список"';
+  case "ar":
+    return '"فلفل حليب بيضتين" | "امسح القائمة"';
+  case "he":
+  default:
+    return '"גמבה חלב שתי ביצים" | "מחק רשימה"';
+}
 };
 
 const MainList: React.FC = () => {
@@ -3537,13 +3537,21 @@ const openNativeCalendar = async () => {
     : rawTitle;
 
   const itemsBlock = activeItemsForCalendar.length
-    ? activeItemsForCalendar
-        .map((i) => ((i.quantity || 1) > 1 ? `${i.name} ${i.quantity}X` : i.name))
-        .join("\n")
-    : `(${emptyByLang[calendarLang] || emptyByLang.he})`;
+  ? activeItemsForCalendar
+      .map((i) => {
+        if ((i.quantity || 1) <= 1) return i.name;
 
-  const calendarTitle = `${t("תזכורת לקניות")} - My Easy List`;
-  const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
+        if (calendarLang === "en" || calendarLang === "ru") {
+          return `${i.name} X ${i.quantity}`;
+        }
+
+        return `${i.name} ${i.quantity}X`;
+      })
+      .join("\n")
+  : `(${emptyByLang[calendarLang] || emptyByLang.he})`;
+
+const calendarTitle = `${t("תזכורת לקניות")} - My Easy List`;
+const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
 
   const isNative = Capacitor.isNativePlatform();
 if (isNative) {
@@ -3676,6 +3684,11 @@ const lines =
     ? active
         .map((i) => {
           if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+
+          if (shareLang === "en" || shareLang === "ru") {
+            return `${RLE}${LRI}${i.quantity}${PDI} ${i.name} X${PDF}`;
+          }
+
           return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
         })
         .join("\n")
