@@ -129,6 +129,79 @@ function getProductTermsByLang(lang: AppLang): string[] {
   }
 }
 
+function levenshtein(a: string, b: string): number {
+  const s = String(a || "");
+  const t = String(b || "");
+  const m = s.length;
+  const n = t.length;
+
+  if (!m) return n;
+  if (!n) return m;
+
+  const dp = Array.from({ length: m + 1 }, () => new Array<number>(n + 1).fill(0));
+
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      const cost = s[i - 1] === t[j - 1] ? 0 : 1;
+      dp[i][j] = Math.min(
+        dp[i - 1][j] + 1,
+        dp[i][j - 1] + 1,
+        dp[i - 1][j - 1] + cost
+      );
+    }
+  }
+
+  return dp[m][n];
+}
+
+function normalizeCatalogTerm(s: string) {
+  return normalizeItemName(String(s || "").replace(/[,\.\-_/]+/g, " ").trim());
+}
+
+function correctProductTermByCatalog(name: string, lang: AppLang): string {
+  const raw = String(name || "").trim();
+  if (!raw) return raw;
+
+  const normalized = normalizeCatalogTerm(raw);
+  if (!normalized) return raw;
+
+  const terms = getProductTermsByLang(lang);
+  if (!terms.length) return raw;
+
+  let bestTerm = raw;
+  let bestScore = Infinity;
+
+  for (const term of terms) {
+    const candidate = normalizeCatalogTerm(term);
+    if (!candidate) continue;
+
+    if (candidate === normalized) return term;
+
+    if (candidate.includes(normalized) || normalized.includes(candidate)) {
+      const diff = Math.abs(candidate.length - normalized.length);
+      if (diff < bestScore) {
+        bestScore = diff;
+        bestTerm = term;
+      }
+      continue;
+    }
+
+    const dist = levenshtein(normalized, candidate);
+    const maxLen = Math.max(normalized.length, candidate.length);
+    const ratio = maxLen ? dist / maxLen : 1;
+
+    if (ratio <= 0.25 && dist < bestScore) {
+      bestScore = dist;
+      bestTerm = term;
+    }
+  }
+
+  return bestTerm;
+}
+
 function getPublicAppBaseUrl() {
   const envUrl = String((import.meta as any)?.env?.VITE_PUBLIC_APP_URL || "").trim();
   if (envUrl) return envUrl.replace(/\/+$/, "");
@@ -971,8 +1044,8 @@ function isClearListCommand(raw: string, lang?: AppLang) {
   return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
 }
 
-function formatDraftForReview(raw: string): string {
-  const s = collapseExactRepeatedPhrase((raw || "").trim());
+function formatDraftForReview(raw: string, lang: AppLang): string {
+const s = collapseExactRepeatedPhrase((raw || "").trim());
   if (!s) return raw;
 
   // If this is a clear-list command, keep it exactly as spoken (do not add commas).
@@ -981,7 +1054,7 @@ function formatDraftForReview(raw: string): string {
   // If user already has punctuation/new lines, keep it as-is (manual edit mode).
   if (s.includes(",") || s.includes("\n")) return raw;
 
-const items = parseItemsFromText(s);
+const items = parseItemsFromText(s, lang);
 
 // Remove duplicate items by name (preview only)
 const seen = new Set<string>();
@@ -1008,8 +1081,7 @@ return parts.join(", ");
  * - If qty token appears and there is a NEXT word, treat it as prefix for the NEXT item (default),
  *   not suffix for previous item. Suffix is only when qty is LAST token.
  */
-function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: number }> {
-  const seg = normalize(segRaw);
+  function parseSegmentTokensToItems(segRaw: string, lang: AppLang): Array<{ name: string; qty: number }> {  const seg = normalize(segRaw);
   if (!seg) return [];
 
   let tokens = seg.split(" ").filter(Boolean);
@@ -1025,6 +1097,7 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
     let name = nameParts.join(" ").trim();
     if (name) {
       name = applyEnglishAlias(name);
+      name = correctProductTermByCatalog(name, lang);
       if (name && !shouldIgnoreStandaloneVoiceItem(name)) {
         const q = Math.max(1, Number(qtyOverride ?? pendingQty ?? 1));
         out.push({ name, qty: q });
@@ -1148,8 +1221,8 @@ function parseSegmentTokensToItems(segRaw: string): Array<{ name: string; qty: n
  * Parse a phrase into multiple items.
  * Supports commas / וגם / ואז / אחר כך, and also no commas.
  */
-function parseSingleItemFromSegment(segment: string): ItemParse | null {
-  const raw = collapseExactRepeatedPhrase((segment || "").trim());
+function parseSingleItemFromSegment(segment: string, lang: AppLang): ItemParse | null {
+const raw = collapseExactRepeatedPhrase((segment || "").trim());
   if (!raw) return null;
   if (isClearListCommand(raw)) return null;
 
@@ -1176,6 +1249,7 @@ function parseSingleItemFromSegment(segment: string): ItemParse | null {
   if (!name) return null;
 
   name = applyEnglishAlias(name);
+  name = correctProductTermByCatalog(name, lang);
 
   if (!name) return null;
   if (shouldIgnoreStandaloneVoiceItem(name)) return null;
@@ -1271,8 +1345,8 @@ function segmentVoiceTextKeepingLinking(rawNorm: string): string[] {
   return segments;
 }
 
-function parseItemsFromText(raw: string): ItemParse[] {
-  const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
+function parseItemsFromText(raw: string, lang: AppLang): ItemParse[] {
+    const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
   if (isClearListCommand(collapsedRaw)) return [];
 
   const s0 = normalizeVoiceText(collapsedRaw);
@@ -1293,8 +1367,8 @@ function parseItemsFromText(raw: string): ItemParse[] {
 
   const out: ItemParse[] = [];
   for (const seg of segments) {
-    const parsed = parseSegmentTokensToItems(seg);
-    for (const p of parsed) out.push(p);
+  const parsed = parseSegmentTokensToItems(seg, lang);
+  for (const p of parsed) out.push(p);
   }
   return out;
 }
@@ -1328,8 +1402,28 @@ function collapseParsedItemsForExecution(items: ItemParse[]): ItemParse[] {
   return Array.from(byName.values());
 }
 
-function parseItemsForExecution(raw: string): ItemParse[] {
-  const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
+const REMOVE_WORDS_BY_LANG: Record<string, string[]> = {
+  en: ["and"],
+  ru: ["и"],
+  he: ["ו"],
+  ar: ["و"],
+};
+
+function removeStopWords(text: string, lang: string) {
+  const words = REMOVE_WORDS_BY_LANG[lang] || [];
+  let out = text;
+
+  for (const w of words) {
+    const regex = new RegExp(`\\b${w}\\b`, "gi");
+    out = out.replace(regex, " ");
+  }
+
+  return out.replace(/\s+/g, " ").trim();
+}
+
+
+function parseItemsForExecution(raw: string, lang: AppLang): ItemParse[] {
+const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
   if (isClearListCommand(collapsedRaw)) return [];
 
   const source = normalizeVoiceText(collapsedRaw);
@@ -1347,13 +1441,13 @@ function parseItemsForExecution(raw: string): ItemParse[] {
 
     const out: ItemParse[] = [];
     for (const seg of segments) {
-      const parsed = parseSingleItemFromSegment(seg);
+const parsed = parseSingleItemFromSegment(seg, lang);
       if (parsed) out.push(parsed);
     }
     return out;
   }
 
-  const single = parseSingleItemFromSegment(source);
+const single = parseSingleItemFromSegment(source, lang);
   return single ? [single] : [];
 }
 
@@ -1488,6 +1582,7 @@ function getAutocompleteSuggestions(opts: {
   items: ShoppingItem[];
   history: Record<string, ItemHistoryEntry>;
   hiddenKeys: Set<string>;
+  lang: AppLang;
   limit?: number;
 }) {
   const qRaw = opts.query;
@@ -1496,6 +1591,7 @@ function getAutocompleteSuggestions(opts: {
   if (!q) return [] as string[];
 
   const map = new Map<string, SuggestCandidate>();
+  const staticTerms = getProductTermsByLang(opts.lang);
 
   const add = (name: string, source: SuggestSource) => {
     const trimmed = name.trim();
@@ -1519,7 +1615,7 @@ function getAutocompleteSuggestions(opts: {
     const c = map.get(key);
     if (c) c.history = h;
   }
-  for (const n of COMMON_GROCERY_HE) add(n, "static");
+  for (const n of staticTerms) add(n, "static");
 
   const candidates = Array.from(map.values());
 
@@ -1771,6 +1867,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "שמור": "שמור",
       "נסגר": "סגור",
       "הקטגוריה עודכנה": "הקטגוריה עודכנה",
+      "הפריט כבר קיים ברשימה": "הפריט כבר קיים ברשימה",
+      "כבר ברשימה - הגדלתי כמות ל-": "כבר ברשימה - הגדלתי כמות ל-",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -1855,10 +1953,10 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "זכור לי תמיד עבור פריט זה": "Always remember this item",
     "שמור": "Save",
     "נסגר": "Close",
-    "הקטגוריה עודכנה": "Category updated",
-
+    "הפריט כבר קיים ברשימה": "Item already exists in the list",
+    "כבר ברשימה - הגדלתי כמות ל-": "Already in the list - increased quantity to ",
 },
-  ru: {
+ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
     "__toast_online_back__": "Снова онлайн",
 
@@ -1942,6 +2040,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "שמור": "Сохранить",
     "נסגר": "Закрыть",
     "הקטגוריה עודכנה": "Категория обновлена",
+    "הפריט כבר קיים ברשימה": "Товар уже есть в списке",
+    "כבר ברשימה - הגדלתי כמות ל-": "Уже в списке - количество увеличено до ",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2024,16 +2124,18 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "העבר לקטגוריה": "انقل إلى فئة",
     "זכור לי תמיד עבור פריט זה": "تذكر هذا العنصر دائمًا",
     "שמור": "حفظ",
-    "נסגר": "إغلاق",
-    "הקטגוריה עודכנה": "تم تحديث الفئة",
-},
+    "נסגר": "إغلاق",   
+     "הקטגוריה עודכנה": "تم تحديث الفئة",
+    "הפריט כבר קיים ברשימה": "العنصر موجود بالفعل في القائمة",
+    "כבר ברשימה - הגדלתי כמות ל-": "موجود بالفعل - تم زيادة الكمية إلى ",
+  },
 };
 
-    function translate(lang: AppLang, key: string) {
-      const dict = I18N[lang] || I18N.he;
-      const k = String(key ?? "").trim();
-      return dict[k] ?? I18N.he[k] ?? k;
-    }
+function translate(lang: AppLang, key: string) {
+  const dict = I18N[lang] || I18N.he;
+  const k = String(key ?? "").trim();
+  return dict[k] ?? I18N.he[k] ?? k;
+}
 
 const getVoiceExamplesText = (lang: AppLang) => {
   switch (lang) {
@@ -2665,12 +2767,14 @@ useEffect(() => {
 
     swipeConsumedRef.current = true;
 
-    try {
-      if (dx > 0) {
-        deleteItemWithFlash(id); // swipe right
+      try {
+      const deleteSwipe = isRTL ? dx > 0 : dx < 0;
+
+      if (deleteSwipe) {
+        deleteItemWithFlash(id);
       } else {
         if (!favoritesById.has(id)) {
-          toggleFavorite(id); // swipe left (add only)
+          toggleFavorite(id);
         }
       }
     } finally {
@@ -2749,14 +2853,15 @@ useEffect(() => {
     }
 
     swipeConsumedRef.current = true;
+const deleteSwipe = isRTL ? dxRaw > 0 : dxRaw < 0;
 
-    if (dxRaw > 0) {
-      deleteItemWithFlash(id);
-    } else {
-      if (!favoritesById.has(id)) {
-        toggleFavorite(id);
-      }
-    }
+if (deleteSwipe) {
+  deleteItemWithFlash(id);
+} else {
+  if (!favoritesById.has(id)) {
+    toggleFavorite(id);
+  }
+}
 
     setSwipeUi({ id: null, dx: 0 });
   };
@@ -2971,16 +3076,17 @@ const suggestionList = useMemo(() => {
   hiddenSuggestRef.current = hidden;
 
   return getAutocompleteSuggestions({
-    query: inputValue,
-    favorites: (favorites ?? []).map((f) => f.name),
-    items: items ?? [],
-    history: historyRef.current,
-    hiddenKeys: hidden,
-    limit: 8,
-  });
-}, [inputValue, favorites, items]);
+  query: inputValue,
+  favorites: (favorites ?? []).map((f) => f.name),
+  items: items ?? [],
+  history: historyRef.current,
+  hiddenKeys: hidden,
+  lang,
+  limit: 8,
+});
+}, [inputValue, favorites, items, lang]);
 
-const visibleSuggestionList = useMemo(() => suggestionList.filter((s) => !s.isInList), [suggestionList]);
+const visibleSuggestionList = useMemo(() => suggestionList, [suggestionList]);
 
 const closeSuggestionsSoon = () => {
   if (blurCloseTimerRef.current) window.clearTimeout(blurCloseTimerRef.current);
@@ -3005,7 +3111,7 @@ const applySuggestion = async (s: SuggestView) => {
       unhideSuggestionKey(pickKey);
       hiddenSuggestRef.current.delete(pickKey);
     }
-    setToast(`כבר ברשימה - הגדלתי כמות ל-${nextQty}`);
+    setToast(t("כבר ברשימה - הגדלתי כמות ל-") + nextQty);
     setInputValue("");
     setActiveSuggestIndex(-1);
     setIsSuggestOpen(false);
@@ -3013,7 +3119,6 @@ const applySuggestion = async (s: SuggestView) => {
     return;
   }
 
-  // Otherwise: fill input for regular add flow
   setInputValue(s.name);
   setActiveSuggestIndex(-1);
   setIsSuggestOpen(false);
@@ -3044,6 +3149,23 @@ const hideSuggestion = (s: SuggestView) => {
   window.requestAnimationFrame(() => inputRef.current?.focus());
 };
 
+const hideItemFromSuggestionsByName = (rawName: string) => {
+  const key = normalizeItemName(rawName);
+  if (!key) return;
+
+  const nextHistory = { ...historyRef.current };
+  if (nextHistory[key]) {
+    delete nextHistory[key];
+    historyRef.current = nextHistory;
+    saveItemHistory(nextHistory);
+  }
+
+  const nextHidden = new Set(hiddenSuggestRef.current);
+  nextHidden.add(key);
+  hiddenSuggestRef.current = nextHidden;
+  hideSuggestionKey(key);
+};
+
   const addItem = async (e?: React.FormEvent) => {
     if (e) e.preventDefault();
 
@@ -3060,14 +3182,13 @@ const hideSuggestion = (s: SuggestView) => {
     const normalized = normalizeItemName(name);
     const existing = items.find((it) => normalizeItemName(it.name) === normalized);
 
-    if (existing) {
-      // Non-blocking update (important offline)
-      void updateQty(existing.id, 1).catch((err) => console.error("updateQty failed", err));
-if (normalized) {
+            if (existing) {
+      if (normalized) {
         unhideSuggestionKey(normalized);
         hiddenSuggestRef.current.delete(normalized);
       }
       recordHistory(existing.name);
+      setToast(t("הפריט כבר קיים ברשימה"));
       setInputValue("");
       setIsSuggestOpen(false);
       setActiveSuggestIndex(-1);
@@ -3167,33 +3288,29 @@ if (normalized) {
   };
 
   const deleteItemWithFlash = (id: string) => {
-    if (!list?.id) return;
-    if (deleteFlashIds.has(id)) return;
+  if (!list?.id) return;
+  if (deleteFlashIds.has(id)) return;
 
-    // Visual cue first
+  setDeleteFlashIds((prev) => {
+    const next = new Set(prev);
+    next.add(id);
+    return next;
+  });
+
+  window.setTimeout(() => {
+    setItems((prev) => prev.filter((it) => it.id !== id));
+  }, 80);
+
+  void deleteItem(id).catch((e) => console.warn("delete failed", e));
+
+  window.setTimeout(() => {
     setDeleteFlashIds((prev) => {
       const next = new Set(prev);
-      next.add(id);
+      next.delete(id);
       return next;
     });
-
-    // Optimistic UI: remove from list quickly (even offline)
-    window.setTimeout(() => {
-      setItems((prev) => prev.filter((it) => it.id !== id));
-    }, 80);
-
-    // Firestore delete in background
-    void deleteItem(id).catch((e) => console.warn("delete failed", e));
-
-    // Clear flash
-    window.setTimeout(() => {
-      setDeleteFlashIds((prev) => {
-        const next = new Set(prev);
-        next.delete(id);
-        return next;
-      });
-    }, 260);
-  };
+  }, 260);
+};
 
   const toggleFavorite = (itemId: string) => {
     if (!list?.id) return;
@@ -3737,7 +3854,7 @@ ${footer}`;
       // swipe right -> remove from favorites
       removeFavoriteWithFlash(id);
     } else {
-      // swipe left -> add to list (or increment if exists)
+      // swipe left -> add to list
       if (fav) await addFavoriteToList(fav);
     }
   };
@@ -3852,8 +3969,8 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-   const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload));
-if (parsed.length === 0) return;
+const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload, lang));
+    if (parsed.length === 0) return;
 
 for (const p of parsed) {
   await addOrSetQuantity(p.name, p.qty);
@@ -4280,7 +4397,7 @@ if (isClearListCommand(combined, lang)) {
   return;
 }
 
-setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
+setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined, lang)));
 setVoiceUi("review");
 nativeFinalizeRef.current = false;
 };
@@ -4559,7 +4676,8 @@ rec.onresult = (event: any) => {
     for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
       const r = results[i];
       const best = r?.[0];
-      const transcript = normalizeVoiceText(String(best?.transcript || ""));
+      let transcript = normalizeVoiceText(String(best?.transcript || ""));
+      transcript = removeStopWords(transcript, lang);
       if (!transcript) continue;
 
       if (r.isFinal) {
@@ -4948,7 +5066,8 @@ const clearLocalTimers = () => {
         for (let i = (event as any).resultIndex ?? 0; i < (results?.length ?? 0); i++) {
           const r = results[i];
           const best = r?.[0];
-          const transcript = normalizeVoiceText(String(best?.transcript || ""));
+          let transcript = normalizeVoiceText(String(best?.transcript || ""));
+          transcript = removeStopWords(transcript, lang);
           if (!transcript) continue;
           hadAnyResult = true;
           lastResultAt = Date.now();
@@ -5683,7 +5802,12 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
       {categoryItems.map((item) => {
       const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
+            const revealDelete =
+      swipeUi.id === item.id && (isRTL ? swipeUi.dx > 0 : swipeUi.dx < 0);
 
+    const revealFavorite =
+      swipeUi.id === item.id && (isRTL ? swipeUi.dx < 0 : swipeUi.dx > 0);
+  
   return (
         <div
           key={item.id}
@@ -5770,89 +5894,87 @@ onTouchCancel={() => {
   clearItemLongPress();
 }}
 style={{ touchAction: "pan-y" }}
-        >
-          {/* Swipe cue (background strips + icons) */}
-          <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
-            {/* Revealed background (never covers icons) */}
-            <div
-              className="absolute left-0 top-0 bottom-0 bg-rose-50"
-              style={{
-                width:
-                  swipeUi.id === item.id && swipeUi.dx > 0
-                    ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
-                    : 0,
-                opacity: 0.9,
-                zIndex: 0,
-              }}
-            />
-            <div
-              className="absolute right-0 top-0 bottom-0 bg-emerald-50"
-              style={{
-                width:
-                  swipeUi.id === item.id && swipeUi.dx < 0
-                    ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX)
-                    : 0,
-                opacity: 0.9,
-                zIndex: 0,
-              }}
-            />
+>
+  
+    {/* Swipe cue (background strips + icons) */}
+<div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+  {/* Revealed background (never covers icons) */}
+  <div
+    className={`absolute top-0 bottom-0 bg-rose-50 ${isRTL ? "left-0" : "right-0"}`}
+    style={{
+      width: revealDelete ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX) : 0,
+      opacity: 0.9,
+      zIndex: 0,
+    }}
+  />
+  <div
+    className={`absolute top-0 bottom-0 bg-emerald-50 ${isRTL ? "right-0" : "left-0"}`}
+    style={{
+      width: revealFavorite ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX) : 0,
+      opacity: 0.9,
+      zIndex: 0,
+    }}
+  />
 
-            {/* Icons: swipe RIGHT = delete (left side), swipe LEFT = add to favorites (right side) */}
-            <div className="absolute inset-0 flex items-center justify-between px-4 flex-row-reverse">
-              <div
-                className="text-rose-600"
-                style={{
-                  zIndex: 2,
-                  opacity:
-                    swipeUi.id === item.id && swipeUi.dx > 0
-                      ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                        ? 1
-                        : 0.65
-                      : 0,
-                  transform:
-                    swipeUi.id === item.id && swipeUi.dx > 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                      ? "scale(1.15)"
-                      : "scale(1)",
-                  transition: "transform 120ms ease, opacity 120ms ease",
-                }}
-              >
-                <Trash2 className="w-6 h-6" />
-              </div>
+  <div
+    className={`absolute inset-0 flex items-center justify-between px-4 ${
+      isRTL ? "flex-row-reverse" : "flex-row"
+    }`}
+  >
+    <div
+      className="text-rose-600"
+      style={{
+        zIndex: 2,
+        opacity:
+          revealDelete
+            ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+              ? 1
+              : 0.65
+            : 0,
+        transform:
+          revealDelete && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+            ? "scale(1.15)"
+            : "scale(1)",
+        transition: "transform 120ms ease, opacity 120ms ease",
+      }}
+    >
+      <Trash2 className="w-6 h-6" />
+    </div>
 
-              <div
-                className="text-emerald-600"
-                style={{
-                  zIndex: 2,
-                  opacity:
-                    swipeUi.id === item.id && swipeUi.dx < 0
-                      ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                        ? 1
-                        : 0.65
-                      : 0,
-                  transform:
-                    swipeUi.id === item.id && swipeUi.dx < 0 && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
-                      ? "scale(1.15)"
-                      : "scale(1)",
-                  transition: "transform 120ms ease, opacity 120ms ease",
-                }}
-              >
-                <Star className="w-6 h-6" />
-              </div>
-            </div>
-          </div>
+    <div
+      className="text-emerald-600"
+      style={{
+        zIndex: 2,
+        opacity:
+          revealFavorite
+            ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+              ? 1
+              : 0.65
+            : 0,
+        transform:
+          revealFavorite && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+            ? "scale(1.15)"
+            : "scale(1)",
+        transition: "transform 120ms ease, opacity 120ms ease",
+      }}
+    >
+      <Star className="w-6 h-6" />
+    </div>
+  </div>
+</div>
 
           {/* Foreground content (slides with finger/mouse) */}
           <div
           className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${
-  deleteFlashIds.has(item.id)
-    ? "bg-rose-50"
-    : favoriteFlashIds.has(item.id)
-      ? "bg-emerald-100"
-      : listFlashIds.has(item.id)
-        ? "bg-emerald-50"
-        : "bg-white"
-}`}
-dir={isRTL ? "rtl" : "ltr"}           
+        deleteFlashIds.has(item.id)
+          ? "bg-rose-50"
+          : favoriteFlashIds.has(item.id)
+            ? "bg-emerald-100"
+            : listFlashIds.has(item.id)
+              ? "bg-emerald-50"
+              : "bg-white"
+      }`}
+      dir={isRTL ? "rtl" : "ltr"}           
           
           style={{
               transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
@@ -6030,114 +6152,112 @@ dir={isRTL ? "rtl" : "ltr"}
               </div>
             ) : (
               <div className="grid grid-cols-1 gap-3">
-                {favoritesUnique.map((fav) => (
-                  <div
-                    key={fav.id}
-                    className={`relative overflow-hidden rounded-2xl select-none transition-all duration-200 ease-out ${favDeleteFlashIds.has(fav.id) ? "pointer-events-none" : ""} ${favLeavingIds.has(fav.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
-                    dir="ltr"
-                    onPointerDown={onFavSwipePointerDown(fav.id)}
-                    onPointerMove={onFavSwipePointerMove(fav.id)}
-                    onPointerUp={onFavSwipePointerUp(fav.id)}
-                    onPointerCancel={onFavSwipePointerCancel}
-                    style={{ touchAction: "pan-y" }}
-                  >
-                    {/* Swipe cue (background strips + icons) */}
-                    <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
-                      {/* Revealed background (never covers icons) */}
-                      <div
-                        className="absolute left-0 top-0 bottom-0 bg-rose-50"
-                        style={{
-                          width:
-                            favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0
-                              ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX)
-                              : 0,
-                          opacity: 0.9,
-                          zIndex: 0,
-                        }}
-                      />
-                      <div
-                        className="absolute right-0 top-0 bottom-0 bg-emerald-50"
-                        style={{
-                          width:
-                            favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0
-                              ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX)
-                              : 0,
-                          opacity: 0.9,
-                          zIndex: 0,
-                        }}
-                      />
+                {favoritesUnique.map((fav) => {
+                  const revealFavDelete =
+                    favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0;
 
-                      {/* Icons: swipe RIGHT = remove favorite, swipe LEFT = add to list */}
-                      <div className="absolute inset-0 flex items-center justify-between px-4">
-                        {/* LEFT icon (revealed on swipe RIGHT) */}
-                        <div
-                          className="text-rose-600"
-                          style={{
-                            zIndex: 2,
-                            opacity:
-                              favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0
-                                ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                  ? 1
-                                  : 0.65
-                                : 0,
-                            transform:
-                              favSwipeUi.id === fav.id &&
-                              favSwipeUi.rawDx > 0 &&
-                              Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                ? "scale(1.15)"
-                                : "scale(1)",
-                            transition: "transform 120ms ease, opacity 120ms ease",
-                          }}
-                        >
-                          <Trash2 className="w-6 h-6" />
-                        </div>
+                  const revealFavAdd =
+                    favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0;
 
-                        {/* RIGHT icon (revealed on swipe LEFT) */}
-                        <div
-                          className="text-emerald-600"
-                          style={{
-                            zIndex: 2,
-                            opacity:
-                              favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0
-                                ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                  ? 1
-                                  : 0.65
-                                : 0,
-                            transform:
-                              favSwipeUi.id === fav.id &&
-                              favSwipeUi.rawDx < 0 &&
-                              Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                ? "scale(1.15)"
-                                : "scale(1)",
-                            transition: "transform 120ms ease, opacity 120ms ease",
-                          }}
-                        >
-                          <ListPlusIcon className="w-6 h-6" />
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Foreground card */}
+                  return (
                     <div
-                      className={`relative z-10 flex items-center justify-between p-4 rounded-2xl border border-slate-100 shadow-sm transition-colors ${favDeleteFlashIds.has(fav.id) ? "bg-rose-50" : favToListFlashIds.has(fav.id) ? "bg-emerald-100" : "bg-white"}`}
-                      style={{
-                        transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
-                        transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
-                      }}
+                      key={fav.id}
+                      className={`relative overflow-hidden rounded-2xl select-none transition-all duration-200 ease-out ${favDeleteFlashIds.has(fav.id) ? "pointer-events-none" : ""} ${favLeavingIds.has(fav.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
+                      dir="ltr"
+                      onPointerDown={onFavSwipePointerDown(fav.id)}
+                      onPointerMove={onFavSwipePointerMove(fav.id)}
+                      onPointerUp={onFavSwipePointerUp(fav.id)}
+                      onPointerCancel={onFavSwipePointerCancel}
+                      style={{ touchAction: "pan-y" }}
                     >
-<div className="flex items-center gap-2" />
+                      {/* Swipe cue (background strips + icons) */}
+                      <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+                        {/* Revealed background (never covers icons) */}
+                        <div
+                          className="absolute left-0 top-0 bottom-0 bg-rose-50"
+                          style={{
+                            width: revealFavDelete ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                            opacity: 0.9,
+                            zIndex: 0,
+                          }}
+                        />
+                        <div
+                          className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+                          style={{
+                            width: revealFavAdd ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                            opacity: 0.9,
+                            zIndex: 0,
+                          }}
+                        />
 
-                      <div
-                        className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate px-3 text-base`}
-                        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                      >
-                        {fav.name}
+                        <div
+                          className="absolute inset-0 flex items-center justify-between px-4 flex-row"
+                        
+                        >
+                          <div
+                            className="text-rose-600"
+                            style={{
+                              zIndex: 2,
+                              opacity:
+                                revealFavDelete
+                                  ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                    ? 1
+                                    : 0.65
+                                  : 0,
+                              transform:
+                                revealFavDelete && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                  ? "scale(1.15)"
+                                  : "scale(1)",
+                              transition: "transform 120ms ease, opacity 120ms ease",
+                            }}
+                          >
+                            <Trash2 className="w-6 h-6" />
+                          </div>
+
+                          <div
+                            className="text-emerald-600"
+                            style={{
+                              zIndex: 2,
+                              opacity:
+                                revealFavAdd
+                                  ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                    ? 1
+                                    : 0.65
+                                  : 0,
+                              transform:
+                                revealFavAdd && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                  ? "scale(1.15)"
+                                  : "scale(1)",
+                              transition: "transform 120ms ease, opacity 120ms ease",
+                            }}
+                          >
+                            <ListPlusIcon className="w-6 h-6" />
+                          </div>
+                        </div>
                       </div>
 
-                      <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                      {/* Foreground card */}
+                      <div
+                        className={`relative z-10 flex items-center justify-between p-4 rounded-2xl border border-slate-100 shadow-sm transition-colors ${favDeleteFlashIds.has(fav.id) ? "bg-rose-50" : favToListFlashIds.has(fav.id) ? "bg-emerald-100" : "bg-white"}`}
+                        style={{
+                          transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
+                          transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
+                        }}
+                      >
+                        <div className="flex items-center gap-2" />
+
+                        <div
+                          className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate px-3 text-base`}
+                          style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                        >
+                          {fav.name}
+                        </div>
+
+                        <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+                      </div>
                     </div>
-                  </div>
-                ))}
+                  );
+                })}
               </div>
             )}
           </div>
@@ -6259,29 +6379,33 @@ dir={isRTL ? "rtl" : "ltr"}
 
       {/* Voice Review Modal */}
       {voiceUi === "review" ? (
-        <div className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-6" dir="rtl">
-          <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
+        <div
+          className="fixed inset-0 z-[80] bg-black/50 flex items-center justify-center p-6"
+          dir={isRTL ? "rtl" : "ltr"}
+        >         
+         <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
             <div className="p-6 space-y-4">
               <div className="flex items-start justify-between gap-3">
                 <div className={rtlClasses.text}>
-                  <div className="text-xl font-black text-slate-800">{t(t("בדיקה לפני שליחה"))}</div>
-                  <div className="text-sm font-bold text-slate-400">{t(t("אפשר לערוך או לבטל"))}</div>
-                </div>
+                <div className="text-xl font-black text-slate-800">{t("בדיקה לפני שליחה")}</div>
+                <div className="text-sm font-bold text-slate-400">{t("אפשר לערוך או לבטל")}</div>
+              </div>
                 <div className="w-10 h-10 rounded-2xl bg-rose-50 text-rose-600 flex items-center justify-center">
                   <Mic className="w-5 h-5" />
                 </div>
               </div>
 
               <textarea
-                value={voiceDraft}
-                onChange={(e) => setVoiceDraft(e.target.value)}
-                rows={3}
-                className="w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-                placeholder={t(t("מה אמרת?"))}
-              />
+              value={voiceDraft}
+              onChange={(e) => setVoiceDraft(e.target.value)}
+              rows={3}
+              dir={isRTL ? "rtl" : "ltr"}
+              className={`w-full rounded-2xl border border-slate-200 px-4 py-3 font-bold text-slate-700 bg-slate-50 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${isRTL ? "text-right" : "text-left"}`}
+              placeholder={t("מה אמרת?")}
+            />
 
-              <div className="flex gap-3 pt-2">
-                <button
+                  <div className={`flex gap-3 pt-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+                  <button
                   onClick={() => cancelVoiceDraft()}
                   className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
                 >
