@@ -693,6 +693,7 @@ const AMBIGUOUS_BOUNDARY_NUMBER_WORDS: Record<string, number> = {
   too: 2,
 };
 
+
 const ALL_NUMBER_WORDS: Record<string, number> = {
   ...HEB_NUMBER_WORDS,
   ...EN_NUMBER_WORDS,
@@ -6019,7 +6020,7 @@ style={{ touchAction: "pan-y" }}
 
             <div
               className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
-              data-noswipe="true"
+              //data-noswipe="true" // Allow swiping even when interacting with qty controls
             >
               <button
                 disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
@@ -6097,7 +6098,7 @@ style={{ touchAction: "pan-y" }}
             <button
               type="button"
               onClick={closeCategorySheet}
-              className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+              className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
             >
               {t("נסגר")}
             </button>
