@@ -6,6 +6,7 @@ import * as EN_PRODUCTS_MODULE from "./data/products-en";
 import * as HE_PRODUCTS_MODULE from "./data/products-he";
 import * as RU_PRODUCTS_MODULE from "./data/products-ru";
 import * as AR_PRODUCTS_MODULE from "./data/products-ar";
+import { Browser } from "@capacitor/browser";
 import {
   Share2,
   Star,
@@ -214,8 +215,13 @@ function buildLegalUrl(kind: "privacy" | "terms") {
   return `${getPublicAppBaseUrl()}/legal/${kind}.html`;
 }
 
-function openExternalUrl(url: string) {
+async function openExternalUrl(url: string) {
   try {
+    if (Capacitor.isNativePlatform()) {
+      await Browser.open({ url });
+      return;
+    }
+
     window.open(url, "_blank", "noopener,noreferrer");
   } catch (e) {
     window.location.href = url;
