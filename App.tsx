@@ -554,14 +554,16 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = f
     : translate(lang, "My Easy List זמין דרך האפליקציה");
 
   const primaryStoreLabel = isAndroid
-    ? translate(lang, "גוגל פליי - בקרוב")
-    : isIOS
-      ? translate(lang, "אפ סטור - בקרוב")
-      : translate(lang, "גוגל פליי - בקרוב");
-
-  const secondaryStoreLabel = isAndroid
+  ? translate(lang, "גוגל פליי - בקרוב")
+  : isIOS
     ? translate(lang, "אפ סטור - בקרוב")
     : translate(lang, "גוגל פליי - בקרוב");
+
+const secondaryStoreLabel = isAndroid
+  ? translate(lang, "אפ סטור - בקרוב")
+  : isIOS
+    ? translate(lang, "גוגל פליי - בקרוב")
+    : translate(lang, "אפ סטור - בקרוב");
 
   const storeButtonClass =
     "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
