@@ -26,6 +26,8 @@ import {
   Calendar,
   MoreVertical,
   Languages,
+  Shield,
+  FileText,
 } from "lucide-react";
 
 // Local icon: list + plus (works even if lucide doesn't include ListPlus)
@@ -208,6 +210,18 @@ function getPublicAppBaseUrl() {
   return "https://myeasylist.app";
 }
 
+function buildLegalUrl(kind: "privacy" | "terms") {
+  return `${getPublicAppBaseUrl()}/legal/${kind}.html`;
+}
+
+function openExternalUrl(url: string) {
+  try {
+    window.open(url, "_blank", "noopener,noreferrer");
+  } catch (e) {
+    window.location.href = url;
+  }
+}
+
 function isLocalDevHost() {
   try {
     const host = String(window.location.hostname || "").toLowerCase();
@@ -323,6 +337,29 @@ function openWhatsApp(text: string) {
   const message = encodeURIComponent(text);
   window.open(`https://wa.me/?text=${message}`, "_blank");
 }
+
+
+const LegalFooter: React.FC<{ lang: AppLang; className?: string }> = ({ lang, className = "" }) => {
+  return (
+    <div className={"flex items-center justify-center gap-3 text-xs font-bold text-slate-500 " + className}>
+      <button
+        type="button"
+        onClick={() => openExternalUrl(buildLegalUrl("privacy"))}
+        className="text-indigo-600 hover:text-indigo-700"
+      >
+        {translate(lang, "Privacy Policy")}
+      </button>
+      <span className="text-slate-300">|</span>
+      <button
+        type="button"
+        onClick={() => openExternalUrl(buildLegalUrl("terms"))}
+        className="text-indigo-600 hover:text-indigo-700"
+      >
+        {translate(lang, "Terms & Conditions")}
+      </button>
+    </div>
+  );
+};
 
 // ---------------------------
 // Invite Page
@@ -474,6 +511,7 @@ const handleJoin = async () => {
           {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : t("הצטרף לרשימה")}
         </button>
 
+        <LegalFooter lang={lang} className="pt-1" />
       </div>
     </div>
   );
@@ -481,17 +519,15 @@ const handleJoin = async () => {
 
 
 const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = false }) => {
-
   const lang = (() => {
-  try {
-    const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
-    if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-    return "en";
-  } catch {
-    return "en";
-  }
-})();
-
+    try {
+      const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
+      if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
+      return "en";
+    } catch {
+      return "en";
+    }
+  })();
 
   const isAndroid = (() => {
     try {
@@ -510,22 +546,22 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = f
   })();
 
   const installTitle = inviteMode
-  ? translate(lang, "התקן את האפליקציה כדי לפתוח את הרשימה")
-  : translate(lang, "התקן את My Easy List");
+    ? translate(lang, "התקן את האפליקציה כדי לפתוח את הרשימה")
+    : translate(lang, "התקן את My Easy List");
 
-const installSubtitle = inviteMode
-  ? translate(lang, "רשימות משותפות נפתחות רק באפליקציה")
-  : translate(lang, "My Easy List זמין דרך האפליקציה");
+  const installSubtitle = inviteMode
+    ? translate(lang, "רשימות משותפות נפתחות רק באפליקציה")
+    : translate(lang, "My Easy List זמין דרך האפליקציה");
 
-const primaryStoreLabel = isAndroid
-  ? translate(lang, "גוגל פליי - בקרוב")
-  : isIOS
+  const primaryStoreLabel = isAndroid
+    ? translate(lang, "גוגל פליי - בקרוב")
+    : isIOS
+      ? translate(lang, "אפ סטור - בקרוב")
+      : translate(lang, "גוגל פליי - בקרוב");
+
+  const secondaryStoreLabel = isAndroid
     ? translate(lang, "אפ סטור - בקרוב")
     : translate(lang, "גוגל פליי - בקרוב");
-
-const secondaryStoreLabel = isAndroid
-  ? translate(lang, "אפ סטור - בקרוב")
-  : translate(lang, "גוגל פליי - בקרוב");
 
   const storeButtonClass =
     "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
@@ -557,9 +593,27 @@ const secondaryStoreLabel = isAndroid
         </div>
 
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
-         {inviteMode
-        ? translate(lang, "אחרי התקנת האפליקציה פתח שוב את הקישור")
-        : translate(lang, "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
+          {inviteMode
+            ? translate(lang, "אחרי התקנת האפליקציה פתח שוב את הקישור")
+            : translate(lang, "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
+        </div>
+
+        <div className="pt-2 text-center text-xs font-bold text-slate-400">
+          <button
+            type="button"
+            onClick={() => openExternalUrl(buildLegalUrl("privacy"))}
+            className="underline hover:text-slate-600"
+          >
+            {translate(lang, "Privacy Policy")}
+          </button>
+          <span className="mx-2">|</span>
+          <button
+            type="button"
+            onClick={() => openExternalUrl(buildLegalUrl("terms"))}
+            className="underline hover:text-slate-600"
+          >
+            {translate(lang, "Terms & Conditions")}
+          </button>
         </div>
       </div>
     </div>
@@ -1818,6 +1872,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "וואטסאפ": "וואטסאפ",
     "הזמנה לא בתוקף": "הזמנה לא בתוקף",
     "שפה": "שפה",
+    "Privacy Policy": "מדיניות פרטיות",
+    "Terms & Conditions": "תנאים והגבלות",
     "יציאה": "יציאה",
     "נקה רשימה": "נקה רשימה",
     "מועדפים": "מועדפים",
@@ -1888,6 +1944,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "התנתק מרשימת קניות משותפת": "Leave shared list",
     "וואטסאפ": "WhatsApp",
     "שפה": "Language",
+    "Privacy Policy": "Privacy Policy",
+    "Terms & Conditions": "Terms & Conditions",
     "יציאה": "Sign out",
     "נקה רשימה": "Clear list",
     "מועדפים": "Favorites",
@@ -1974,6 +2032,8 @@ ru: {
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
     "וואטסאפ": "WhatsApp",
     "שפה": "Язык",
+    "Privacy Policy": "Политика конфиденциальности",
+    "Terms & Conditions": "Условия использования",
     "יציאה": "Выйти",
     "נקה רשימה": "Очистить список",
     "מועדפים": "Избранное",
@@ -2060,6 +2120,8 @@ ru: {
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
     "וואטסאפ": "واتساب",
     "שפה": "اللغة",
+    "Privacy Policy": "سياسة الخصوصية",
+    "Terms & Conditions": "الشروط والأحكام",
     "יציאה": "تسجيل الخروج",
     "נקה רשימה": "مسح القائمة",
     "מועדפים": "المفضلة",
@@ -5347,6 +5409,7 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
             <LogIn className="w-4 h-4" />
             {t("התחבר עם גוגל")}
           </button>
+          <LegalFooter lang={lang} className="pt-1" />
         </div>
       </div>
     );
@@ -5573,6 +5636,44 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
   <Trash2 className="w-4 h-4 text-rose-500 shrink-0" />
   <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
     {t("נקה רשימה")}
+  </span>
+</button>
+
+          <button
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    openExternalUrl(buildLegalUrl("privacy"));
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Shield className="w-4 h-4 text-indigo-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("Privacy Policy")}
+  </span>
+</button>
+
+          <button
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    openExternalUrl(buildLegalUrl("terms"));
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <FileText className="w-4 h-4 text-indigo-500 shrink-0" />
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("Terms & Conditions")}
   </span>
 </button>
 
