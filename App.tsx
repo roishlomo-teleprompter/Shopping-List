@@ -257,12 +257,17 @@ function buildInviteDeepLink(listId: string, token: string) {
 function buildInviteHashFromUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl);
+
     const listId = url.searchParams.get("listId");
     const token = url.searchParams.get("token");
-    const openInvite = url.searchParams.get("openInvite");
 
     if (!listId || !token) return null;
-    if (openInvite !== "1") return null;
+
+    // תמיכה גם ב-web וגם ב-deep link
+    const isWebInvite = url.searchParams.get("openInvite") === "1";
+    const isAppInvite = url.protocol === "myeasylist:";
+
+    if (!isWebInvite && !isAppInvite) return null;
 
     return `#/invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
   } catch (e) {
