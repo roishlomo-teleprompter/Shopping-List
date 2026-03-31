@@ -337,6 +337,29 @@ async function signInSmart() {
   }
 }
 
+async function waitForFirebaseUser(timeoutMs = 4000): Promise<FirebaseUser | null> {
+  if (auth.currentUser) return auth.currentUser;
+
+  return new Promise((resolve) => {
+    let done = false;
+
+    const timer = window.setTimeout(() => {
+      if (done) return;
+      done = true;
+      unsub();
+      resolve(auth.currentUser ?? null);
+    }, timeoutMs);
+
+    const unsub = onAuthStateChanged(auth, (u) => {
+      if (!u || done) return;
+      done = true;
+      window.clearTimeout(timer);
+      unsub();
+      resolve(u);
+    });
+  });
+}
+
 async function signOutSmart() {
   if (Capacitor.isNativePlatform()) {
     try {
@@ -422,25 +445,7 @@ const lang = (() => {
 
 const handleJoin = async () => {
   if (!listId || !token) {
-    setError("קישור ההזמנה חסר נתונים (listId או token)");
-    return;
-  }
-
-  let currentUser = user;
-
-  if (!currentUser) {
-    setError(null);
-    try {
-      await signInSmart();
-      currentUser = auth.currentUser;
-    } catch (e: any) {
-      setError(e?.message || "שגיאת התחברות");
-      return;
-    }
-  }
-
-  if (!currentUser) {
-    setError("שגיאת התחברות");
+    setError("קישור ההזמנה חסר נתונים");
     return;
   }
 
@@ -448,6 +453,17 @@ const handleJoin = async () => {
   setError(null);
 
   try {
+    let currentUser = user;
+
+    if (!currentUser) {
+      await signInSmart();
+      currentUser = await waitForFirebaseUser();
+    }
+
+    if (!currentUser) {
+      throw new Error("שגיאת התחברות");
+    }
+
     await runTransaction(db, async (transaction) => {
       const listDocRef = doc(db, "lists", listId);
       const listSnap = await transaction.get(listDocRef);
@@ -511,19 +527,11 @@ const handleJoin = async () => {
         {!listId || !token ? <p className="text-rose-500 font-bold">{t("קישור ההזמנה לא תקין")}</p> : null}
 
         <button
-          onClick={handleLogin}
-          className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
-        >
-          <LogIn className="w-4 h-4" />
-          {t("התחבר עם גוגל להצטרפות")}
-        </button>
-
-        <button
           onClick={handleJoin}
           disabled={loading}
           className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
         >
-          {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : t("הצטרף לרשימה")}
+          {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : t("הצטרף עם גוגל")}
         </button>
 
         <LegalFooter lang={lang} className="pt-1" />
@@ -1902,7 +1910,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הוזמנת לרשימה": "הוזמנת לרשימה",
     "קישור ההזמנה לא תקין": "קישור ההזמנה לא תקין",
     "התחבר עם גוגל להצטרפות": "התחבר עם גוגל להצטרפות",
-    "הצטרף לרשימה": "הצטרף לרשימה",
+    "הצטרף עם גוגל": "הצטרף עם גוגל",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "התקן את האפליקציה כדי לפתוח את הרשימה",
     "התקן את My Easy List": "התקן את My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "רשימות משותפות נפתחות רק באפליקציה",
@@ -1990,7 +1998,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "הוזמנת לרשימה": "You were invited to a list",
     "קישור ההזמנה לא תקין": "Invite link is invalid",
     "התחבר עם גוגל להצטרפות": "Sign in with Google to join",
-    "הצטרף לרשימה": "Join list",
+    "הצטרף עם גוגל": "Join with Google",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "Install the app to open this list",
     "התקן את My Easy List": "Install My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "Shared lists open only inside the app",
@@ -2066,7 +2074,7 @@ ru: {
     "הוזמנת לרשימה": "Вы приглашены в список",
     "קישור ההזמנה לא תקין": "Ссылка приглашения недействительна",
     "התחבר עם גוגל להצטרפות": "Войти через Google",
-    "הצטרף לרשימה": "Присоединиться к списку",
+    "הצטרף עם גוגל": "Присоединиться через Google",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "Установите приложение чтобы открыть список",
     "התקן את My Easy List": "Установите My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "Общие списки открываются только в приложении",
@@ -2165,7 +2173,7 @@ ru: {
     "הוזמנת לרשימה": "تمت دعوتك إلى القائمة",
     "קישור ההזמנה לא תקין": "رابط الدعوة غير صالح",
     "התחבר עם גוגל להצטרפות": "تسجيل الدخول عبر Google",
-    "הצטרף לרשימה": "انضم إلى القائمة",
+    "הצטרף עם גוגל": "الانضمام باستخدام Google",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "قم بتثبيت التطبيق لفتح هذه القائمة",
     "התקן את My Easy List": "قم بتثبيت My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "القوائم المشتركة تفتح فقط داخل التطبيق",
