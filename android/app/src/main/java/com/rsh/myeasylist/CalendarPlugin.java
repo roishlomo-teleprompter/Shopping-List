@@ -1,4 +1,4 @@
-package com.myeasylist.app;
+package com.rsh.myeasylist;
 
 import android.content.Intent;
 import android.provider.CalendarContract;

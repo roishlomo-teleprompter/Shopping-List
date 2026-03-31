@@ -250,6 +250,10 @@ function buildInviteLink(listId: string, token: string) {
   return `${base}/?openInvite=1&listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
 }
 
+function buildInviteDeepLink(listId: string, token: string) {
+  return `myeasylist://invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+}
+
 function buildInviteHashFromUrl(rawUrl: string): string | null {
   try {
     const url = new URL(rawUrl);
@@ -371,13 +375,13 @@ const LegalFooter: React.FC<{ lang: AppLang; className?: string }> = ({ lang, cl
 // Invite Page
 // ---------------------------
 const InvitePage: React.FC = () => {
-  const lang = (() => {
+const lang = (() => {
   try {
     const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
     if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-    return "en";
+    return detectDeviceLang();
   } catch {
-    return "en";
+    return detectDeviceLang();
   }
 })();
 
@@ -524,14 +528,17 @@ const handleJoin = async () => {
 };
 
 
-const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = false }) => {
-  const lang = (() => {
+const InstallLandingPage: React.FC<{ inviteMode?: boolean; forcedLang?: AppLang }> = ({
+  inviteMode = false,
+  forcedLang,
+}) => {
+  const lang: AppLang = forcedLang || (() => {
     try {
       const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
       if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-      return "en";
+      return detectDeviceLang();
     } catch {
-      return "en";
+      return detectDeviceLang();
     }
   })();
 
@@ -560,16 +567,16 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean }> = ({ inviteMode = f
     : translate(lang, "My Easy List זמין דרך האפליקציה");
 
   const primaryStoreLabel = isAndroid
-  ? translate(lang, "גוגל פליי - בקרוב")
-  : isIOS
-    ? translate(lang, "אפ סטור - בקרוב")
-    : translate(lang, "גוגל פליי - בקרוב");
-
-const secondaryStoreLabel = isAndroid
-  ? translate(lang, "אפ סטור - בקרוב")
-  : isIOS
     ? translate(lang, "גוגל פליי - בקרוב")
-    : translate(lang, "אפ סטור - בקרוב");
+    : isIOS
+      ? translate(lang, "אפ סטור - בקרוב")
+      : translate(lang, "גוגל פליי - בקרוב");
+
+  const secondaryStoreLabel = isAndroid
+    ? translate(lang, "אפ סטור - בקרוב")
+    : isIOS
+      ? translate(lang, "גוגל פליי - בקרוב")
+      : translate(lang, "אפ סטור - בקרוב");
 
   const storeButtonClass =
     "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
@@ -2229,9 +2236,9 @@ const [lang, setLang] = useState<AppLang>(() => {
   try {
     const saved = localStorage.getItem(APP_LANG_STORAGE_KEY) as AppLang | null;
     if (saved === "he" || saved === "en" || saved === "ru" || saved === "ar") return saved;
-    return "en";
+    return detectDeviceLang();
   } catch {
-    return "en";
+    return detectDeviceLang();
   }
 });
 const RTL_LANGS: AppLang[] = ["he", "ar"];
@@ -6577,12 +6584,43 @@ style={{ touchAction: "pan-y" }}
 // ---------------------------
 const RootRoute: React.FC = () => {
   if (isNativeOrLocalAppRuntime()) return <MainList />;
-  return <InstallLandingPage />;
+  return <InstallLandingPage forcedLang="en" />;
+};
+
+const WebInviteBridge: React.FC = () => {
+  const [searchParams] = useSearchParams();
+  const listId = searchParams.get("listId");
+  const token = searchParams.get("token");
+  const triedRef = useRef(false);
+
+  useEffect(() => {
+    if (!listId || !token) return;
+    if (triedRef.current) return;
+    triedRef.current = true;
+
+    const appDeepLink = `myeasylist://invite?listId=${encodeURIComponent(listId)}&token=${encodeURIComponent(token)}`;
+
+    const timer = window.setTimeout(() => {
+      console.log("App not opened, staying on landing page");
+    }, 1600);
+
+    try {
+      window.location.href = appDeepLink;
+    } catch (e) {
+      console.error("Failed to open deep link", e);
+    }
+
+    return () => {
+      window.clearTimeout(timer);
+    };
+  }, [listId, token]);
+
+  return <InstallLandingPage inviteMode forcedLang="en" />;
 };
 
 const InviteRoute: React.FC = () => {
   if (isNativeOrLocalAppRuntime()) return <InvitePage />;
-  return <InstallLandingPage inviteMode />;
+  return <WebInviteBridge />;
 };
 
 const App: React.FC = () => {

@@ -1,4 +1,4 @@
-package com.myeasylist.app;
+package com.rsh.myeasylist;
 
 import android.os.Bundle;
 import com.getcapacitor.BridgeActivity;
