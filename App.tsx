@@ -2416,41 +2416,6 @@ const saveItemCategory = async () => {
     category: categorySheetValue,
   });
 
-if (rememberCategoryForUser) {
-  const normalizedTargetName = normalize(categorySheetItem.name);
-
-  const matchingFavorites = favorites.filter(
-    (f) => normalize(f.name) === normalizedTargetName
-  );
-
-  if (matchingFavorites.length > 0) {
-    await Promise.all(
-      matchingFavorites.map((fav) =>
-        setDoc(
-          doc(db, "lists", list.id, "favorites", fav.id),
-          {
-            name: categorySheetItem.name,
-            category: categorySheetValue,
-            updatedAt: Date.now(),
-          },
-          { merge: true }
-        )
-      )
-    );
-  } else {
-    await setDoc(
-      doc(db, "lists", list.id, "favorites", categorySheetItem.id),
-      {
-        name: categorySheetItem.name,
-        createdAt: Date.now(),
-        category: categorySheetValue,
-        updatedAt: Date.now(),
-      },
-      { merge: true }
-    );
-  }
-}
-
 
 
   if (rememberCategoryForUser && user?.uid) {
