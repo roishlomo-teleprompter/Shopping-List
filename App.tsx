@@ -2326,6 +2326,10 @@ const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
   const [inputValue, setInputValue] = useState("");
+  const swipeHintStartedRef = useRef(false);
+  const swipeHintIdleTimerRef = useRef<number | null>(null);
+  const [hintPhase, setHintPhase] = useState(0); // 0 = center, 1 = left, 2 = right
+  const [showInitialSwipeHint, setShowInitialSwipeHint] = useState(false);
 
 // Autocomplete state
 const inputRef = useRef<HTMLInputElement | null>(null);
@@ -3083,6 +3087,70 @@ const activeItems = useMemo(
     [items]
   );
 
+const initialSwipeHintItemId = useMemo(() => {
+  if (!activeItems.length) return null;
+  return activeItems[0].id;
+}, [activeItems]);
+
+useEffect(() => {
+  const userId = user?.uid;
+  const listId = list?.id;
+  const firstItemId = activeItems[0]?.id;
+
+  if (!userId || !listId || !firstItemId) return;
+
+  const storageKey = `swipe_hint_shown_${userId}_${listId}`;
+
+  try {
+    const alreadyShown = localStorage.getItem(storageKey);
+
+    if (alreadyShown === "1") {
+      setShowInitialSwipeHint(false);
+      return;
+    }
+
+    // המתנה שהרשימה תסיים להיטען
+    const timer = window.setTimeout(() => {
+      setShowInitialSwipeHint(true);
+      localStorage.setItem(storageKey, "1");
+
+      const hideTimer = window.setTimeout(() => {
+        setShowInitialSwipeHint(false);
+      }, 1800);
+
+      return () => window.clearTimeout(hideTimer);
+    }, 800);
+
+    return () => window.clearTimeout(timer);
+  } catch {
+    setShowInitialSwipeHint(true);
+
+    const hideTimer = window.setTimeout(() => {
+      setShowInitialSwipeHint(false);
+    }, 1800);
+
+    return () => window.clearTimeout(hideTimer);
+  }
+}, [user?.uid, list?.id, activeItems[0]?.id]);
+
+
+useEffect(() => {
+  if (!showInitialSwipeHint) return;
+
+  const t1 = setTimeout(() => setHintPhase(1), 100);
+  const t2 = setTimeout(() => setHintPhase(0), 500);
+  const t3 = setTimeout(() => setHintPhase(2), 800);
+  const t4 = setTimeout(() => setHintPhase(0), 1200);
+
+  return () => {
+    clearTimeout(t1);
+    clearTimeout(t2);
+    clearTimeout(t3);
+    clearTimeout(t4);
+  };
+}, [showInitialSwipeHint]);
+
+
   const purchasedItems = useMemo(
     () => items.filter((i) => i.isPurchased).sort((a, b) => (b.purchasedAt || 0) - (a.purchasedAt || 0)),
     [items]
@@ -3127,6 +3195,7 @@ useEffect(() => {
   hiddenSuggestRef.current = new Set(loadHiddenSuggestions());
 }, []);
 
+
 const suggestionList = useMemo(() => {
   const hidden = new Set(loadHiddenSuggestions());
   hiddenSuggestRef.current = hidden;
@@ -3158,15 +3227,25 @@ const openSuggestions = () => {
 };
 
 const applySuggestion = async (s: SuggestView) => {
-  // If already in list: increment quantity instead of inserting duplicate
+  if (!user) {
+    await signInSmart();
+    return;
+  }
+  if (!list?.id) return;
+
+  const pickKey = s.key || normalizeItemName(s.name);
+
+  // אם כבר ברשימה - להגדיל כמות
   if (s.isInList && s.itemId) {
     const nextQty = (s.currentQty ?? 1) + 1;
     await updateQty(s.itemId, +1);
-    const pickKey = s.key || normalizeItemName(s.name);
+
     if (pickKey) {
       unhideSuggestionKey(pickKey);
       hiddenSuggestRef.current.delete(pickKey);
     }
+
+    recordHistory(s.name);
     setToast(t("כבר ברשימה - הגדלתי כמות ל-") + nextQty);
     setInputValue("");
     setActiveSuggestIndex(-1);
@@ -3175,7 +3254,49 @@ const applySuggestion = async (s: SuggestView) => {
     return;
   }
 
-  setInputValue(s.name);
+  // אם לא ברשימה - להוסיף ישר
+  const normalized = normalizeItemName(s.name);
+  const existing = items.find((it) => normalizeItemName(it.name) === normalized);
+
+  if (existing) {
+    await updateQty(existing.id, +1);
+
+    if (pickKey) {
+      unhideSuggestionKey(pickKey);
+      hiddenSuggestRef.current.delete(pickKey);
+    }
+
+    recordHistory(existing.name);
+    setToast(t("כבר ברשימה - הגדלתי כמות ל-") + ((existing.quantity ?? 1) + 1));
+    setInputValue("");
+    setActiveSuggestIndex(-1);
+    setIsSuggestOpen(false);
+    window.requestAnimationFrame(() => inputRef.current?.focus());
+    return;
+  }
+
+  const itemId = crypto.randomUUID();
+  const cleanName = stripWrappingBrackets(s.name.trim());
+
+  const newItem: ShoppingItem = {
+    id: itemId,
+    name: cleanName,
+    quantity: 1,
+    isPurchased: false,
+    isFavorite: false,
+    createdAt: Date.now(),
+    category: userCategoryMap[normalizeCategoryPreferenceKey(cleanName)] || detectCategory(cleanName),
+  };
+
+  await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+
+  if (pickKey) {
+    unhideSuggestionKey(pickKey);
+    hiddenSuggestRef.current.delete(pickKey);
+  }
+
+  recordHistory(cleanName);
+  setInputValue("");
   setActiveSuggestIndex(-1);
   setIsSuggestOpen(false);
   window.requestAnimationFrame(() => inputRef.current?.focus());
@@ -3917,6 +4038,7 @@ ${footer}`;
     if (Math.abs(dxRaw) < FAV_SWIPE_THRESHOLD_PX) return;
     if (Math.abs(dyRaw) > Math.abs(dxRaw) * 1.6) return;
 
+
     const fav = favorites.find((f) => f.id === id);
 
     if (dxRaw > 0) {
@@ -4316,7 +4438,7 @@ for (const p of parsed) {
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-    const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload));
+const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload, lang));
 if (parsed.length === 0) return [];
 
     const actions: VoiceUndoAction[] = [];
@@ -4975,7 +5097,7 @@ if (
   return;
 }
 
-setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined)));
+setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined, lang)));
 setVoiceUi("review");
 };
 
@@ -5819,62 +5941,57 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
                 <Plus className="w-6 h-6" />
               </button>
 
-              {isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
+{isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
   <div
-    className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden"
+    className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden max-h-72 overflow-y-auto overscroll-contain touch-pan-y"
     dir="rtl"
     onMouseDown={(e) => {
-      // Prevent input blur before click
-      e.preventDefault();
-    }}
-    onPointerDown={(e) => {
-      // Mobile/touch: prevent blur before selection
+      // שומר על הפוקוס באינפוט בדסקטופ, בלי לשבור גלילה בטלפון
       e.preventDefault();
     }}
   >
     {visibleSuggestionList.map((s, idx) => (
-    <div
-      key={s.key + "-" + idx}
-      className={
-        "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
-        (idx === activeSuggestIndex ? "bg-slate-100" : "")
-      }
-    >
-      <button
-        type="button"
-        className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}        onPointerDown={(e) => {
-          e.preventDefault();
-          applySuggestion(s);
-        }}
-        title="השלמה"
+      <div
+        key={s.key + "-" + idx}
+        className={
+          "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
+          (idx === activeSuggestIndex ? "bg-slate-100" : "")
+        }
       >
-        <span className="font-semibold text-slate-700">{s.name}</span>
-        {s.isInList ? (
-          <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
-            ברשימה{typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
-          </span>
-        ) : (
-          <span className="text-xs text-slate-400">Tab</span>
-        )}
-      </button>
-
-      {s.canHide ? (
         <button
           type="button"
-          className="px-3 text-slate-400 hover:text-slate-700"
-          onPointerDown={(e) => {
-            e.preventDefault();
-            e.stopPropagation();
-            hideSuggestion(s);
+          className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}
+          onClick={() => {
+            void applySuggestion(s);
           }}
-          title="הסר מההשלמות"
-          aria-label="הסר מההשלמות"
+          title="השלמה"
         >
-          ✕
+          <span className="font-semibold text-slate-700">{s.name}</span>
+          {s.isInList ? (
+            <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+              ברשימה{typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
+            </span>
+          ) : (
+            <span className="text-xs text-slate-400">Tab</span>
+          )}
         </button>
-      ) : null}
-    </div>
-  ))}
+
+        {s.canHide ? (
+          <button
+            type="button"
+            className="px-3 text-slate-400 hover:text-slate-700"
+            onClick={(e) => {
+              e.stopPropagation();
+              hideSuggestion(s);
+            }}
+            title="הסר מההשלמות"
+            aria-label="הסר מההשלמות"
+          >
+            ✕
+          </button>
+        ) : null}
+      </div>
+    ))}
   </div>
 ) : null}
             </form>
@@ -5910,11 +6027,20 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
       {categoryItems.map((item) => {
       const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
-            const revealDelete =
-      swipeUi.id === item.id && (isRTL ? swipeUi.dx > 0 : swipeUi.dx < 0);
 
-    const revealFavorite =
-      swipeUi.id === item.id && (isRTL ? swipeUi.dx < 0 : swipeUi.dx > 0);
+const isHintItem = showInitialSwipeHint && activeItems[0]?.id === item.id;
+const hintDx = isHintItem
+  ? hintPhase === 1
+    ? (isRTL ? 50 : -50)   // שמאלה → מחיקה
+    : hintPhase === 2
+      ? (isRTL ? -50 : 50) // ימינה → מועדפים
+      : 0
+  : 0;
+
+const effectiveDx = swipeUi.id === item.id ? swipeUi.dx : hintDx;
+
+const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
+const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
   
   return (
         <div
@@ -6010,7 +6136,7 @@ style={{ touchAction: "pan-y" }}
   <div
     className={`absolute top-0 bottom-0 bg-rose-50 ${isRTL ? "left-0" : "right-0"}`}
     style={{
-      width: revealDelete ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX) : 0,
+      width: revealDelete ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
       opacity: 0.9,
       zIndex: 0,
     }}
@@ -6018,7 +6144,7 @@ style={{ touchAction: "pan-y" }}
   <div
     className={`absolute top-0 bottom-0 bg-emerald-50 ${isRTL ? "right-0" : "left-0"}`}
     style={{
-      width: revealFavorite ? Math.min(Math.abs(swipeUi.dx), SWIPE_MAX_SHIFT_PX) : 0,
+    width: revealFavorite ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
       opacity: 0.9,
       zIndex: 0,
     }}
@@ -6035,12 +6161,12 @@ style={{ touchAction: "pan-y" }}
         zIndex: 2,
         opacity:
           revealDelete
-            ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+            ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
               ? 1
               : 0.65
             : 0,
         transform:
-          revealDelete && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+          revealDelete && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
             ? "scale(1.15)"
             : "scale(1)",
         transition: "transform 120ms ease, opacity 120ms ease",
@@ -6055,12 +6181,12 @@ style={{ touchAction: "pan-y" }}
         zIndex: 2,
         opacity:
           revealFavorite
-            ? Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+            ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
               ? 1
               : 0.65
             : 0,
         transform:
-          revealFavorite && Math.abs(swipeUi.dx) >= SWIPE_THRESHOLD_PX
+          revealFavorite && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
             ? "scale(1.15)"
             : "scale(1)",
         transition: "transform 120ms ease, opacity 120ms ease",
@@ -6084,10 +6210,10 @@ style={{ touchAction: "pan-y" }}
       }`}
       dir={isRTL ? "rtl" : "ltr"}           
           
-          style={{
-              transform: swipeUi.id === item.id ? `translateX(${swipeUi.dx}px)` : undefined,
-              transition: swipeUi.id === item.id ? "none" : "transform 120ms ease-out",
-            }}
+style={{
+  transform: `translateX(${effectiveDx}px)`,
+transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
+}}
           >
             <div
               className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate cursor-pointer px-3`}
