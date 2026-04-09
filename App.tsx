@@ -29,6 +29,7 @@ import {
   Languages,
   Shield,
   FileText,
+  Pencil,
 } from "lucide-react";
 
 // Local icon: list + plus (works even if lucide doesn't include ListPlus)
@@ -164,18 +165,74 @@ function normalizeCatalogTerm(s: string) {
   return normalizeItemName(String(s || "").replace(/[,\.\-_/]+/g, " ").trim());
 }
 
-function correctProductTermByCatalog(name: string, lang: AppLang): string {
+// ===== Alphabetical sort helpers =====
+const collatorByLang: Record<AppLang, Intl.Collator> = {
+  he: new Intl.Collator("he", { sensitivity: "base", numeric: true }),
+  en: new Intl.Collator("en", { sensitivity: "base", numeric: true }),
+  ru: new Intl.Collator("ru", { sensitivity: "base", numeric: true }),
+  ar: new Intl.Collator("ar", { sensitivity: "base", numeric: true }),
+};
+
+function compareNamesByLang(a: string, b: string, lang: AppLang) {
+  const collator = collatorByLang[lang] || collatorByLang.en;
+  return collator.compare(String(a || "").trim(), String(b || "").trim());
+}
+
+function getVoiceCandidateTerms(
+  lang: AppLang,
+  extraTerms: string[] = []
+): string[] {
+  const catalogTerms = getProductTermsByLang(lang);
+
+  const merged = [
+    ...extraTerms,
+    ...catalogTerms,
+  ]
+    .map((x) => String(x || "").trim())
+    .filter(Boolean);
+
+  const seen = new Set<string>();
+  const out: string[] = [];
+
+  for (const term of merged) {
+    const key = normalizeCatalogTerm(term);
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(term);
+  }
+
+  return out;
+}
+
+function correctVoiceItemName(
+  name: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): string {
   const raw = String(name || "").trim();
   if (!raw) return raw;
 
   const normalized = normalizeCatalogTerm(raw);
   if (!normalized) return raw;
 
-  const terms = getProductTermsByLang(lang);
+  const terms = getVoiceCandidateTerms(lang, extraTerms);
   if (!terms.length) return raw;
 
+  const rawWordCount = normalized.split(" ").filter(Boolean).length;
+
+  // אם המשתמש אמר ביטוי של כמה מילים - לא לקצר אותו למונח קצר מהקטלוג.
+  // רק אם יש התאמה מדויקת מלאה - נחזיר את מונח הקטלוג.
+  if (rawWordCount >= 2) {
+    const exactTerm = terms.find(
+      (term) => normalizeCatalogTerm(term) === normalized
+    );
+    return exactTerm || raw;
+  }
+
   let bestTerm = raw;
-  let bestScore = Infinity;
+  let bestDistance = Infinity;
+  let bestRatio = Infinity;
+  let foundStrongMatch = false;
 
   for (const term of terms) {
     const candidate = normalizeCatalogTerm(term);
@@ -183,27 +240,60 @@ function correctProductTermByCatalog(name: string, lang: AppLang): string {
 
     if (candidate === normalized) return term;
 
-    if (candidate.includes(normalized) || normalized.includes(candidate)) {
-      const diff = Math.abs(candidate.length - normalized.length);
-      if (diff < bestScore) {
-        bestScore = diff;
-        bestTerm = term;
-      }
-      continue;
-    }
+    const candidateWordCount = candidate.split(" ").filter(Boolean).length;
+    const candidateIncludesRaw = candidate.includes(normalized);
+    const rawIncludesCandidate = normalized.includes(candidate);
+
+    const isUnsafeShortening =
+      rawIncludesCandidate &&
+      rawWordCount > candidateWordCount &&
+      normalized !== candidate;
+
+    const safeIncludesMatch =
+      candidateIncludesRaw || (rawIncludesCandidate && !isUnsafeShortening);
 
     const dist = levenshtein(normalized, candidate);
     const maxLen = Math.max(normalized.length, candidate.length);
     const ratio = maxLen ? dist / maxLen : 1;
 
-    if (ratio <= 0.25 && dist < bestScore) {
-      bestScore = dist;
-      bestTerm = term;
+    if (safeIncludesMatch) {
+      const diff = Math.abs(candidate.length - normalized.length);
+
+      if (
+        diff < bestDistance ||
+        (diff === bestDistance && ratio < bestRatio)
+      ) {
+        bestDistance = diff;
+        bestRatio = ratio;
+        bestTerm = term;
+      }
+
+      if (normalized.length >= 3) {
+        foundStrongMatch = true;
+      }
+
+      continue;
+    }
+
+    if (
+      ratio <= 0.18 ||
+      (normalized.length >= 8 && ratio <= 0.22)
+    ) {
+      if (
+        dist < bestDistance ||
+        (dist === bestDistance && ratio < bestRatio)
+      ) {
+        bestDistance = dist;
+        bestRatio = ratio;
+        bestTerm = term;
+        foundStrongMatch = true;
+      }
     }
   }
 
-  return bestTerm;
+  return foundStrongMatch ? bestTerm : raw;
 }
+
 
 function getPublicAppBaseUrl() {
   const envUrl = String((import.meta as any)?.env?.VITE_PUBLIC_APP_URL || "").trim();
@@ -1127,7 +1217,11 @@ function isClearListCommand(raw: string, lang?: AppLang) {
   return byLang("he") || byLang("en") || byLang("ru") || byLang("ar");
 }
 
-function formatDraftForReview(raw: string, lang: AppLang): string {
+function formatDraftForReview(
+  raw: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): string {
 const s = collapseExactRepeatedPhrase((raw || "").trim());
   if (!s) return raw;
 
@@ -1137,7 +1231,7 @@ const s = collapseExactRepeatedPhrase((raw || "").trim());
   // If user already has punctuation/new lines, keep it as-is (manual edit mode).
   if (s.includes(",") || s.includes("\n")) return raw;
 
-const items = parseItemsFromText(s, lang);
+const items = parseItemsFromText(s, lang, extraTerms);
 
 // Remove duplicate items by name (preview only)
 const seen = new Set<string>();
@@ -1164,8 +1258,14 @@ return parts.join(", ");
  * - If qty token appears and there is a NEXT word, treat it as prefix for the NEXT item (default),
  *   not suffix for previous item. Suffix is only when qty is LAST token.
  */
-  function parseSegmentTokensToItems(segRaw: string, lang: AppLang): Array<{ name: string; qty: number }> {  const seg = normalize(segRaw);
+  function parseSegmentTokensToItems(
+  segRaw: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): Array<{ name: string; qty: number }> {  const seg = normalize(segRaw);
   if (!seg) return [];
+
+  
 
   let tokens = seg.split(" ").filter(Boolean);
   tokens = mergeCompounds(tokens);
@@ -1180,7 +1280,7 @@ return parts.join(", ");
     let name = nameParts.join(" ").trim();
     if (name) {
       name = applyEnglishAlias(name);
-      name = correctProductTermByCatalog(name, lang);
+      name = correctVoiceItemName(name, lang, extraTerms);
       if (name && !shouldIgnoreStandaloneVoiceItem(name)) {
         const q = Math.max(1, Number(qtyOverride ?? pendingQty ?? 1));
         out.push({ name, qty: q });
@@ -1304,8 +1404,12 @@ return parts.join(", ");
  * Parse a phrase into multiple items.
  * Supports commas / וגם / ואז / אחר כך, and also no commas.
  */
-function parseSingleItemFromSegment(segment: string, lang: AppLang): ItemParse | null {
-const raw = collapseExactRepeatedPhrase((segment || "").trim());
+function parseSingleItemFromSegment(
+  segment: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): ItemParse | null {
+  const raw = collapseExactRepeatedPhrase((segment || "").trim());
   if (!raw) return null;
   if (isClearListCommand(raw)) return null;
 
@@ -1315,13 +1419,11 @@ const raw = collapseExactRepeatedPhrase((segment || "").trim());
 
   let qty = 1;
 
-  // Quantity at the beginning: "2 milk"
   if (tokens.length >= 2 && isBoundaryQtyToken(tokens[0])) {
     qty = qtyFromBoundaryToken(tokens[0]);
     tokens = tokens.slice(1);
   }
 
-  // Quantity at the end: "milk 2"
   if (tokens.length >= 2 && isBoundaryQtyToken(tokens[tokens.length - 1])) {
     const tailQty = qtyFromBoundaryToken(tokens[tokens.length - 1]);
     if (qty === 1) qty = tailQty;
@@ -1332,7 +1434,7 @@ const raw = collapseExactRepeatedPhrase((segment || "").trim());
   if (!name) return null;
 
   name = applyEnglishAlias(name);
-  name = correctProductTermByCatalog(name, lang);
+  name = correctVoiceItemName(name, lang, extraTerms);
 
   if (!name) return null;
   if (shouldIgnoreStandaloneVoiceItem(name)) return null;
@@ -1428,7 +1530,11 @@ function segmentVoiceTextKeepingLinking(rawNorm: string): string[] {
   return segments;
 }
 
-function parseItemsFromText(raw: string, lang: AppLang): ItemParse[] {
+function parseItemsFromText(
+  raw: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): ItemParse[] {
     const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
   if (isClearListCommand(collapsedRaw)) return [];
 
@@ -1450,7 +1556,7 @@ function parseItemsFromText(raw: string, lang: AppLang): ItemParse[] {
 
   const out: ItemParse[] = [];
   for (const seg of segments) {
-  const parsed = parseSegmentTokensToItems(seg, lang);
+  const parsed = parseSegmentTokensToItems(seg, lang, extraTerms);
   for (const p of parsed) out.push(p);
   }
   return out;
@@ -1505,16 +1611,17 @@ function removeStopWords(text: string, lang: string) {
 }
 
 
-function parseItemsForExecution(raw: string, lang: AppLang): ItemParse[] {
-const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
+function parseItemsForExecution(
+  raw: string,
+  lang: AppLang,
+  extraTerms: string[] = []
+): ItemParse[] {
+  const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
   if (isClearListCommand(collapsedRaw)) return [];
 
   const source = normalizeVoiceText(collapsedRaw);
   if (!source) return [];
 
-  // In the review window, only commas are intentional separators.
-  // If the user deletes a comma between words, those words stay together
-  // and are inserted as one item.
   if (/,/.test(source)) {
     const segments = source
       .replace(/[，،]/g, ",")
@@ -1524,13 +1631,13 @@ const collapsedRaw = collapseExactRepeatedPhrase(raw || "");
 
     const out: ItemParse[] = [];
     for (const seg of segments) {
-const parsed = parseSingleItemFromSegment(seg, lang);
+      const parsed = parseSingleItemFromSegment(seg, lang, extraTerms);
       if (parsed) out.push(parsed);
     }
     return out;
   }
 
-const single = parseSingleItemFromSegment(source, lang);
+  const single = parseSingleItemFromSegment(source, lang, extraTerms);
   return single ? [single] : [];
 }
 
@@ -1560,6 +1667,7 @@ function normalizeItemName(s: string) {
     .replace(/[׳’]/g, "'")
     .toLowerCase();
 }
+
 
 const HISTORY_STORAGE_KEY = "shopping_list_item_history_v1";
 
@@ -1659,6 +1767,31 @@ function saveItemHistory(map: Record<string, ItemHistoryEntry>) {
   }
 }
 
+function getUserVoiceExtraTerms(opts: {
+  history: Record<string, ItemHistoryEntry>;
+  favorites: FavoriteDoc[];
+  items: ShoppingItem[];
+}): string[] {
+  const out: string[] = [];
+
+  for (const entry of Object.values(opts.history || {})) {
+    const name = String(entry?.name || "").trim();
+    if (name) out.push(name);
+  }
+
+  for (const fav of opts.favorites || []) {
+    const name = String(fav?.name || "").trim();
+    if (name) out.push(name);
+  }
+
+  for (const item of opts.items || []) {
+    const name = String(item?.name || "").trim();
+    if (name) out.push(name);
+  }
+
+  return out;
+}
+
 function getAutocompleteSuggestions(opts: {
   query: string;
   favorites: string[];
@@ -1711,10 +1844,9 @@ function getAutocompleteSuggestions(opts: {
   }
 
   const score = (c: SuggestCandidate) => {
-    const nameKey = c.key;
-    const starts = nameKey.startsWith(q);
-    const contains = !starts && nameKey.includes(q);
-    if (!starts && !contains) return -Infinity;
+  const nameKey = c.key;
+  const starts = nameKey.startsWith(q);
+  if (!starts) return -Infinity;
 
     let s = starts ? 120 : 70;
 
@@ -1753,6 +1885,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
+const APP_VERSION = "1.0.6";
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -1846,21 +1979,35 @@ const detectCategory = (rawName: string): CategoryKey => {
 const normalizeCategoryPreferenceKey = (rawName: string) =>
   normalizeItemName(stripWrappingBrackets(String(rawName || "")));
 
-type UserCategoryMap = Partial<Record<string, CategoryKey>>;
+type UserCategoryMap = Partial<Record<string, string>>;
 
 const resolveItemCategory = (
   item: ShoppingItem,
   userCategoryMap: UserCategoryMap
-): CategoryKey => {
-  const explicit = (item as any)?.category as CategoryKey | undefined;
-  if (explicit && CATEGORY_ORDER.includes(explicit)) return explicit;
+): string => {
+  const explicit = (item as any)?.category as string | undefined;
+  if (explicit && String(explicit).trim()) return explicit;
 
   const prefKey = normalizeCategoryPreferenceKey(item.name);
   const preferred = prefKey ? userCategoryMap[prefKey] : undefined;
-  if (preferred && CATEGORY_ORDER.includes(preferred)) return preferred;
+  if (preferred && String(preferred).trim()) return preferred;
 
   return detectCategory(item.name);
 };
+
+const getQtyStepForItem = (
+  item: ShoppingItem,
+  userCategoryMap: UserCategoryMap
+): number => {
+  const category = resolveItemCategory(item, userCategoryMap);
+  return category === "meat_fish" ? 0.5 : 1;
+};
+
+const formatItemQuantity = (qty: number): string => {
+  const rounded = Math.round(qty * 10) / 10;
+  return Number.isInteger(rounded) ? String(rounded) : rounded.toFixed(1);
+};
+
 
 const detectDeviceLang = (): AppLang => {
   try {
@@ -1902,7 +2049,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "שפה": "שפה",
     "Privacy Policy": "מדיניות פרטיות",
     "Terms & Conditions": "תנאים והגבלות",
-    "יציאה": "יציאה",
+    "יציאה": "התנתק",
     "נקה רשימה": "נקה רשימה",
     "מועדפים": "מועדפים",
     "פריטים שחוזרים לסל": "פריטים שחוזרים לסל",
@@ -1954,6 +2101,16 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "הקטגוריה עודכנה": "הקטגוריה עודכנה",
       "הפריט כבר קיים ברשימה": "הפריט כבר קיים ברשימה",
       "כבר ברשימה - הגדלתי כמות ל-": "כבר ברשימה - הגדלתי כמות ל-",
+      "ברשימה": "ברשימה",
+      "➕ הוסף קטגוריה": "➕ הוסף קטגוריה",
+      "שם קטגוריה": "שם קטגוריה",
+      "ערוך קטגוריה": "ערוך קטגוריה",
+      "מחק קטגוריה": "מחק קטגוריה",
+      "הקטגוריה נמחקה": "הקטגוריה נמחקה",
+      "שם קטגוריה כבר קיים": "שם קטגוריה כבר קיים",
+      "מחק": "מחק",
+      "האם למחוק את הקטגוריה": 'האם למחוק את הקטגוריה {name}',
+      "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -1974,7 +2131,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "שפה": "Language",
     "Privacy Policy": "Privacy Policy",
     "Terms & Conditions": "Terms & Conditions",
-    "יציאה": "Sign out",
+    "יציאה": "Log out",
     "נקה רשימה": "Clear list",
     "מועדפים": "Favorites",
     "פריטים שחוזרים לסל": "Items that return to the cart",
@@ -2042,6 +2199,16 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "נסגר": "Close",
     "הפריט כבר קיים ברשימה": "Item already exists in the list",
     "כבר ברשימה - הגדלתי כמות ל-": "Already in the list - increased quantity to ",
+    "ברשימה": "In list",
+    "➕ הוסף קטגוריה": "➕ Add Category",
+    "שם קטגוריה": "Category name",
+    "ערוך קטגוריה": "Edit category",
+    "מחק קטגוריה": "Delete category",
+    "הקטגוריה נמחקה": "Category deleted",
+    "שם קטגוריה כבר קיים": "Category name already exists",
+    "מחק": "Delete",
+    "האם למחוק את הקטגוריה": 'Delete this category {name}',
+    "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "This category will be removed and all its items will move to Other",
 },
 ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -2131,6 +2298,16 @@ ru: {
     "הקטגוריה עודכנה": "Категория обновлена",
     "הפריט כבר קיים ברשימה": "Товар уже есть в списке",
     "כבר ברשימה - הגדלתי כמות ל-": "Уже в списке - количество увеличено до ",
+    "ברשימה": "В списке",
+    "➕ הוסף קטגוריה": "➕ Добавить категорию",
+    "שם קטגוריה": "Название категории",
+    "ערוך קטגוריה": "Изменить категорию",
+    "מחק קטגוריה": "Удалить категорию",
+    "הקטגוריה נמחקה": "Категория удалена",
+    "שם קטגוריה כבר קיים": "Название категории уже существует",
+    "מחק": "Удалить",
+    "האם למחוק את הקטגוריה": 'Удалить категорию {name}',
+    "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "Эта категория будет удалена, а все её товары будут перемещены в категорию Другое",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2219,6 +2396,16 @@ ru: {
      "הקטגוריה עודכנה": "تم تحديث الفئة",
     "הפריט כבר קיים ברשימה": "العنصر موجود بالفعل في القائمة",
     "כבר ברשימה - הגדלתי כמות ל-": "موجود بالفعل - تم زيادة الكمية إلى ",
+    "ברשימה": "في القائمة",
+    "➕ הוסף קטגוריה": "➕ إضافة فئة",
+    "שם קטגוריה": "اسم الفئة",
+    "ערוך קטגוריה": "تعديل الفئة",
+    "מחק קטגוריה": "حذف الفئة",
+    "הקטגוריה נמחקה": "تم حذف الفئة",
+    "שם קטגוריה כבר קיים": "اسم الفئة موجود بالفعل",
+    "מחק": "حذف",
+    "האם למחוק את הקטגוריה": 'هل تريد حذف الفئة {name}',
+    "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "سيتم حذف هذه الفئة وستُنقل جميع العناصر فيها إلى فئة أخرى",
   },
 };
 
@@ -2340,9 +2527,20 @@ const blurCloseTimerRef = useRef<number | null>(null);
 const [userCategoryMap, setUserCategoryMap] = useState<UserCategoryMap>({});
 const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
-const [categorySheetValue, setCategorySheetValue] = useState<CategoryKey>("other");
+const [categorySheetValue, setCategorySheetValue] = useState<string>("other");
 const [categorySheetPos, setCategorySheetPos] = useState<{ x: number; y: number } | null>(null);
 const [rememberCategoryForUser, setRememberCategoryForUser] = useState(false);
+const [customCategoryInput, setCustomCategoryInput] = useState("");
+const [isAddingCategory, setIsAddingCategory] = useState(false);
+const [userCustomCategories, setUserCustomCategories] = useState<string[]>([]);
+const allCategoryOptions = useMemo(
+  () => [...CATEGORY_ORDER, ...userCustomCategories],
+  [userCustomCategories]
+);
+
+const [editingCustomCategory, setEditingCustomCategory] = useState<string | null>(null);
+const [editingCustomCategoryValue, setEditingCustomCategoryValue] = useState("");
+const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<string | null>(null);
 
 const longPressTimerRef = useRef<number | null>(null);
 const longPressTriggeredRef = useRef(false);
@@ -2357,6 +2555,14 @@ const POINTER_LONG_PRESS_MOVE_TOLERANCE = 8;
 useEffect(() => {
   historyRef.current = loadItemHistory();
 }, []);
+
+const voiceExtraTerms = useMemo(() => {
+  return getUserVoiceExtraTerms({
+    history: historyRef.current,
+    favorites,
+    items,
+  });
+}, [favorites, items]);
 
 useEffect(() => {
   if (pendingEnterIdsRef.current.size === 0) return;
@@ -2409,6 +2615,158 @@ const closeCategorySheet = () => {
   setCategorySheetItem(null);
   setCategorySheetPos(null);
   setRememberCategoryForUser(false);
+  setCustomCategoryInput("");
+  setIsAddingCategory(false);
+};
+
+const saveCustomCategory = async (name: string) => {
+  const trimmed = String(name || "").trim();
+  if (!trimmed || !user?.uid) return;
+
+  const exists = userCustomCategories.some(
+    (c) => c.trim().toLowerCase() === trimmed.toLowerCase()
+  );
+  if (exists) return;
+
+  const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+
+  await setDoc(
+    prefRef,
+    {
+      customCategories: arrayUnion(trimmed),
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+};
+
+const renameCustomCategory = async (oldName: string, newName: string) => {
+  if (!user?.uid || !list?.id) return;
+
+  const oldTrimmed = String(oldName || "").trim();
+  const newTrimmed = String(newName || "").trim();
+
+  if (!oldTrimmed || !newTrimmed) return;
+
+  if (oldTrimmed.toLowerCase() === newTrimmed.toLowerCase()) {
+    setEditingCustomCategory(null);
+    setEditingCustomCategoryValue("");
+    return;
+  }
+
+  const exists = userCustomCategories.some(
+    (c) => c.trim().toLowerCase() === newTrimmed.toLowerCase()
+  );
+  if (exists) {
+    setToast(t("שם קטגוריה כבר קיים"));
+    return;
+  }
+
+  const nextCategories = userCustomCategories.map((c) =>
+    c.trim().toLowerCase() === oldTrimmed.toLowerCase() ? newTrimmed : c
+  );
+
+  const nextMap = Object.fromEntries(
+    Object.entries(userCategoryMap).map(([key, value]) => [
+      key,
+      value === oldTrimmed ? newTrimmed : value,
+    ])
+  );
+
+  const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+
+  await setDoc(
+    prefRef,
+    {
+      customCategories: nextCategories,
+      itemCategoryMap: nextMap,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+
+  const itemsToUpdate = activeItems.filter(
+    (item) => String((item as any)?.category || "").trim() === oldTrimmed
+  );
+
+  if (itemsToUpdate.length > 0) {
+    const batch = writeBatch(db);
+
+    for (const item of itemsToUpdate) {
+      const itemRef = doc(db, "lists", list.id, "items", item.id);
+      batch.update(itemRef, { category: newTrimmed });
+    }
+
+    await batch.commit();
+  }
+
+  if (categorySheetValue === oldTrimmed) {
+    setCategorySheetValue(newTrimmed);
+  }
+
+  setEditingCustomCategory(null);
+  setEditingCustomCategoryValue("");
+  setToast(t("הקטגוריה עודכנה"));
+};
+
+const deleteCustomCategory = async (name: string) => {
+  if (!user?.uid || !list?.id) return;
+
+  const trimmed = String(name || "").trim();
+  if (!trimmed) return;
+
+  const nextCategories = userCustomCategories.filter(
+    (c) => c.trim().toLowerCase() !== trimmed.toLowerCase()
+  );
+
+  const nextMap = Object.fromEntries(
+    Object.entries(userCategoryMap).map(([key, value]) => [
+      key,
+      value === trimmed ? "other" : value,
+    ])
+  );
+
+  const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+
+  await setDoc(
+    prefRef,
+    {
+      customCategories: nextCategories,
+      itemCategoryMap: nextMap,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+
+  const itemsToUpdate = activeItems.filter(
+    (item) => String((item as any)?.category || "").trim() === trimmed
+  );
+
+  if (itemsToUpdate.length > 0) {
+    const batch = writeBatch(db);
+
+    for (const item of itemsToUpdate) {
+      const itemRef = doc(db, "lists", list.id, "items", item.id);
+      batch.update(itemRef, { category: "other" });
+    }
+
+    await batch.commit();
+  }
+
+  if (categorySheetValue === trimmed) {
+    setCategorySheetValue("other");
+  }
+
+  if (editingCustomCategory === trimmed) {
+    setEditingCustomCategory(null);
+    setEditingCustomCategoryValue("");
+  }
+
+  if (categorySheetOpen) {
+    closeCategorySheet();
+  }
+
+  setToast(t("הקטגוריה נמחקה"));
 };
 
 const saveItemCategory = async () => {
@@ -2472,6 +2830,7 @@ const clearItemLongPress = () => {
 useEffect(() => {
   if (!user?.uid) {
     setUserCategoryMap({});
+    setUserCustomCategories([]);
     return;
   }
 
@@ -2480,11 +2839,18 @@ useEffect(() => {
   const unsub = onSnapshot(prefRef, (snap) => {
     const data = snap.data() as any;
     const map = data?.itemCategoryMap;
+
     if (map && typeof map === "object") {
       setUserCategoryMap(map as UserCategoryMap);
     } else {
       setUserCategoryMap({});
     }
+
+    const custom = Array.isArray(data?.customCategories)
+      ? data.customCategories.filter((x: unknown) => typeof x === "string")
+      : [];
+
+    setUserCustomCategories(custom as string[]);
   });
 
   return () => unsub();
@@ -3069,18 +3435,22 @@ favDocs.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdA
     return s;
   }, [favorites]);
 
-  const favoritesUnique = useMemo(() => {
-    const seen = new Set<string>();
-    const out: FavoriteDoc[] = [];
-    for (const f of favorites) {
-      const key = normalize(f.name);
-      if (!key) continue;
-      if (seen.has(key)) continue;
-      seen.add(key);
-      out.push(f);
-    }
-    return out;
-  }, [favorites]);
+ const favoritesUnique = useMemo(() => {
+  const seen = new Set<string>();
+  const out: FavoriteDoc[] = [];
+
+  for (const f of favorites) {
+    const key = normalize(f.name);
+    if (!key) continue;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(f);
+  }
+
+  return out.sort((a, b) =>
+  compareNamesByLang(a?.name || "", b?.name || "", lang)
+);
+}, [favorites, lang]);
 
 const activeItems = useMemo(
     () => items.filter((i) => !i.isPurchased).sort((a, b) => b.createdAt - a.createdAt),
@@ -3156,22 +3526,30 @@ useEffect(() => {
     [items]
   );
 
-  const groupedActiveItems = useMemo(() => {
-  const groups: Record<CategoryKey, ShoppingItem[]> = {
-    vegetables_fruits: [],
-    dairy_eggs: [],
-    meat_fish: [],
-    bakery_bread: [],
-    other: [],
-  };
+const groupedActiveItems = useMemo(() => {
+  const groups: Record<string, ShoppingItem[]> = {};
+
+  for (const key of CATEGORY_ORDER) {
+    groups[key] = [];
+  }
+
+  for (const key of userCustomCategories) {
+    if (!groups[key]) groups[key] = [];
+  }
 
   for (const item of activeItems) {
-    const category = resolveItemCategory(item, userCategoryMap);
+    const category = resolveItemCategory(item, userCategoryMap) || "other";
+
+    if (!groups[category]) {
+      groups[category] = [];
+    }
+
     groups[category].push(item);
   }
 
- return groups;
-}, [activeItems, userCategoryMap]);
+  return groups;
+}, [activeItems, userCategoryMap, userCustomCategories]);
+
 
 const recordHistory = (rawName: string) => {
   const name = rawName.trim();
@@ -3235,24 +3613,20 @@ const applySuggestion = async (s: SuggestView) => {
 
   const pickKey = s.key || normalizeItemName(s.name);
 
-  // אם כבר ברשימה - להגדיל כמות
+  // אם כבר ברשימה - תציג שקיים
   if (s.isInList && s.itemId) {
-    const nextQty = (s.currentQty ?? 1) + 1;
-    await updateQty(s.itemId, +1);
-
-    if (pickKey) {
-      unhideSuggestionKey(pickKey);
-      hiddenSuggestRef.current.delete(pickKey);
-    }
-
-    recordHistory(s.name);
-    setToast(t("כבר ברשימה - הגדלתי כמות ל-") + nextQty);
-    setInputValue("");
-    setActiveSuggestIndex(-1);
-    setIsSuggestOpen(false);
-    window.requestAnimationFrame(() => inputRef.current?.focus());
-    return;
+  const pickKey = s.key || normalizeItemName(s.name);
+  if (pickKey) {
+    unhideSuggestionKey(pickKey);
+    hiddenSuggestRef.current.delete(pickKey);
   }
+
+  setInputValue("");
+  setActiveSuggestIndex(-1);
+  setIsSuggestOpen(false);
+  window.requestAnimationFrame(() => inputRef.current?.focus());
+  return;
+}
 
   // אם לא ברשימה - להוסיף ישר
   const normalized = normalizeItemName(s.name);
@@ -3439,25 +3813,32 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
   };
 
   const updateQty = async (id: string, delta: number) => {
-    if (!list?.id) return;
+  if (!list?.id) return;
 
-    // For positive deltas (the common case), use an atomic Firestore increment to avoid stale-state bugs
-    // when the user adds the same item multiple times quickly.
-    if (delta > 0) {
-      void updateDoc(doc(db, "lists", list.id, "items", id), {
-        quantity: increment(delta),
-      }).catch((err) => console.error("updateDoc failed", err));
-      return;
-    }
+  const item = items.find((i) => i.id === id);
+  if (!item) return;
 
-    // For negative deltas we clamp locally to keep quantity >= 1.
-    const item = items.find((i) => i.id === id);
-    if (!item) return;
+  const step = getQtyStepForItem(item, userCategoryMap);
 
+  // Preserve atomic increment logic for positive updates
+  if (delta > 0) {
     void updateDoc(doc(db, "lists", list.id, "items", id), {
-      quantity: Math.max(1, item.quantity + delta),
+      quantity: increment(step),
     }).catch((err) => console.error("updateDoc failed", err));
-  };
+    return;
+  }
+
+  // Preserve local clamp logic for negative updates
+  const minQty = step === 0.5 ? 0.5 : 1;
+  const nextQty = Math.max(
+    minQty,
+    Math.round((item.quantity - step) * 10) / 10
+  );
+
+  void updateDoc(doc(db, "lists", list.id, "items", id), {
+    quantity: nextQty,
+  }).catch((err) => console.error("updateDoc failed", err));
+};
 
   const deleteItem = async (id: string) => {
     if (!list?.id) return;
@@ -3716,7 +4097,8 @@ const openNativeCalendar = async () => {
   const itemsBlock = activeItemsForCalendar.length
   ? activeItemsForCalendar
       .map((i) => {
-        if ((i.quantity || 1) <= 1) return i.name;
+        //if ((i.quantity || 1) <= 1) return i.name;
+        if ((i.quantity || 1) === 1) return i.name; 
 
         if (calendarLang === "en" || calendarLang === "ru") {
           return `${i.name} X ${i.quantity}`;
@@ -3860,13 +4242,15 @@ const lines =
   active.length > 0
     ? active
         .map((i) => {
-          if ((i.quantity || 1) <= 1) return `${RLE}${i.name}${PDF}`;
+          const qtyText = formatItemQuantity(i.quantity || 1);
+
+          if ((i.quantity || 1) === 1) return `${RLE}${i.name}${PDF}`;
 
           if (shareLang === "en" || shareLang === "ru") {
-            return `${RLE}${LRI}${i.quantity}${PDI} ${i.name} X${PDF}`;
+            return `${RLE}${LRI}${qtyText}${PDI} ${i.name} X${PDF}`;
           }
 
-          return `${RLE}${i.name} X ${LRI}${i.quantity}${PDI}${PDF}`;
+          return `${RLE}${i.name} X ${LRI}${qtyText}${PDI}${PDF}`;
         })
         .join("\n")
     : `${RLE}(${emptyByLang[shareLang] || emptyByLang.he})${PDF}`;
@@ -4160,8 +4544,9 @@ ${footer}`;
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload, lang));
-    if (parsed.length === 0) return;
+const parsed = collapseParsedItemsForExecution(
+  parseItemsForExecution(payload, lang, voiceExtraTerms)
+);
 
 for (const p of parsed) {
   await addOrSetQuantity(p.name, p.qty);
@@ -4438,8 +4823,9 @@ for (const p of parsed) {
     const addPrefix = text.match(/^(הוסף|תוסיף|תוסיפי|הוספה)(?:\s+פריט)?\s+(.+)$/);
     const payload = addPrefix ? addPrefix[2] : text;
 
-const parsed = collapseParsedItemsForExecution(parseItemsForExecution(payload, lang));
-if (parsed.length === 0) return [];
+const parsed = collapseParsedItemsForExecution(
+  parseItemsForExecution(payload, lang, voiceExtraTerms)
+);
 
     const actions: VoiceUndoAction[] = [];
 
@@ -4588,7 +4974,9 @@ if (isClearListCommand(combined, lang)) {
   return;
 }
 
-setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined, lang)));
+setVoiceDraft(
+  cleanVoiceReviewText(formatDraftForReview(combined, lang, voiceExtraTerms))
+);
 setVoiceUi("review");
 nativeFinalizeRef.current = false;
 };
@@ -5097,7 +5485,9 @@ if (
   return;
 }
 
-setVoiceDraft(cleanVoiceReviewText(formatDraftForReview(combined, lang)));
+setVoiceDraft(
+  cleanVoiceReviewText(formatDraftForReview(combined, lang, voiceExtraTerms))
+);
 setVoiceUi("review");
 };
 
@@ -5846,6 +6236,50 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
   ) : null}
 </header>
 
+{deleteCategoryConfirm ? createPortal(
+  (
+    <div className="fixed inset-0 z-[140] flex items-center justify-center bg-black/40 px-4">
+      <div className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-2xl border border-slate-200">
+        <div className={`text-lg font-black text-slate-800 ${isRTL ? "text-right" : "text-left"}`}>
+          {t("מחק קטגוריה")}
+        </div>
+
+        <div className={`mt-3 text-sm font-bold text-slate-700 ${isRTL ? "text-right" : "text-left"}`}>
+        {t("האם למחוק את הקטגוריה").replace("{name}", deleteCategoryConfirm || "")}
+        </div>
+
+        <div className={`mt-2 text-sm text-slate-500 leading-6 ${isRTL ? "text-right" : "text-left"}`}>
+          {t("קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר")}
+        </div>
+
+        <div className={`mt-5 flex gap-3 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+          <button
+            type="button"
+            onClick={() => setDeleteCategoryConfirm(null)}
+            className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+          >
+            {t("ביטול")}
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              const categoryToDelete = deleteCategoryConfirm;
+              setDeleteCategoryConfirm(null);
+              if (!categoryToDelete) return;
+              await deleteCustomCategory(categoryToDelete);
+            }}
+            className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white"
+          >
+            {t("מחק")}
+          </button>
+        </div>
+      </div>
+    </div>
+  ),
+  document.body
+) : null}
+
         {/* Voice hint */}
       <div className="px-5 pt-3">
         <div className={`bg-white border border-slate-100 rounded-2xl px-4 py-2 shadow-sm ${isRTL ? "text-right" : "text-left"}`} dir={isRTL ? "rtl" : "ltr"}>
@@ -5929,13 +6363,19 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
                   setActiveSuggestIndex(-1);
                 }}
                 placeholder={t("מה להוסיף לרשימה?")}
-                className={`w-full p-4 pr-12 pl-14 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white ${isRTL ? "text-right" : "text-left"}`}
-                dir={isRTL ? "rtl" : "ltr"}
+className={`w-full py-4 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white ${
+  isRTL
+    ? "pr-[20px] pl-14 text-right placeholder:text-right"
+    : "pl-[20px] pr-14 text-left placeholder:text-left"
+}`}
+dir={isRTL ? "rtl" : "ltr"}
               />
 
               <button
                 type="submit"
-                className="absolute left-2.5 top-2.5 bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all"
+className={`absolute top-2.5 ${
+  isRTL ? "left-2.5" : "right-2.5"
+} bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all`}
                 title="הוסף"
               >
                 <Plus className="w-6 h-6" />
@@ -5944,7 +6384,8 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 {isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
   <div
     className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden max-h-72 overflow-y-auto overscroll-contain touch-pan-y"
-    dir="rtl"
+  dir={isRTL ? "rtl" : "ltr"}
+
     onMouseDown={(e) => {
       // שומר על הפוקוס באינפוט בדסקטופ, בלי לשבור גלילה בטלפון
       e.preventDefault();
@@ -5953,28 +6394,28 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
     {visibleSuggestionList.map((s, idx) => (
       <div
         key={s.key + "-" + idx}
-        className={
-          "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
-          (idx === activeSuggestIndex ? "bg-slate-100" : "")
-        }
+       className={
+  "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
+  (idx === activeSuggestIndex ? "bg-slate-100" : "")
+}
       >
         <button
-          type="button"
-          className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}
-          onClick={() => {
-            void applySuggestion(s);
-          }}
-          title="השלמה"
-        >
-          <span className="font-semibold text-slate-700">{s.name}</span>
-          {s.isInList ? (
-            <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
-              ברשימה{typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
-            </span>
-          ) : (
-            <span className="text-xs text-slate-400">Tab</span>
-          )}
-        </button>
+  type="button"
+className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}
+  onClick={() => {
+    void applySuggestion(s);
+  }}
+  title="השלמה"
+>
+  <span className="font-semibold text-slate-700">{s.name}</span>
+
+  {s.isInList ? (
+  <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+    {translate(lang, "ברשימה")}
+    {typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
+  </span>
+) : null}
+</button>
 
         {s.canHide ? (
           <button
@@ -6012,18 +6453,18 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
               </div>
             ) : (
               <div className="space-y-4">
-                <div className="space-y-3">
-                  {CATEGORY_ORDER.map((categoryKey) => {
-  const categoryItems = groupedActiveItems[categoryKey];
-  if (!categoryItems?.length) return null;
+  <div className="space-y-3">
+    {allCategoryOptions.map((categoryKey) => {
+      const categoryItems = groupedActiveItems[categoryKey];
+      if (!categoryItems?.length) return null;
 
-  return (
-    <div key={categoryKey} className="space-y-3">
-      <div className="px-1 pt-2">
-        <h3 className={`text-sm font-black text-slate-400 ${isRTL ? "text-right" : "text-left"}`}>
-          {categoryLabelByLang[lang]?.[categoryKey] || categoryLabelByLang.he[categoryKey]}
-        </h3>
-      </div>
+      return (
+        <div key={categoryKey} className="space-y-3">
+          <div className="px-1 pt-2">
+            <h3 className={`text-sm font-black text-slate-400 ${isRTL ? "text-right" : "text-left"}`}>
+              {categoryLabelByLang[lang]?.[categoryKey as CategoryKey] || categoryLabelByLang.he[categoryKey as CategoryKey] || categoryKey}
+            </h3>
+          </div>
 
       {categoryItems.map((item) => {
       const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
@@ -6252,7 +6693,7 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
                 <Minus className="w-3 h-3" />
               </button>
 
-              <span className="min-w-[1.5rem] text-center font-black text-slate-700">{item.quantity}</span>
+              <span className="min-w-[2rem]text-center font-black text-slate-700">{formatItemQuantity(item.quantity)}</span>
 
               <button
                 disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
@@ -6267,47 +6708,172 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
           </div>
             {isCategoryOpen ? (
           <div
-            className="border-t-2 border-indigo-200 px-4 pb-4 pt-3 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200"
-            data-noswipe="true"
-            onClick={(e) => e.stopPropagation()}
+className="border-t-2 border-indigo-200 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200 flex flex-col"
+          onClick={(e) => e.stopPropagation()}
           >
             <div className={`text-sm font-black text-slate-700 mb-3 ${isRTL ? "text-right" : "text-left"}`}>
               {t("העבר לקטגוריה")}
             </div>
+<div className="px-4 pb-2">
+  <div className="space-y-2">
+  {allCategoryOptions.map((cat) => {
+    const isBuiltInCategory = CATEGORY_ORDER.includes(cat as CategoryKey);
+    const isCustomCategory = !isBuiltInCategory;
+    const isEditingThisCategory = editingCustomCategory === cat;
 
-            <div className="space-y-2">
-              {CATEGORY_ORDER.map((cat) => (
+    return (
+      <div key={cat} className="space-y-2">
+    {isEditingThisCategory ? (
+  <div
+    className="w-full px-3 py-3 rounded-2xl border border-indigo-200 bg-white space-y-3"
+    data-noswipe="true"
+  >
+    <input
+      autoFocus
+      value={editingCustomCategoryValue}
+      onChange={(e) => setEditingCustomCategoryValue(e.target.value)}
+      placeholder={t("שם קטגוריה")}
+      className={`w-full border rounded-xl px-3 py-3 text-sm ${isRTL ? "text-right" : "text-left"}`}
+      dir={isRTL ? "rtl" : "ltr"}
+    />
+
+    <div className={`flex gap-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+      <button
+        type="button"
+        data-noswipe="true"
+        onClick={async () => {
+          const nextName = editingCustomCategoryValue.trim();
+          if (!nextName) return;
+          await renameCustomCategory(cat, nextName);
+        }}
+        className="flex-1 py-2 rounded-xl font-bold bg-emerald-500 text-white"
+      >
+        {t("שמור")}
+      </button>
+
+      <button
+        type="button"
+        data-noswipe="true"
+        onClick={() => {
+          setEditingCustomCategory(null);
+          setEditingCustomCategoryValue("");
+        }}
+        className="flex-1 py-2 rounded-xl font-bold bg-slate-100 text-slate-600"
+      >
+        {t("ביטול")}
+      </button>
+    </div>
+  </div>
+) : (
+          <div
+            className={`w-full px-4 py-3 rounded-2xl border flex items-center gap-3 ${
+              isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
+            } ${
+              categorySheetValue === cat
+                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                : "border-slate-200 bg-white text-slate-700"
+            }`}
+          >
+            <button
+              type="button"
+              data-noswipe="true"
+              onClick={() => setCategorySheetValue(cat)}
+              className={`flex-1 flex items-center ${
+                isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
+              }`}
+            >
+              <span className="font-bold">
+                {categoryLabelByLang[lang]?.[cat as CategoryKey] || categoryLabelByLang.he[cat as CategoryKey] || cat}
+              </span>
+              {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
+            </button>
+
+            {isCustomCategory ? (
+              <div className={`flex items-center gap-2 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
                 <button
-                  key={cat}
                   type="button"
                   data-noswipe="true"
-                  onClick={() => setCategorySheetValue(cat)}
-                  className={`w-full px-4 py-3 rounded-2xl border flex items-center ${
-                    isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
-                  } ${                    categorySheetValue === cat
-                      ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                      : "border-slate-200 bg-white text-slate-700"
-                  }`}
+                  title={t("ערוך קטגוריה")}
+                  onClick={() => {
+                    setEditingCustomCategory(cat);
+                    setEditingCustomCategoryValue(cat);
+                  }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 shrink-0"
                 >
-                  <span className="font-bold">
-                    {categoryLabelByLang[lang]?.[cat] || categoryLabelByLang.he[cat]}
-                  </span>
-                  {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
+                  <Pencil className="w-4 h-4" />
                 </button>
-              ))}
-            </div>
 
-                <label className={`flex items-center gap-3 px-1 pt-3 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>              <input
-                type="checkbox"
-                checked={rememberCategoryForUser}
-                onChange={(e) => setRememberCategoryForUser(e.target.checked)}
-              />
-              <span className="text-sm font-bold text-slate-600">
-                {t("זכור לי תמיד עבור פריט זה")}
-              </span>
-            </label>
+                <button
+                  type="button"
+                  data-noswipe="true"
+                  title={t("מחק קטגוריה")}
+                  onClick={() => {
+                    setDeleteCategoryConfirm(cat);
+                  }}
+                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                >
+                  <Trash2 className="w-4 h-4" />
+                </button>
+              </div>
+            ) : null}
+          </div>
+        )}
+      </div>
+    );
+  })}
+</div>
 
-           <div className={`flex gap-3 pt-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+<button
+  type="button"
+  data-noswipe="true"
+  onClick={() => setIsAddingCategory(true)}
+  className="w-full text-sm font-bold text-indigo-600 py-2"
+>
+  {t("➕ הוסף קטגוריה")}
+</button>
+
+{isAddingCategory && (
+  <div className="px-2 py-2 space-y-2" data-noswipe="true">
+    <input
+      autoFocus
+      value={customCategoryInput}
+      onChange={(e) => setCustomCategoryInput(e.target.value)}
+      placeholder={t("שם קטגוריה")}
+      className={`w-full border rounded-xl px-3 py-3 text-sm ${isRTL ? "text-right" : "text-left"}`}
+      dir={isRTL ? "rtl" : "ltr"}
+    />
+
+    <button
+      type="button"
+      data-noswipe="true"
+      onClick={async () => {
+        const name = customCategoryInput.trim();
+        if (!name) return;
+
+        await saveCustomCategory(name);
+        setCategorySheetValue(name);
+        setCustomCategoryInput("");
+        setIsAddingCategory(false);
+      }}
+      className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
+    >
+      {t("שמור")}
+    </button>
+  </div>
+)}
+
+<label className={`flex items-center gap-3 px-1 pt-3 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
+  <input
+    type="checkbox"
+    checked={rememberCategoryForUser}
+    onChange={(e) => setRememberCategoryForUser(e.target.checked)}
+  />
+  <span className="text-sm font-bold text-slate-600">
+    {t("זכור לי תמיד עבור פריט זה")}
+  </span>
+</label>
+</div>  {/* 👈 סוגר את ה-scroll */}
+           <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
             <button
               type="button"
               onClick={saveItemCategory}
@@ -6339,16 +6905,15 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
                       {purchasedItems.map((item) => (
                         <div
                           key={item.id}
-                          className={`flex items-center justify-between p-3 ${deleteFlashIds.has(item.id) ? "bg-rose-50" : "bg-slate-100/50"} rounded-2xl opacity-60 grayscale transition-all`}
-                          dir="rtl"
+className={`flex items-center justify-between p-3 ${deleteFlashIds.has(item.id) ? "bg-rose-50" : "bg-slate-100/50"} rounded-2xl transition-all`}                          dir="rtl"
                         ><div className="flex items-center justify-between w-full">
       <div
         className="flex items-center gap-3 flex-1 justify-start cursor-pointer"
         onClick={() => togglePurchased(item.id)}
         style={{ direction: "rtl", unicodeBidi: "plaintext" }}
       >
-        <CheckCircle2 className="w-6 h-6 text-emerald-500 flex-shrink-0" />
-        <span className="text-base font-bold text-slate-500 line-through truncate text-left">
+        <CheckCircle2 className="w-6 h-6 text-slate-400 flex-shrink-0" />
+        <span className="text-base font-bold text-slate-400 line-through truncate text-left">
           <span className="flex gap-1">
             <span>{item.name}</span>
             {(item.quantity || 1) > 1 && (
@@ -6360,17 +6925,20 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
           </span>
         </span>
       </div>
-
-      <button onClick={() => deleteItemWithFlash(item.id)} className="p-2 text-slate-300" title="מחק">
-        <Trash2 className="w-4 h-4" />
-      </button>
-    </div></div>
-                      ))}
-                    </div>
-                  ) : null}
-                </div>
+<button
+  onClick={() => deleteItemWithFlash(item.id)}
+  className="p-2 text-red-500 hover:text-red-600 transition-colors"
+>
+         <Trash2 className="w-4 h-4" />
+                </button>
               </div>
-            )}
+            </div>
+          ))}
+        </div>
+      ) : null}
+    </div>
+  </div>
+)}
           </>
         ) : (
           <div className="space-y-6">
@@ -6498,15 +7066,28 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
         )}
       </main>
 
+
       {/* Bottom nav */}
-      <div
-        className="fixed bottom-0 left-0 right-0 z-50"
-        style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
-      >
-        <div className="max-w-md mx-auto px-4 pb-0">
-          <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
-            <div className="relative flex items-center justify-between px-6 py-2">
-               {/* Favorites */}
+<div
+  className="fixed bottom-0 left-0 right-0 z-50"
+  style={{ paddingBottom: "env(safe-area-inset-bottom)" }}
+>
+  <div className="max-w-md mx-auto px-4 pb-0">
+    {activeTab === "favorites" ? (
+  <div className="relative h-0 pointer-events-none">
+    <div
+      className={`absolute -top-5 text-[11px] font-bold text-slate-400 ${
+        isRTL ? "left-3" : "right-3"
+      }`}
+    >
+      v{APP_VERSION}
+    </div>
+  </div>
+) : null}
+
+    <footer className="bg-white border-t border-slate-200 rounded-2xl" dir="ltr">
+      <div className="relative flex items-center justify-between px-6 py-2">
+        {/* Favorites */}
               <button
                 onClick={() => setActiveTab("favorites")}
                 className={`flex flex-col items-center gap-1 text-[11px] font-black ${
@@ -6638,8 +7219,8 @@ transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
               placeholder={t("מה אמרת?")}
             />
 
-                  <div className={`flex gap-3 pt-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
-                  <button
+                    <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+                    <button
                   onClick={() => cancelVoiceDraft()}
                   className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
                 >
