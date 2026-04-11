@@ -375,6 +375,22 @@ async function copyToClipboard(text: string) {
   }
 }
 
+function isGoogleSignInUserCancelError(e: any) {
+  const msg = String(e?.message || e || "").toLowerCase();
+  const code = String(e?.code || "").toLowerCase();
+
+  return (
+    msg.includes("user cancelled the selector") ||
+    msg.includes("user canceled the selector") ||
+    msg.includes("cancelled") ||
+    msg.includes("canceled") ||
+    msg.includes("popup closed by user") ||
+    code.includes("cancel") ||
+    code.includes("canceled") ||
+    code.includes("cancelled")
+  );
+}
+
 async function signInSmart() {
   const platform = (() => {
     try {
@@ -391,20 +407,24 @@ async function signInSmart() {
     Capacitor.isNativePlatform();
 
   if (isNative) {
-    try {
-      const result = await FirebaseAuthentication.signInWithGoogle();
-      const idToken = result.credential?.idToken;
-      if (!idToken) {
-        throw new Error("Google native sign-in returned without idToken");
-      }
-      const credential = GoogleAuthProvider.credential(idToken);
-      await signInWithCredential(auth, credential);
-      return;
-    } catch (e: any) {
-      console.error("Native Google sign-in failed", e);
-      throw new Error(e?.message || "Native Google sign-in failed");
+  try {
+    const result = await FirebaseAuthentication.signInWithGoogle();
+    const idToken = result.credential?.idToken;
+    if (!idToken) {
+      throw new Error("Google native sign-in returned without idToken");
     }
+    const credential = GoogleAuthProvider.credential(idToken);
+    await signInWithCredential(auth, credential);
+    return true;
+  } catch (e: any) {
+    if (isGoogleSignInUserCancelError(e)) {
+      return false;
+    }
+
+    console.error("Native Google sign-in failed", e);
+    throw new Error(e?.message || "Native Google sign-in failed");
   }
+}
 
   // Browser only: popup. No redirect fallback, to avoid redirect-state issues in APK/WebView.
   try {
@@ -414,15 +434,16 @@ async function signInSmart() {
       // ignore
     }
     await signInWithPopup(auth, googleProvider);
+    return true;
   } catch (e: any) {
     const c = e?.code as string | undefined;
-    if (
-      c === "auth/popup-blocked" ||
-      c === "auth/cancelled-popup-request" ||
-      c === "auth/popup-closed-by-user"
-    ) {
-      throw new Error("Popup sign-in was blocked or closed");
-    }
+   if (
+  c === "auth/popup-blocked" ||
+  c === "auth/cancelled-popup-request" ||
+  c === "auth/popup-closed-by-user"
+) {
+  return false;
+}
     throw e;
   }
 }
@@ -1668,6 +1689,32 @@ function normalizeItemName(s: string) {
     .toLowerCase();
 }
 
+function getUserDisplayName(user?: FirebaseUser | null) {
+  return (
+    String(user?.displayName || "").trim() ||
+    String(user?.email || "").trim() ||
+    ""
+  );
+}
+
+function getUserInitial(user?: FirebaseUser | null) {
+  const name = getUserDisplayName(user);
+  return name ? name.charAt(0).toUpperCase() : "";
+}
+
+
+function buildCreatorLabel(
+  lang: AppLang,
+  mode: "added" | "purchased",
+  name?: string
+) {
+  const safeName =
+    String(name || "").trim() || translate(lang, "משתמש לא ידוע");
+
+  return mode === "added"
+    ? `${translate(lang, "נוסף על ידי")} ${safeName}`
+    : `${translate(lang, "סומן כנקנה על ידי")} ${safeName}`;
+}
 
 const HISTORY_STORAGE_KEY = "shopping_list_item_history_v1";
 
@@ -1885,7 +1932,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.0.6";
+const APP_VERSION = "1.1.0";
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -1983,23 +2030,46 @@ type UserCategoryMap = Partial<Record<string, string>>;
 
 const resolveItemCategory = (
   item: ShoppingItem,
-  userCategoryMap: UserCategoryMap
+  userCategoryMap: UserCategoryMap,
+  userCustomCategories: string[] = []
 ): string => {
-  const explicit = (item as any)?.category as string | undefined;
-  if (explicit && String(explicit).trim()) return explicit;
+  const explicit = String((item as any)?.category || "").trim();
 
+  // built-in categories are always valid
+  if (explicit && CATEGORY_ORDER.includes(explicit as CategoryKey)) {
+    return explicit;
+  }
+
+  // custom category is valid only if the current user has it
+  if (explicit && userCustomCategories.includes(explicit)) {
+    return explicit;
+  }
+
+  // fallback to exact-name personal mapping for this user
   const prefKey = normalizeCategoryPreferenceKey(item.name);
   const preferred = prefKey ? userCategoryMap[prefKey] : undefined;
-  if (preferred && String(preferred).trim()) return preferred;
 
-  return detectCategory(item.name);
+  if (preferred) {
+    const preferredTrimmed = String(preferred).trim();
+
+    if (CATEGORY_ORDER.includes(preferredTrimmed as CategoryKey)) {
+      return preferredTrimmed;
+    }
+
+    if (userCustomCategories.includes(preferredTrimmed)) {
+      return preferredTrimmed;
+    }
+  }
+
+  return "other";
 };
 
 const getQtyStepForItem = (
   item: ShoppingItem,
-  userCategoryMap: UserCategoryMap
+  userCategoryMap: UserCategoryMap,
+  userCustomCategories: string[] = []
 ): number => {
-  const category = resolveItemCategory(item, userCategoryMap);
+  const category = resolveItemCategory(item, userCategoryMap, userCustomCategories);
   return category === "meat_fish" ? 0.5 : 1;
 };
 
@@ -2095,7 +2165,6 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "בוצע. ניתן לבטל למשך 3 שניות": "בוצע. ניתן לבטל למשך 3 שניות",
       "צור תזכורת ביומן": "צור תזכורת ביומן",
       "העבר לקטגוריה": "העבר לקטגוריה",
-      "זכור לי תמיד עבור פריט זה": "זכור לי תמיד עבור פריט זה",
       "שמור": "שמור",
       "נסגר": "סגור",
       "הקטגוריה עודכנה": "הקטגוריה עודכנה",
@@ -2111,6 +2180,10 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "מחק": "מחק",
       "האם למחוק את הקטגוריה": 'האם למחוק את הקטגוריה {name}',
       "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר",
+      "נוסף על ידי": "נוסף על ידי",
+      "סומן כנקנה על ידי": "סומן כנקנה על ידי",
+      "משתמש לא ידוע": "משתמש לא ידוע",
+      "את/ה": "את/ה",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2194,7 +2267,6 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוצע": "Done",
     "צור תזכורת ביומן": "Create calendar reminder",
     "העבר לקטגוריה": "Move to category",
-    "זכור לי תמיד עבור פריט זה": "Always remember this item",
     "שמור": "Save",
     "נסגר": "Close",
     "הפריט כבר קיים ברשימה": "Item already exists in the list",
@@ -2209,6 +2281,10 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחק": "Delete",
     "האם למחוק את הקטגוריה": 'Delete this category {name}',
     "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "This category will be removed and all its items will move to Other",
+    "נוסף על ידי": "Added by",
+    "סומן כנקנה על ידי": "Marked as bought by",
+    "משתמש לא ידוע": "Unknown user",
+    "את/ה": "You",
 },
 ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -2292,7 +2368,6 @@ ru: {
     "בוצע": "Готово",
     "צור תזכורת ביומן": "Создать напоминание в календаре",
     "העבר לקטגוריה": "Переместить в категорию",
-    "זכור לי תמיד עבור פריט זה": "Всегда запоминать для этого товара",
     "שמור": "Сохранить",
     "נסגר": "Закрыть",
     "הקטגוריה עודכנה": "Категория обновлена",
@@ -2308,6 +2383,10 @@ ru: {
     "מחק": "Удалить",
     "האם למחוק את הקטגוריה": 'Удалить категорию {name}',
     "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "Эта категория будет удалена, а все её товары будут перемещены в категорию Другое",
+    "נוסף על ידי": "Добавил",
+    "סומן כנקנה על ידי": "Отметил как купленное",
+    "משתמש לא ידוע": "Неизвестный пользователь",
+    "את/ה": "Вы",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2390,7 +2469,6 @@ ru: {
     "בוצע": "تم",
     "צור תזכורת ביומן": "إنشاء تذكير في التقويم",
     "העבר לקטגוריה": "انقل إلى فئة",
-    "זכור לי תמיד עבור פריט זה": "تذكر هذا العنصر دائمًا",
     "שמור": "حفظ",
     "נסגר": "إغلاق",   
      "הקטגוריה עודכנה": "تم تحديث الفئة",
@@ -2406,6 +2484,10 @@ ru: {
     "מחק": "حذف",
     "האם למחוק את הקטגוריה": 'هل تريد حذف الفئة {name}',
     "קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר": "سيتم حذف هذه الفئة وستُنقل جميع العناصر فيها إلى فئة أخرى",
+    "נוסף על ידי": "أضيف بواسطة",
+    "סומן כנקנה על ידי": "تم وضع علامة تم الشراء بواسطة",
+    "משתמש לא ידוע": "مستخدم غير معروف",
+    "את/ה": "أنت",
   },
 };
 
@@ -2428,6 +2510,47 @@ switch (lang) {
     return '"גמבה חלב שתי ביצים" | "מחק רשימה"';
 }
 };
+
+const PASTEL_COLORS = [
+  "#6FA8DC",
+  "#81C995",
+  "#E091C0",
+  "#DCB86F",
+  "#9DB5E8",
+  "#6FC9B0",
+  "#DC9B6F",
+  "#A5D86F",
+];
+
+function getStableSharedUserColorMap(
+  items: ShoppingItem[],
+  sharedWith: string[] = []
+): Record<string, string> {
+  const uidSet = new Set<string>();
+
+  for (const uid of sharedWith || []) {
+    const safeUid = String(uid || "").trim();
+    if (safeUid) uidSet.add(safeUid);
+  }
+
+  for (const item of items || []) {
+    const addedByUid = String(item.addedByUid || "").trim();
+    const purchasedByUid = String(item.purchasedByUid || "").trim();
+
+    if (addedByUid) uidSet.add(addedByUid);
+    if (purchasedByUid) uidSet.add(purchasedByUid);
+  }
+
+  const orderedUids = Array.from(uidSet).sort((a, b) => a.localeCompare(b));
+  const map: Record<string, string> = {};
+
+  orderedUids.forEach((uid, index) => {
+    map[uid] = PASTEL_COLORS[index % PASTEL_COLORS.length];
+  });
+
+  return map;
+}
+
 
 const MainList: React.FC = () => {
   const [user, setUser] = useState<FirebaseUser | null>(null);
@@ -2529,10 +2652,11 @@ const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
 const [categorySheetValue, setCategorySheetValue] = useState<string>("other");
 const [categorySheetPos, setCategorySheetPos] = useState<{ x: number; y: number } | null>(null);
-const [rememberCategoryForUser, setRememberCategoryForUser] = useState(false);
 const [customCategoryInput, setCustomCategoryInput] = useState("");
 const [isAddingCategory, setIsAddingCategory] = useState(false);
 const [userCustomCategories, setUserCustomCategories] = useState<string[]>([]);
+const [editingCategoryItemId, setEditingCategoryItemId] = useState<string | null>(null);
+const [editingCategoryText, setEditingCategoryText] = useState("");
 const allCategoryOptions = useMemo(
   () => [...CATEGORY_ORDER, ...userCustomCategories],
   [userCustomCategories]
@@ -2544,6 +2668,7 @@ const [deleteCategoryConfirm, setDeleteCategoryConfirm] = useState<string | null
 
 const longPressTimerRef = useRef<number | null>(null);
 const longPressTriggeredRef = useRef(false);
+const categoryDoubleTapRef = useRef<{ id: string; time: number } | null>(null);
 
 const LONG_PRESS_MS = 450;
 
@@ -2591,7 +2716,7 @@ useEffect(() => {
 }, [items]);
 
 const openCategorySheetForItem = (item: ShoppingItem, e?: any) => {
-  const current = resolveItemCategory(item, userCategoryMap);
+  const current = resolveItemCategory(item, userCategoryMap, userCustomCategories)
 
   if (e?.currentTarget?.getBoundingClientRect) {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -2606,7 +2731,8 @@ const openCategorySheetForItem = (item: ShoppingItem, e?: any) => {
 
   setCategorySheetItem(item);
   setCategorySheetValue(current);
-  setRememberCategoryForUser(false);
+  setEditingCategoryItemId(null);
+  setEditingCategoryText("");
   setCategorySheetOpen(true);
 };
 
@@ -2614,9 +2740,10 @@ const closeCategorySheet = () => {
   setCategorySheetOpen(false);
   setCategorySheetItem(null);
   setCategorySheetPos(null);
-  setRememberCategoryForUser(false);
   setCustomCategoryInput("");
   setIsAddingCategory(false);
+  setEditingCategoryItemId(null);
+  setEditingCategoryText("");
 };
 
 const saveCustomCategory = async (name: string) => {
@@ -2780,22 +2907,22 @@ const saveItemCategory = async () => {
 
 
 
-  if (rememberCategoryForUser && user?.uid) {
-    const prefKey = normalizeCategoryPreferenceKey(categorySheetItem.name);
-    if (prefKey) {
-      const prefRef = doc(db, "users", user.uid, "preferences", "categories");
-      await setDoc(
-        prefRef,
-        {
-          itemCategoryMap: {
-            [prefKey]: categorySheetValue,
-          },
-          updatedAt: Date.now(),
+  if (user?.uid) {
+  const prefKey = normalizeCategoryPreferenceKey(categorySheetItem.name);
+  if (prefKey) {
+    const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+    await setDoc(
+      prefRef,
+      {
+        itemCategoryMap: {
+          [prefKey]: categorySheetValue,
         },
-        { merge: true }
-      );
-    }
+        updatedAt: Date.now(),
+      },
+      { merge: true }
+    );
   }
+}
 
   setToast(t("הקטגוריה עודכנה"));
   closeCategorySheet();
@@ -2810,7 +2937,11 @@ const startItemLongPress = (item: ShoppingItem, e?: any) => () => {
 
   longPressTimerRef.current = window.setTimeout(() => {
     longPressTriggeredRef.current = true;
-    openCategorySheetForItem(item, e);
+    if (categorySheetOpen && categorySheetItem?.id === item.id) {
+  closeCategorySheet();
+} else {
+  openCategorySheetForItem(item, e);
+}
     if (typeof navigator !== "undefined" && typeof navigator.vibrate === "function") {
       navigator.vibrate(20);
     }
@@ -2982,9 +3113,23 @@ useEffect(() => {
   }, [shareMenuOpen, moreMenuOpen, updateShareMenuPos, updateMoreMenuPos]);
 
 const [showClearConfirm, setShowClearConfirm] = useState(false);
+const [creatorHintOpenId, setCreatorHintOpenId] = useState<string | null>(null);
+const creatorHintTimerRef = useRef<number | null>(null);
+const openCreatorHint = (itemId: string) => {
+  setCreatorHintOpenId(itemId);
 
-  const [authLoading, setAuthLoading] = useState(true);
-    const [authInitialized, setAuthInitialized] = useState(false);
+  if (creatorHintTimerRef.current != null) {
+    window.clearTimeout(creatorHintTimerRef.current);
+  }
+
+  creatorHintTimerRef.current = window.setTimeout(() => {
+    setCreatorHintOpenId((current) => (current === itemId ? null : current));
+    creatorHintTimerRef.current = null;
+  }, 2000);
+};
+
+const [authLoading, setAuthLoading] = useState(true);
+const [authInitialized, setAuthInitialized] = useState(false);
 const [listLoading, setListLoading] = useState(false);
 
   // Voice UI + state
@@ -3370,6 +3515,7 @@ if (deleteSwipe) {
               title: "My Easy List",
               ownerUid: u.uid,
               sharedWith: [u.uid],
+              userColorMap: {},
               createdAt: Date.now(),
               updatedAt: Date.now(),
             };
@@ -3393,6 +3539,26 @@ setList(newList);
   }, []);
   useEffect(() => {
     if (!list?.id) return;
+  
+  void (async () => {
+  const currentMap = (list as any)?.userColorMap;
+  if (currentMap && typeof currentMap === "object" && Object.keys(currentMap).length > 0) {
+    return;
+  }
+
+  const ownerUid = String(list.ownerUid || "").trim();
+  if (!ownerUid) return;
+
+  try {
+    await updateDoc(doc(db, "lists", list.id), {
+      userColorMap: {
+        [ownerUid]: PASTEL_COLORS[0],
+      },
+    });
+  } catch (e) {
+    console.error("Failed to initialize userColorMap", e);
+  }
+})();
 
     const listRef = doc(db, "lists", list.id);
     const itemsCol = collection(listRef, "items");
@@ -3526,6 +3692,11 @@ useEffect(() => {
     [items]
   );
 
+const isSharedList = (list?.sharedWith?.length || 0) > 1;
+const sharedUserColorMap = useMemo(() => {
+  return getStableSharedUserColorMap(items, list?.sharedWith || []);
+}, [items, list?.sharedWith]);
+
 const groupedActiveItems = useMemo(() => {
   const groups: Record<string, ShoppingItem[]> = {};
 
@@ -3538,7 +3709,7 @@ const groupedActiveItems = useMemo(() => {
   }
 
   for (const item of activeItems) {
-    const category = resolveItemCategory(item, userCategoryMap) || "other";
+    const category = resolveItemCategory(item, userCategoryMap, userCustomCategories) || "other";
 
     if (!groups[category]) {
       groups[category] = [];
@@ -3653,14 +3824,17 @@ const applySuggestion = async (s: SuggestView) => {
   const cleanName = stripWrappingBrackets(s.name.trim());
 
   const newItem: ShoppingItem = {
-    id: itemId,
-    name: cleanName,
-    quantity: 1,
-    isPurchased: false,
-    isFavorite: false,
-    createdAt: Date.now(),
-    category: userCategoryMap[normalizeCategoryPreferenceKey(cleanName)] || detectCategory(cleanName),
-  };
+  id: itemId,
+  name: cleanName,
+  quantity: 1,
+  isPurchased: false,
+  isFavorite: false,
+  createdAt: Date.now(),
+  addedByUid: user.uid,
+  addedByName: getUserDisplayName(user),
+  addedByInitial: getUserInitial(user),
+  category: userCategoryMap[normalizeCategoryPreferenceKey(cleanName)] || detectCategory(cleanName),
+};
 
   await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
 
@@ -3748,14 +3922,17 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
 
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
-      id: itemId,
-      name,
-      quantity: 1,
-      isPurchased: false,
-      isFavorite: false,
-      createdAt: Date.now(),
-      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
-    };
+  id: itemId,
+  name,
+  quantity: 1,
+  isPurchased: false,
+  isFavorite: false,
+  createdAt: Date.now(),
+  addedByUid: user.uid,
+  addedByName: getUserDisplayName(user),
+  addedByInitial: getUserInitial(user),
+  category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
+};
 
     // Clear the add box immediately (especially important offline where Firestore writes may not resolve quickly)
     setInputValue("");
@@ -3779,11 +3956,86 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
     if (!item) return;
 
     const isNowPurchased = !item.isPurchased;
-    await updateDoc(doc(db, "lists", list.id, "items", id), {
-      isPurchased: isNowPurchased,
-      purchasedAt: isNowPurchased ? Date.now() : null,
-    });
+    await ensureUserColorAssigned(user?.uid);
+   await updateDoc(doc(db, "lists", list.id, "items", id), {
+  isPurchased: isNowPurchased,
+  purchasedAt: isNowPurchased ? Date.now() : null,
+  purchasedByUid: isNowPurchased ? user?.uid || "" : "",
+  purchasedByName: isNowPurchased ? getUserDisplayName(user) : "",
+  purchasedByInitial: isNowPurchased ? getUserInitial(user) : "",
+});
   };
+
+const saveCategoryItemName = async (id: string) => {
+  const newName = editingCategoryText.trim();
+  if (!newName) return;
+  if (!list?.id) return;
+
+  const currentItem = items.find((item) => item.id === id);
+  if (!currentItem) return;
+
+  const oldName = currentItem.name;
+  const oldKey = normalizeItemName(oldName);
+  const newKey = normalizeItemName(newName);
+
+  await updateDoc(doc(db, "lists", list.id, "items", id), {
+    name: newName,
+  });
+
+  setItems((prev) =>
+    prev.map((item) =>
+      item.id === id
+        ? { ...item, name: newName }
+        : item
+    )
+  );
+
+  const nextHistory = { ...historyRef.current };
+
+  if (oldKey && nextHistory[oldKey]) {
+    const oldEntry = nextHistory[oldKey];
+    delete nextHistory[oldKey];
+
+    nextHistory[newKey] = {
+      name: newName,
+      count: oldEntry.count || 1,
+      lastUsed: oldEntry.lastUsed || Date.now(),
+    };
+  } else if (newKey) {
+    nextHistory[newKey] = {
+      name: newName,
+      count: 1,
+      lastUsed: Date.now(),
+    };
+  }
+
+  historyRef.current = nextHistory;
+  saveItemHistory(nextHistory);
+
+  setEditingCategoryItemId(null);
+  setEditingCategoryText("");
+};
+
+  const ensureUserColorAssigned = async (uid?: string | null) => {
+  if (!list?.id) return;
+  const safeUid = String(uid || "").trim();
+  if (!safeUid) return;
+
+  const currentMap = ((list as any)?.userColorMap || {}) as Record<string, string>;
+  if (currentMap[safeUid]) return;
+
+  const usedColors = new Set(Object.values(currentMap));
+  const nextColor =
+    PASTEL_COLORS.find((c) => !usedColors.has(c)) || PASTEL_COLORS[0];
+
+  try {
+    await updateDoc(doc(db, "lists", list.id), {
+      [`userColorMap.${safeUid}`]: nextColor,
+    });
+  } catch (e) {
+    console.error("Failed to assign user color", e);
+  }
+};
 
   const LEAVE_MS = 240;
 
@@ -3818,7 +4070,7 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
   const item = items.find((i) => i.id === id);
   if (!item) return;
 
-  const step = getQtyStepForItem(item, userCategoryMap);
+  const step = getQtyStepForItem(item, userCategoryMap, userCustomCategories);
 
   // Preserve atomic increment logic for positive updates
   if (delta > 0) {
@@ -4328,17 +4580,20 @@ ${footer}`;
     const cleanFavName = stripWrappingBrackets(fav.name);
 
       const newItem: ShoppingItem = {
-        id: itemId,
-        name: cleanFavName,
-        quantity: 1,
-        isPurchased: false,
-        isFavorite: false,
-        createdAt: Date.now(),
-        category:
-          fav.category ||
-          userCategoryMap[normalizeCategoryPreferenceKey(cleanFavName)] ||
-          detectCategory(cleanFavName),
-      };
+  id: itemId,
+  name: cleanFavName,
+  quantity: 1,
+  isPurchased: false,
+  isFavorite: false,
+  createdAt: Date.now(),
+  addedByUid: user?.uid || "",
+  addedByName: getUserDisplayName(user),
+  addedByInitial: getUserInitial(user),
+  category:
+  userCategoryMap[normalizeCategoryPreferenceKey(cleanFavName)] ||
+  fav.category ||
+  detectCategory(cleanFavName),
+};
 
     // Queue enter animation for when Firestore pushes the new item into state
     pendingEnterIdsRef.current.add(itemId);
@@ -4467,16 +4722,20 @@ ${footer}`;
     }
 
     const itemId = crypto.randomUUID();
-    const newItem: ShoppingItem = {
-      id: itemId,
-      name,
-      quantity: qty,
-      isPurchased: false,
-      isFavorite: false,
-      createdAt: Date.now(),
-      category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
-    };
-
+   const newItem: ShoppingItem = {
+  id: itemId,
+  name,
+  quantity: qty,
+  isPurchased: false,
+  isFavorite: false,
+  createdAt: Date.now(),
+  addedByUid: user?.uid || "",
+  addedByName: getUserDisplayName(user),
+  addedByInitial: getUserInitial(user),
+  category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
+};
+    
+    await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
     await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
   };
 
@@ -4844,15 +5103,18 @@ const parsed = collapseParsedItemsForExecution(
         actions.push({ type: "restore_qty", id: existing.id, prevQty });
       } else {
         const itemId = crypto.randomUUID();
-        const newItem: ShoppingItem = {
-          id: itemId,
-          name,
-          quantity: p.qty,
-          isPurchased: false,
-          isFavorite: false,
-          createdAt: Date.now(),
-          category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
-        };
+       const newItem: ShoppingItem = {
+  id: itemId,
+  name,
+  quantity: p.qty,
+  isPurchased: false,
+  isFavorite: false,
+  createdAt: Date.now(),
+  addedByUid: user?.uid || "",
+  addedByName: getUserDisplayName(user),
+  addedByInitial: getUserInitial(user),
+  category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
+};
         await setDoc(doc(db, "lists", listId, "items", itemId), newItem);
         actions.push({ type: "delete_item", id: itemId });
       }
@@ -5907,8 +6169,15 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
           <p className="text-slate-500 font-bold">{t("כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.")}</p>
           <button
             onClick={async () => {
-              await signInSmart();
-            }}
+  try {
+    const ok = await signInSmart();
+    if (!ok) {
+      return;
+    }
+  } catch (e) {
+    console.error(e);
+  }
+}}
             className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
           >
             <LogIn className="w-4 h-4" />
@@ -5936,6 +6205,92 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
     );
   }
 
+
+
+
+const DogEarBadge: React.FC<{
+  itemId: string;
+  mode: "added" | "purchased";
+  name?: string;
+  initial?: string;
+}> = ({ itemId, mode, name, initial }) => {
+  if (!isSharedList) return null;
+
+  const safeName = String(name || "").trim();
+  const safeInitial = String(initial || "").trim();
+  const seed = safeName || safeInitial;
+
+  if (!seed) return null;
+
+  const targetUid =
+  mode === "added"
+    ? items.find((x) => x.id === itemId)?.addedByUid
+    : items.find((x) => x.id === itemId)?.purchasedByUid;
+
+const earColor =
+  (targetUid && sharedUserColorMap[targetUid]) || PASTEL_COLORS[0];
+
+  const label = buildCreatorLabel(lang, mode, safeName);
+
+  const isOpen = creatorHintOpenId === itemId;
+
+  return (
+   <div
+  className={`absolute -top-[3px] ${isRTL ? "-left-[3px]" : "-right-[3px]"} z-20`}
+  data-noswipe="true"
+>
+      <button
+        type="button"
+       onClick={(e) => {
+  e.stopPropagation();
+
+  setCreatorHintOpenId(itemId);
+
+  if (creatorHintTimerRef.current != null) {
+    window.clearTimeout(creatorHintTimerRef.current);
+  }
+
+  creatorHintTimerRef.current = window.setTimeout(() => {
+    setCreatorHintOpenId((current) => (current === itemId ? null : current));
+    creatorHintTimerRef.current = null;
+  }, 2000);
+}}
+        title={label}
+        aria-label={label}
+        className="relative block w-6 h-7 active:scale-90 transition-transform duration-150"
+style={{
+  touchAction: "manipulation",
+  transform: isRTL ? "rotate(-49deg)" : "rotate(49deg)",
+}}
+      >
+        <svg width="28" height="28" viewBox="0 0 28 28" className="block">
+  <path
+    d="M 2 17 A 12 12 0 0 1 29 14 A 16 16 0 0 0 2 14 Z"
+    fill={earColor}
+  />
+</svg>
+      </button>
+
+   {isOpen ? (
+  <div
+    className={`absolute top-[26px] ${
+      isRTL ? "left-0" : "right-0"
+    } whitespace-nowrap rounded-md bg-[#333] text-white text-[11px] px-2.5 py-1 shadow-lg z-30`}
+    dir={isRTL ? "rtl" : "ltr"}
+  >
+    {label}
+
+    <div
+      className={`absolute -top-1 ${
+        isRTL ? "left-2" : "right-2"
+      } w-2 h-2 bg-[#333] rotate-[30deg]`}
+    />
+  </div>
+) : null}
+    </div>
+  );
+};
+  
   return (
     <div
   ref={appRootRef}
@@ -6304,710 +6659,308 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
 
       {/* Content */}
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
-        {activeTab === "list" ? (
-          <>
-            <form onSubmit={addItem} className="relative">
-              <input
-                ref={inputRef}
-                value={inputValue}
-                onFocus={openSuggestions}
-                onBlur={closeSuggestionsSoon}
-                onKeyDown={(e) => {
-                  if (!isSuggestOpen) return;
+{activeTab === "list" ? (
+  <>
+    <form onSubmit={addItem} className="relative">
+      <input
+        ref={inputRef}
+        value={inputValue}
+        onFocus={openSuggestions}
+        onBlur={closeSuggestionsSoon}
+        onKeyDown={(e) => {
+          if (!isSuggestOpen) return;
 
-                  if (e.key === "Escape") {
-                    e.preventDefault();
-                    setIsSuggestOpen(false);
-                    setActiveSuggestIndex(-1);
-                    return;
-                  }
+          if (e.key === "Escape") {
+            e.preventDefault();
+            setIsSuggestOpen(false);
+            setActiveSuggestIndex(-1);
+            return;
+          }
 
-                  if (e.key === "ArrowDown") {
-                    e.preventDefault();
-                    if (visibleSuggestionList.length === 0) return;
-                    setActiveSuggestIndex((prev) => {
-                      const next = prev + 1;
-                      return next >= visibleSuggestionList.length ? 0 : next;
-                    });
-                    return;
-                  }
+          if (e.key === "ArrowDown") {
+            e.preventDefault();
+            if (visibleSuggestionList.length === 0) return;
+            setActiveSuggestIndex((prev) => {
+              const next = prev + 1;
+              return next >= visibleSuggestionList.length ? 0 : next;
+            });
+            return;
+          }
 
-                  if (e.key === "ArrowUp") {
-                    e.preventDefault();
-                    if (visibleSuggestionList.length === 0) return;
-                    setActiveSuggestIndex((prev) => {
-                      const next = prev - 1;
-                      return next < 0 ? visibleSuggestionList.length - 1 : next;
-                    });
-                    return;
-                  }
+          if (e.key === "ArrowUp") {
+            e.preventDefault();
+            if (visibleSuggestionList.length === 0) return;
+            setActiveSuggestIndex((prev) => {
+              const next = prev - 1;
+              return next < 0 ? visibleSuggestionList.length - 1 : next;
+            });
+            return;
+          }
 
-                  if (e.key === "Tab") {
-                    if (visibleSuggestionList.length === 0) return;
-                    e.preventDefault();
-                    applySuggestion(visibleSuggestionList[Math.max(0, activeSuggestIndex >= 0 ? activeSuggestIndex : 0)]);
-                    return;
-                  }
-
-                  if (e.key === "Enter") {
-                    if (visibleSuggestionList.length > 0) {
-                      e.preventDefault();
-                      const idx = activeSuggestIndex >= 0 ? activeSuggestIndex : 0;
-                      applySuggestion(visibleSuggestionList[idx]);
-                      return;
-                    }
-                  }
-                }}
-                onChange={(e) => {
-                  setInputValue(e.target.value);                  openSuggestions();
-                  setActiveSuggestIndex(-1);
-                }}
-                placeholder={t("מה להוסיף לרשימה?")}
-className={`w-full py-4 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white ${
-  isRTL
-    ? "pr-[20px] pl-14 text-right placeholder:text-right"
-    : "pl-[20px] pr-14 text-left placeholder:text-left"
-}`}
-dir={isRTL ? "rtl" : "ltr"}
-              />
-
-              <button
-                type="submit"
-className={`absolute top-2.5 ${
-  isRTL ? "left-2.5" : "right-2.5"
-} bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all`}
-                title="הוסף"
-              >
-                <Plus className="w-6 h-6" />
-              </button>
-
-{isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
-  <div
-    className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden max-h-72 overflow-y-auto overscroll-contain touch-pan-y"
-  dir={isRTL ? "rtl" : "ltr"}
-
-    onMouseDown={(e) => {
-      // שומר על הפוקוס באינפוט בדסקטופ, בלי לשבור גלילה בטלפון
-      e.preventDefault();
-    }}
-  >
-    {visibleSuggestionList.map((s, idx) => (
-      <div
-        key={s.key + "-" + idx}
-       className={
-  "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
-  (idx === activeSuggestIndex ? "bg-slate-100" : "")
-}
-      >
-        <button
-  type="button"
-className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}
-  onClick={() => {
-    void applySuggestion(s);
-  }}
-  title="השלמה"
->
-  <span className="font-semibold text-slate-700">{s.name}</span>
-
-  {s.isInList ? (
-  <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
-    {translate(lang, "ברשימה")}
-    {typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
-  </span>
-) : null}
-</button>
-
-        {s.canHide ? (
-          <button
-            type="button"
-            className="px-3 text-slate-400 hover:text-slate-700"
-            onClick={(e) => {
-              e.stopPropagation();
-              hideSuggestion(s);
-            }}
-            title="הסר מההשלמות"
-            aria-label="הסר מההשלמות"
-          >
-            ✕
-          </button>
-        ) : null}
-      </div>
-    ))}
-  </div>
-) : null}
-            </form>
-
-            {(items?.length ?? 0) === 0 ? (
-              <div className="text-center py-16 px-4">
-                <div className="mx-auto w-full max-w-[260px]">
-                  <img
-                    src={appLogo}
-                    alt="My Easy List"
-                    className="w-40 h-40 mx-auto object-contain opacity-95 drop-shadow-sm animate-[floatY_3.6s_ease-in-out_infinite]"
-                  />
-                  <p className="mt-5 text-2xl font-black text-slate-400">{t("הרשימה שלך עדיין ריקה")}</p>
-                  <p className="mt-2 text-base font-bold text-slate-400 leading-relaxed px-3 break-words">
-                    {t("בוא נתחיל להוסיף מוצרים לקניות 🛒")}
-                  </p>
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-4">
-  <div className="space-y-3">
-    {allCategoryOptions.map((categoryKey) => {
-      const categoryItems = groupedActiveItems[categoryKey];
-      if (!categoryItems?.length) return null;
-
-      return (
-        <div key={categoryKey} className="space-y-3">
-          <div className="px-1 pt-2">
-            <h3 className={`text-sm font-black text-slate-400 ${isRTL ? "text-right" : "text-left"}`}>
-              {categoryLabelByLang[lang]?.[categoryKey as CategoryKey] || categoryLabelByLang.he[categoryKey as CategoryKey] || categoryKey}
-            </h3>
-          </div>
-
-      {categoryItems.map((item) => {
-      const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
-
-const isHintItem = showInitialSwipeHint && activeItems[0]?.id === item.id;
-const hintDx = isHintItem
-  ? hintPhase === 1
-    ? (isRTL ? 50 : -50)   // שמאלה → מחיקה
-    : hintPhase === 2
-      ? (isRTL ? -50 : 50) // ימינה → מועדפים
-      : 0
-  : 0;
-
-const effectiveDx = swipeUi.id === item.id ? swipeUi.dx : hintDx;
-
-const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
-const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
-  
-  return (
-        <div
-          key={item.id}
-          className={`relative overflow-hidden rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
-            leavingIds.has(item.id)
-              ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
-              : enterAnim[item.id] === "from"
-                ? "opacity-0 translate-y-1 scale-[0.99]"
-                : "opacity-100 translate-y-0 scale-100"
-          }`}
-          dir="rtl"
-  onPointerDown={(e) => {
-  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
-
-  pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
-  onSwipePointerDown(item.id)(e);
-  startItemLongPress(item, e)();
-}}
-
-onPointerMove={(e) => {
-  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
-
-  const s = pointerLongPressStartRef.current;
-
-  if (s) {
-    const dx = Math.abs(e.clientX - s.x);
-    const dy = Math.abs(e.clientY - s.y);
-
-    if (dx > POINTER_LONG_PRESS_MOVE_TOLERANCE || dy > POINTER_LONG_PRESS_MOVE_TOLERANCE) {
-      clearItemLongPress();
-    }
-  }
-
-  onSwipePointerMove(item.id)(e);
-}}
-
-onPointerUp={(e) => {
-  pointerLongPressStartRef.current = null;
-  onSwipePointerUp(item.id)(e);
-  clearItemLongPress();
-}}
-onPointerCancel={() => {
-  pointerLongPressStartRef.current = null;
-  onSwipePointerCancel();
-  clearItemLongPress();
-}}
-onPointerLeave={() => {
-  pointerLongPressStartRef.current = null;
-  clearItemLongPress();
-}}
-onTouchStart={(e) => {
-  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
-
-  const t = e.touches[0];
-  touchLongPressStartRef.current = t ? { x: t.clientX, y: t.clientY } : null;
-
-  onSwipeTouchStart(item.id)(e);
-  startItemLongPress(item, e)();
-}}
-onTouchMove={(e) => {
-  if (categorySheetOpen && categorySheetItem?.id === item.id) return;
-
-  const t = e.touches[0];
-  const s = touchLongPressStartRef.current;
-
-  if (t && s) {
-    const dx = Math.abs(t.clientX - s.x);
-    const dy = Math.abs(t.clientY - s.y);
-
-    if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
-      clearItemLongPress();
-    }
-  }
-
-  onSwipeTouchMove(item.id)(e);
-}}
-onTouchEnd={(e) => {
-  touchLongPressStartRef.current = null;
-  onSwipeTouchEnd(item.id)(e);
-  clearItemLongPress();
-}}
-onTouchCancel={() => {
-  touchLongPressStartRef.current = null;
-  clearItemLongPress();
-}}
-style={{ touchAction: "pan-y" }}
->
-  
-    {/* Swipe cue (background strips + icons) */}
-<div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
-  {/* Revealed background (never covers icons) */}
-  <div
-    className={`absolute top-0 bottom-0 bg-rose-50 ${isRTL ? "left-0" : "right-0"}`}
-    style={{
-      width: revealDelete ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
-      opacity: 0.9,
-      zIndex: 0,
-    }}
-  />
-  <div
-    className={`absolute top-0 bottom-0 bg-emerald-50 ${isRTL ? "right-0" : "left-0"}`}
-    style={{
-    width: revealFavorite ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
-      opacity: 0.9,
-      zIndex: 0,
-    }}
-  />
-
-  <div
-    className={`absolute inset-0 flex items-center justify-between px-4 ${
-      isRTL ? "flex-row-reverse" : "flex-row"
-    }`}
-  >
-    <div
-      className="text-rose-600"
-      style={{
-        zIndex: 2,
-        opacity:
-          revealDelete
-            ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
-              ? 1
-              : 0.65
-            : 0,
-        transform:
-          revealDelete && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
-            ? "scale(1.15)"
-            : "scale(1)",
-        transition: "transform 120ms ease, opacity 120ms ease",
-      }}
-    >
-      <Trash2 className="w-6 h-6" />
-    </div>
-
-    <div
-      className="text-emerald-600"
-      style={{
-        zIndex: 2,
-        opacity:
-          revealFavorite
-            ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
-              ? 1
-              : 0.65
-            : 0,
-        transform:
-          revealFavorite && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
-            ? "scale(1.15)"
-            : "scale(1)",
-        transition: "transform 120ms ease, opacity 120ms ease",
-      }}
-    >
-      <Star className="w-6 h-6" />
-    </div>
-  </div>
-</div>
-
-          {/* Foreground content (slides with finger/mouse) */}
-          <div
-          className={`relative z-10 flex items-center justify-between w-full p-3 rounded-2xl transition-colors ${
-        deleteFlashIds.has(item.id)
-          ? "bg-rose-50"
-          : favoriteFlashIds.has(item.id)
-            ? "bg-emerald-100"
-            : listFlashIds.has(item.id)
-              ? "bg-emerald-50"
-              : "bg-white"
-      }`}
-      dir={isRTL ? "rtl" : "ltr"}           
-          
-style={{
-  transform: `translateX(${effectiveDx}px)`,
-transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
-}}
-          >
-            <div
-              className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate cursor-pointer px-3`}
-              style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
-              onClick={() => {
-              if (swipeConsumedRef.current) return;
-              if (deleteFlashIds.has(item.id)) return;
-
-              if (longPressTriggeredRef.current) {
-                longPressTriggeredRef.current = false;
-                return;
-              }
-
-              if (categorySheetOpen && categorySheetItem?.id === item.id) {
-                closeCategorySheet();
-                return;
-              }
-
-              markPurchasedWithAnimation(item.id);
-            }}
-            >
-              {item.name}
-            </div>
-
-            <div
-              className="flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100"
-              //data-noswipe="true" // Allow swiping even when interacting with qty controls
-            >
-              <button
-                disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
-                onClick={() => updateQty(item.id, -1)}
-                className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
-                title="הפחת"
-                data-noswipe="true"
-              >
-                <Minus className="w-3 h-3" />
-              </button>
-
-              <span className="min-w-[2rem]text-center font-black text-slate-700">{formatItemQuantity(item.quantity)}</span>
-
-              <button
-                disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
-                onClick={() => updateQty(item.id, 1)}
-                className={`p-1 text-slate-400 ${(leavingIds.has(item.id) || deleteFlashIds.has(item.id)) ? "opacity-40 cursor-not-allowed" : ""}`}
-                title="הוסף"
-                data-noswipe="true"
-              >
-                <Plus className="w-3 h-3" />
-              </button>
-            </div>
-          </div>
-            {isCategoryOpen ? (
-          <div
-className="border-t-2 border-indigo-200 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200 flex flex-col"
-          onClick={(e) => e.stopPropagation()}
-          >
-            <div className={`text-sm font-black text-slate-700 mb-3 ${isRTL ? "text-right" : "text-left"}`}>
-              {t("העבר לקטגוריה")}
-            </div>
-<div className="px-4 pb-2">
-  <div className="space-y-2">
-  {allCategoryOptions.map((cat) => {
-    const isBuiltInCategory = CATEGORY_ORDER.includes(cat as CategoryKey);
-    const isCustomCategory = !isBuiltInCategory;
-    const isEditingThisCategory = editingCustomCategory === cat;
-
-    return (
-      <div key={cat} className="space-y-2">
-    {isEditingThisCategory ? (
-  <div
-    className="w-full px-3 py-3 rounded-2xl border border-indigo-200 bg-white space-y-3"
-    data-noswipe="true"
-  >
-    <input
-      autoFocus
-      value={editingCustomCategoryValue}
-      onChange={(e) => setEditingCustomCategoryValue(e.target.value)}
-      placeholder={t("שם קטגוריה")}
-      className={`w-full border rounded-xl px-3 py-3 text-sm ${isRTL ? "text-right" : "text-left"}`}
-      dir={isRTL ? "rtl" : "ltr"}
-    />
-
-    <div className={`flex gap-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
-      <button
-        type="button"
-        data-noswipe="true"
-        onClick={async () => {
-          const nextName = editingCustomCategoryValue.trim();
-          if (!nextName) return;
-          await renameCustomCategory(cat, nextName);
-        }}
-        className="flex-1 py-2 rounded-xl font-bold bg-emerald-500 text-white"
-      >
-        {t("שמור")}
-      </button>
-
-      <button
-        type="button"
-        data-noswipe="true"
-        onClick={() => {
-          setEditingCustomCategory(null);
-          setEditingCustomCategoryValue("");
-        }}
-        className="flex-1 py-2 rounded-xl font-bold bg-slate-100 text-slate-600"
-      >
-        {t("ביטול")}
-      </button>
-    </div>
-  </div>
-) : (
-          <div
-            className={`w-full px-4 py-3 rounded-2xl border flex items-center gap-3 ${
-              isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
-            } ${
-              categorySheetValue === cat
-                ? "border-indigo-500 bg-indigo-50 text-indigo-700"
-                : "border-slate-200 bg-white text-slate-700"
-            }`}
-          >
-            <button
-              type="button"
-              data-noswipe="true"
-              onClick={() => setCategorySheetValue(cat)}
-              className={`flex-1 flex items-center ${
-                isRTL ? "flex-row justify-between text-right" : "flex-row-reverse justify-between text-left"
-              }`}
-            >
-              <span className="font-bold">
-                {categoryLabelByLang[lang]?.[cat as CategoryKey] || categoryLabelByLang.he[cat as CategoryKey] || cat}
-              </span>
-              {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
-            </button>
-
-            {isCustomCategory ? (
-              <div className={`flex items-center gap-2 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
-                <button
-                  type="button"
-                  data-noswipe="true"
-                  title={t("ערוך קטגוריה")}
-                  onClick={() => {
-                    setEditingCustomCategory(cat);
-                    setEditingCustomCategoryValue(cat);
-                  }}
-                  className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 shrink-0"
-                >
-                  <Pencil className="w-4 h-4" />
-                </button>
-
-                <button
-                  type="button"
-                  data-noswipe="true"
-                  title={t("מחק קטגוריה")}
-                  onClick={() => {
-                    setDeleteCategoryConfirm(cat);
-                  }}
-                  className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
-                >
-                  <Trash2 className="w-4 h-4" />
-                </button>
-              </div>
-            ) : null}
-          </div>
-        )}
-      </div>
-    );
-  })}
-</div>
-
-<button
-  type="button"
-  data-noswipe="true"
-  onClick={() => setIsAddingCategory(true)}
-  className="w-full text-sm font-bold text-indigo-600 py-2"
->
-  {t("➕ הוסף קטגוריה")}
-</button>
-
-{isAddingCategory && (
-  <div className="px-2 py-2 space-y-2" data-noswipe="true">
-    <input
-      autoFocus
-      value={customCategoryInput}
-      onChange={(e) => setCustomCategoryInput(e.target.value)}
-      placeholder={t("שם קטגוריה")}
-      className={`w-full border rounded-xl px-3 py-3 text-sm ${isRTL ? "text-right" : "text-left"}`}
-      dir={isRTL ? "rtl" : "ltr"}
-    />
-
-    <button
-      type="button"
-      data-noswipe="true"
-      onClick={async () => {
-        const name = customCategoryInput.trim();
-        if (!name) return;
-
-        await saveCustomCategory(name);
-        setCategorySheetValue(name);
-        setCustomCategoryInput("");
-        setIsAddingCategory(false);
-      }}
-      className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
-    >
-      {t("שמור")}
-    </button>
-  </div>
-)}
-
-<label className={`flex items-center gap-3 px-1 pt-3 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
-  <input
-    type="checkbox"
-    checked={rememberCategoryForUser}
-    onChange={(e) => setRememberCategoryForUser(e.target.checked)}
-  />
-  <span className="text-sm font-bold text-slate-600">
-    {t("זכור לי תמיד עבור פריט זה")}
-  </span>
-</label>
-</div>  {/* 👈 סוגר את ה-scroll */}
-           <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
-            <button
-              type="button"
-              onClick={saveItemCategory}
-              className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
-            >
-              {t("שמור")}
-            </button>
-            <button
-              type="button"
-              onClick={closeCategorySheet}
-              className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
-            >
-              {t("נסגר")}
-            </button>
-          </div>
-          </div>
-        ) : null}
-        </div>
+          if (e.key === "Tab") {
+            if (visibleSuggestionList.length === 0) return;
+            e.preventDefault();
+            applySuggestion(
+              visibleSuggestionList[Math.max(0, activeSuggestIndex >= 0 ? activeSuggestIndex : 0)]
             );
-      })}
-    </div>
-  );
-})}
+            return;
+          }
 
-{purchasedItems.length > 0 ? (
-                    <div className="space-y-2 pt-4 border-t border-slate-200">
-                      <h3 className={`text-lg font-bold text-slate-700 ${rtlClasses.text} mb-2`}>{t("נקנו")} ({purchasedItems.length})</h3>
+          if (e.key === "Enter") {
+            if (visibleSuggestionList.length > 0) {
+              e.preventDefault();
+              const idx = activeSuggestIndex >= 0 ? activeSuggestIndex : 0;
+              applySuggestion(visibleSuggestionList[idx]);
+              return;
+            }
+          }
+        }}
+        onChange={(e) => {
+          setInputValue(e.target.value);
+          openSuggestions();
+          setActiveSuggestIndex(-1);
+        }}
+        placeholder={t("מה להוסיף לרשימה?")}
+        className={`w-full py-4 rounded-2xl border border-slate-200 shadow-sm focus:ring-4 focus:ring-indigo-500/10 outline-none transition-all font-bold text-slate-700 bg-white ${
+          isRTL
+            ? "pr-[20px] pl-14 text-right placeholder:text-right"
+            : "pl-[20px] pr-14 text-left placeholder:text-left"
+        }`}
+        dir={isRTL ? "rtl" : "ltr"}
+      />
 
-                      {purchasedItems.map((item) => (
-                        <div
-                          key={item.id}
-className={`flex items-center justify-between p-3 ${deleteFlashIds.has(item.id) ? "bg-rose-50" : "bg-slate-100/50"} rounded-2xl transition-all`}                          dir="rtl"
-                        ><div className="flex items-center justify-between w-full">
-      <div
-        className="flex items-center gap-3 flex-1 justify-start cursor-pointer"
-        onClick={() => togglePurchased(item.id)}
-        style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+      <button
+        type="submit"
+        className={`absolute top-2.5 ${
+          isRTL ? "left-2.5" : "right-2.5"
+        } bg-indigo-600 text-white p-2.5 rounded-xl shadow-md active:scale-90 transition-all`}
+        title="הוסף"
       >
-        <CheckCircle2 className="w-6 h-6 text-slate-400 flex-shrink-0" />
-        <span className="text-base font-bold text-slate-400 line-through truncate text-left">
-          <span className="flex gap-1">
-            <span>{item.name}</span>
-            {(item.quantity || 1) > 1 && (
-              <>
-                <span>x</span>
-                <span>{item.quantity}</span>
-              </>
-            )}
-          </span>
-        </span>
-      </div>
-<button
-  onClick={() => deleteItemWithFlash(item.id)}
-  className="p-2 text-red-500 hover:text-red-600 transition-colors"
->
-         <Trash2 className="w-4 h-4" />
+        <Plus className="w-6 h-6" />
+      </button>
+
+      {isSuggestOpen && inputValue.trim() && visibleSuggestionList.length > 0 ? (
+        <div
+          className="absolute left-0 right-0 top-full mt-2 z-50 bg-white border border-slate-200 rounded-2xl shadow-lg overflow-hidden max-h-72 overflow-y-auto overscroll-contain touch-pan-y"
+          dir={isRTL ? "rtl" : "ltr"}
+          onMouseDown={(e) => {
+            e.preventDefault();
+          }}
+        >
+          {visibleSuggestionList.map((s, idx) => (
+            <div
+              key={s.key + "-" + idx}
+              className={
+                "w-full flex items-stretch justify-between gap-2 hover:bg-slate-50 transition-colors " +
+                (idx === activeSuggestIndex ? "bg-slate-100" : "")
+              }
+            >
+              <button
+                type="button"
+                className={`flex-1 ${isRTL ? "text-right" : "text-left"} px-4 py-3 flex items-center justify-between`}
+                onClick={() => {
+                  void applySuggestion(s);
+                }}
+                title="השלמה"
+              >
+                <span className="font-semibold text-slate-700">{s.name}</span>
+
+                {s.isInList ? (
+                  <span className="text-xs px-2 py-1 rounded-full bg-slate-100 text-slate-600">
+                    {translate(lang, "ברשימה")}
+                    {typeof s.currentQty === "number" ? ` (${s.currentQty})` : ""}
+                  </span>
+                ) : null}
+              </button>
+
+              {s.canHide ? (
+                <button
+                  type="button"
+                  className="px-3 text-slate-400 hover:text-slate-700"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    hideSuggestion(s);
+                  }}
+                  title="הסר מההשלמות"
+                  aria-label="הסר מההשלמות"
+                >
+                  ✕
                 </button>
-              </div>
+              ) : null}
             </div>
           ))}
         </div>
       ) : null}
-    </div>
-  </div>
-)}
-          </>
-        ) : (
-          <div className="space-y-6">
-            <div className={rtlClasses.text}>
-              <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
-              <p className="text-sm text-slate-400 font-bold"><span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span></p>
-            </div>
+    </form>
 
-            {favoritesUnique.length === 0 ? (
-              <div className="text-center py-20 opacity-20">
-                <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
-                <p className="font-bold">{t("אין מועדפים עדיין")}</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 gap-3">
-                {favoritesUnique.map((fav) => {
-                  const revealFavDelete =
-                    favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0;
+    {(items?.length ?? 0) === 0 ? (
+      <div className="text-center py-16 px-4">
+        <div className="mx-auto w-full max-w-[260px]">
+          <img
+            src={appLogo}
+            alt="My Easy List"
+            className="w-40 h-40 mx-auto object-contain opacity-95 drop-shadow-sm animate-[floatY_3.6s_ease-in-out_infinite]"
+          />
+          <p className="mt-5 text-2xl font-black text-slate-400">{t("הרשימה שלך עדיין ריקה")}</p>
+          <p className="mt-2 text-base font-bold text-slate-400 leading-relaxed px-3 break-words">
+            {t("בוא נתחיל להוסיף מוצרים לקניות 🛒")}
+          </p>
+        </div>
+      </div>
+    ) : (
+      <div className="space-y-4">
+        <div className="space-y-3">
+          {allCategoryOptions.map((categoryKey) => {
+            const categoryItems = groupedActiveItems[categoryKey];
+            if (!categoryItems?.length) return null;
 
-                  const revealFavAdd =
-                    favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0;
+            return (
+              <div key={categoryKey} className="space-y-3">
+                <div className="px-1 pt-2">
+                  <h3 className={`text-sm font-black text-slate-400 ${isRTL ? "text-right" : "text-left"}`}>
+                    {categoryLabelByLang[lang]?.[categoryKey as CategoryKey] ||
+                      categoryLabelByLang.he[categoryKey as CategoryKey] ||
+                      categoryKey}
+                  </h3>
+                </div>
+
+                {categoryItems.map((item) => {
+                  const isCategoryOpen = categorySheetOpen && categorySheetItem?.id === item.id;
+
+                  const isHintItem = showInitialSwipeHint && activeItems[0]?.id === item.id;
+                  const hintDx = isHintItem
+                    ? hintPhase === 1
+                      ? isRTL
+                        ? 50
+                        : -50
+                      : hintPhase === 2
+                        ? isRTL
+                          ? -50
+                          : 50
+                        : 0
+                    : 0;
+
+                  const effectiveDx = swipeUi.id === item.id ? swipeUi.dx : hintDx;
+
+                  const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
+                  const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
 
                   return (
                     <div
-                      key={fav.id}
-                      className={`relative overflow-hidden rounded-2xl select-none transition-all duration-200 ease-out ${favDeleteFlashIds.has(fav.id) ? "pointer-events-none" : ""} ${favLeavingIds.has(fav.id) ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none" : "opacity-100 translate-y-0 scale-100"}`}
-                      dir="ltr"
-                      onPointerDown={onFavSwipePointerDown(fav.id)}
-                      onPointerMove={onFavSwipePointerMove(fav.id)}
-                      onPointerUp={onFavSwipePointerUp(fav.id)}
-                      onPointerCancel={onFavSwipePointerCancel}
+                      key={item.id}
+                      className={`relative overflow-visible rounded-2xl border border-slate-100 shadow-sm select-none transition-all duration-200 ease-out ${
+                        leavingIds.has(item.id)
+                          ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
+                          : enterAnim[item.id] === "from"
+                            ? "opacity-0 translate-y-1 scale-[0.99]"
+                            : "opacity-100 translate-y-0 scale-100"
+                      }`}
+                      dir="rtl"
+                      onPointerDown={(e) => {
+                      pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+                      onSwipePointerDown(item.id)(e);
+                      startItemLongPress(item, e)();
+                    }}
+                      onPointerMove={(e) => {
+                        
+
+                        const s = pointerLongPressStartRef.current;
+                        if (s) {
+                          const dx = Math.abs(e.clientX - s.x);
+                          const dy = Math.abs(e.clientY - s.y);
+
+                          if (dx > POINTER_LONG_PRESS_MOVE_TOLERANCE || dy > POINTER_LONG_PRESS_MOVE_TOLERANCE) {
+                            clearItemLongPress();
+                          }
+                        }
+
+                        onSwipePointerMove(item.id)(e);
+                      }}
+                      onPointerUp={(e) => {
+                        pointerLongPressStartRef.current = null;
+                        onSwipePointerUp(item.id)(e);
+                        clearItemLongPress();
+                      }}
+                      onPointerCancel={() => {
+                        pointerLongPressStartRef.current = null;
+                        onSwipePointerCancel();
+                        clearItemLongPress();
+                      }}
+                      onPointerLeave={() => {
+                        pointerLongPressStartRef.current = null;
+                        clearItemLongPress();
+                      }}
+                      onTouchStart={(e) => {
+                        
+
+                        const t0 = e.touches[0];
+                        touchLongPressStartRef.current = t0 ? { x: t0.clientX, y: t0.clientY } : null;
+
+                        onSwipeTouchStart(item.id)(e);
+                        startItemLongPress(item, e)();
+                      }}
+                      onTouchMove={(e) => {
+                        
+
+                        const t0 = e.touches[0];
+                        const s = touchLongPressStartRef.current;
+
+                        if (t0 && s) {
+                          const dx = Math.abs(t0.clientX - s.x);
+                          const dy = Math.abs(t0.clientY - s.y);
+
+                          if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
+                            clearItemLongPress();
+                          }
+                        }
+
+                        onSwipeTouchMove(item.id)(e);
+                      }}
+                      onTouchEnd={(e) => {
+                        touchLongPressStartRef.current = null;
+                        onSwipeTouchEnd(item.id)(e);
+                        clearItemLongPress();
+                      }}
+                      onTouchCancel={() => {
+                        touchLongPressStartRef.current = null;
+                        clearItemLongPress();
+                      }}
                       style={{ touchAction: "pan-y" }}
                     >
-                      {/* Swipe cue (background strips + icons) */}
                       <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
-                        {/* Revealed background (never covers icons) */}
                         <div
-                          className="absolute left-0 top-0 bottom-0 bg-rose-50"
+                          className={`absolute top-0 bottom-0 bg-rose-50 ${isRTL ? "left-0" : "right-0"}`}
                           style={{
-                            width: revealFavDelete ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                            width: revealDelete ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
                             opacity: 0.9,
                             zIndex: 0,
                           }}
                         />
                         <div
-                          className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+                          className={`absolute top-0 bottom-0 bg-emerald-50 ${isRTL ? "right-0" : "left-0"}`}
                           style={{
-                            width: revealFavAdd ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                            width: revealFavorite ? Math.min(Math.abs(effectiveDx), SWIPE_MAX_SHIFT_PX) : 0,
                             opacity: 0.9,
                             zIndex: 0,
                           }}
                         />
 
                         <div
-                          className="absolute inset-0 flex items-center justify-between px-4 flex-row"
-                        
+                          className={`absolute inset-0 flex items-center justify-between px-4 ${
+                            isRTL ? "flex-row-reverse" : "flex-row"
+                          }`}
                         >
                           <div
                             className="text-rose-600"
                             style={{
                               zIndex: 2,
-                              opacity:
-                                revealFavDelete
-                                  ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                    ? 1
-                                    : 0.65
-                                  : 0,
+                              opacity: revealDelete
+                                ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
+                                  ? 1
+                                  : 0.65
+                                : 0,
                               transform:
-                                revealFavDelete && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                revealDelete && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
                                   ? "scale(1.15)"
                                   : "scale(1)",
                               transition: "transform 120ms ease, opacity 120ms ease",
@@ -7020,53 +6973,530 @@ className={`flex items-center justify-between p-3 ${deleteFlashIds.has(item.id) 
                             className="text-emerald-600"
                             style={{
                               zIndex: 2,
-                              opacity:
-                                revealFavAdd
-                                  ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
-                                    ? 1
-                                    : 0.65
-                                  : 0,
+                              opacity: revealFavorite
+                                ? Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
+                                  ? 1
+                                  : 0.65
+                                : 0,
                               transform:
-                                revealFavAdd && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                                revealFavorite && Math.abs(effectiveDx) >= SWIPE_THRESHOLD_PX
                                   ? "scale(1.15)"
                                   : "scale(1)",
                               transition: "transform 120ms ease, opacity 120ms ease",
                             }}
                           >
-                            <ListPlusIcon className="w-6 h-6" />
+                            <Star className="w-6 h-6" />
                           </div>
                         </div>
                       </div>
 
-                      {/* Foreground card */}
                       <div
-                        className={`relative z-10 flex items-center justify-between p-4 rounded-2xl border border-slate-100 shadow-sm transition-colors ${favDeleteFlashIds.has(fav.id) ? "bg-rose-50" : favToListFlashIds.has(fav.id) ? "bg-emerald-100" : "bg-white"}`}
+                        className={`relative z-10 flex items-center justify-between w-full px-3 pt-2 pb-3 rounded-2xl transition-colors ${
+                          deleteFlashIds.has(item.id)
+                            ? "bg-rose-50"
+                            : favoriteFlashIds.has(item.id)
+                              ? "bg-emerald-100"
+                              : listFlashIds.has(item.id)
+                                ? "bg-emerald-50"
+                                : "bg-white"
+                        }`}
+                        dir={isRTL ? "rtl" : "ltr"}
                         style={{
-                          transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
-                          transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
+                          transform: `translateX(${effectiveDx}px)`,
+                          transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
                         }}
                       >
-                        <div className="flex items-center gap-2" />
-
                         <div
-                          className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate px-3 text-base`}
-                          style={{ direction: "rtl", unicodeBidi: "plaintext" }}
-                        >
-                          {fav.name}
-                        </div>
+  className={`flex-1 min-w-0 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 cursor-pointer px-3`}
+  style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
+ onClick={() => {
+  if (swipeConsumedRef.current) return;
+  if (deleteFlashIds.has(item.id)) return;
 
-                        <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+  if (longPressTriggeredRef.current) {
+    longPressTriggeredRef.current = false;
+    return;
+  }
+
+  if (categorySheetOpen && categorySheetItem?.id === item.id) {
+    closeCategorySheet();
+    return;
+  }
+
+  markPurchasedWithAnimation(item.id);
+}}
+>
+  {isCategoryOpen && editingCategoryItemId === item.id ? (
+    <input
+      autoFocus
+      value={editingCategoryText}
+      onChange={(e) => setEditingCategoryText(e.target.value)}
+      onBlur={() => saveCategoryItemName(item.id)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") {
+          saveCategoryItemName(item.id);
+        }
+      }}
+      className={`w-full text-sm font-bold outline-none bg-white border border-indigo-200 rounded-xl px-2 py-1 ${isRTL ? "text-right" : "text-left"}`}
+      dir={isRTL ? "rtl" : "ltr"}
+      onClick={(e) => e.stopPropagation()}
+    />
+  ) : (
+        <div className={!isCategoryOpen ? "truncate" : "min-w-0"}>
+        {item.name}
+    </div>
+  )}
+</div>
+
+                  {isCategoryOpen ? (
+  editingCategoryItemId === item.id &&
+  editingCategoryText.trim() !== item.name.trim() ? (
+    <button
+      type="button"
+      data-noswipe="true"
+      onClick={() => saveCategoryItemName(item.id)}
+      className="p-2 text-emerald-600 hover:text-emerald-700"
+    >
+      <Check className="w-4 h-4" />
+    </button>
+  ) : (
+    <button
+      type="button"
+      data-noswipe="true"
+      onClick={() => {
+        setEditingCategoryItemId(item.id);
+        setEditingCategoryText(item.name);
+      }}
+      className="p-2 text-slate-400 hover:text-indigo-600"
+    >
+      <Pencil className="w-4 h-4" />
+    </button>
+  )
+) : (
+        <div className="shrink-0 flex items-center gap-2 bg-slate-50 px-2 py-1 rounded-xl border border-slate-100">
+        <button
+      disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
+      onClick={() => updateQty(item.id, -1)}
+      className={`p-1 text-slate-400 ${
+        leavingIds.has(item.id) || deleteFlashIds.has(item.id)
+          ? "opacity-40 cursor-not-allowed"
+          : ""
+      }`}
+      data-noswipe="true"
+    >
+      <Minus className="w-3 h-3" />
+    </button>
+
+    <span className="min-w-[2rem] text-center font-black text-slate-700">
+      {formatItemQuantity(item.quantity)}
+    </span>
+
+    <button
+      disabled={leavingIds.has(item.id) || deleteFlashIds.has(item.id)}
+      onClick={() => updateQty(item.id, 1)}
+      className={`p-1 text-slate-400 ${
+        leavingIds.has(item.id) || deleteFlashIds.has(item.id)
+          ? "opacity-40 cursor-not-allowed"
+          : ""
+      }`}
+      data-noswipe="true"
+    >
+      <Plus className="w-3 h-3" />
+    </button>
+  </div>
+)}
+
+                        <DogEarBadge
+                          itemId={item.id}
+                          mode="added"
+                          name={item.addedByName}
+                          initial={item.addedByInitial}
+                        />
                       </div>
+
+                      {isCategoryOpen ? (
+                        <div
+                          className="border-t-2 border-indigo-200 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200 flex flex-col"
+                          onClick={(e) => e.stopPropagation()}
+                        >
+  
+                          <div className={`text-sm font-black text-slate-700 mb-3 ${isRTL ? "text-right" : "text-left"}`}>
+                            {t("העבר לקטגוריה")}
+                          </div>
+
+                          <div className="px-4 pb-2">
+                            <div className="space-y-2">
+                              {allCategoryOptions.map((cat) => {
+                                const isBuiltInCategory = CATEGORY_ORDER.includes(cat as CategoryKey);
+                                const isCustomCategory = !isBuiltInCategory;
+                                const isEditingThisCategory = editingCustomCategory === cat;
+
+                                return (
+                                  <div key={cat} className="space-y-2">
+                                    {isEditingThisCategory ? (
+                                      <div
+                                        className="w-full px-3 py-3 rounded-2xl border border-indigo-200 bg-white space-y-3"
+                                        data-noswipe="true"
+                                      >
+                                        <input
+                                          autoFocus
+                                          value={editingCustomCategoryValue}
+                                          onChange={(e) => setEditingCustomCategoryValue(e.target.value)}
+                                          placeholder={t("שם קטגוריה")}
+                                          className={`w-full border rounded-xl px-3 py-3 text-sm ${
+                                            isRTL ? "text-right" : "text-left"
+                                          }`}
+                                          dir={isRTL ? "rtl" : "ltr"}
+                                        />
+
+                                        <div className={`flex gap-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+                                          <button
+                                            type="button"
+                                            data-noswipe="true"
+                                            onClick={async () => {
+                                              const nextName = editingCustomCategoryValue.trim();
+                                              if (!nextName) return;
+                                              await renameCustomCategory(cat, nextName);
+                                            }}
+                                            className="flex-1 py-2 rounded-xl font-bold bg-emerald-500 text-white"
+                                          >
+                                            {t("שמור")}
+                                          </button>
+
+                                          <button
+                                            type="button"
+                                            data-noswipe="true"
+                                            onClick={() => {
+                                              setEditingCustomCategory(null);
+                                              setEditingCustomCategoryValue("");
+                                            }}
+                                            className="flex-1 py-2 rounded-xl font-bold bg-slate-100 text-slate-600"
+                                          >
+                                            {t("ביטול")}
+                                          </button>
+                                        </div>
+                                      </div>
+                                    ) : (
+                                      <div
+                                        className={`w-full px-4 py-3 rounded-2xl border flex items-center gap-3 ${
+                                          isRTL
+                                            ? "flex-row justify-between text-right"
+                                            : "flex-row-reverse justify-between text-left"
+                                        } ${
+                                          categorySheetValue === cat
+                                            ? "border-indigo-500 bg-indigo-50 text-indigo-700"
+                                            : "border-slate-200 bg-white text-slate-700"
+                                        }`}
+                                      >
+                                        <button
+                                          type="button"
+                                          data-noswipe="true"
+                                          onClick={() => setCategorySheetValue(cat)}
+                                          className={`flex-1 flex items-center ${
+                                            isRTL
+                                              ? "flex-row justify-between text-right"
+                                              : "flex-row-reverse justify-between text-left"
+                                          }`}
+                                        >
+                                          <span className="font-bold">
+                                            {categoryLabelByLang[lang]?.[cat as CategoryKey] ||
+                                              categoryLabelByLang.he[cat as CategoryKey] ||
+                                              cat}
+                                          </span>
+                                          {categorySheetValue === cat ? <Check className="w-4 h-4" /> : null}
+                                        </button>
+
+                                        {isCustomCategory ? (
+                                          <div className={`flex items-center gap-2 ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
+                                            <button
+                                              type="button"
+                                              data-noswipe="true"
+                                              title={t("ערוך קטגוריה")}
+                                              onClick={() => {
+                                                setEditingCustomCategory(cat);
+                                                setEditingCustomCategoryValue(cat);
+                                              }}
+                                              className="p-1 rounded-lg text-slate-400 hover:text-indigo-600 hover:bg-indigo-50 shrink-0"
+                                            >
+                                              <Pencil className="w-4 h-4" />
+                                            </button>
+
+                                            <button
+                                              type="button"
+                                              data-noswipe="true"
+                                              title={t("מחק קטגוריה")}
+                                              onClick={() => {
+                                                setDeleteCategoryConfirm(cat);
+                                              }}
+                                              className="p-1 rounded-lg text-slate-400 hover:text-rose-600 hover:bg-rose-50 shrink-0"
+                                            >
+                                              <Trash2 className="w-4 h-4" />
+                                            </button>
+                                          </div>
+                                        ) : null}
+                                      </div>
+                                    )}
+                                  </div>
+                                );
+                              })}
+                            </div>
+
+                            <button
+                              type="button"
+                              data-noswipe="true"
+                              onClick={() => setIsAddingCategory(true)}
+                              className="w-full text-sm font-bold text-indigo-600 py-2"
+                            >
+                              {t("➕ הוסף קטגוריה")}
+                            </button>
+
+                            {isAddingCategory && (
+                              <div className="px-2 py-2 space-y-2" data-noswipe="true">
+                                <input
+                                  autoFocus
+                                  value={customCategoryInput}
+                                  onChange={(e) => setCustomCategoryInput(e.target.value)}
+                                  placeholder={t("שם קטגוריה")}
+                                  className={`w-full border rounded-xl px-3 py-3 text-sm ${
+                                    isRTL ? "text-right" : "text-left"
+                                  }`}
+                                  dir={isRTL ? "rtl" : "ltr"}
+                                />
+
+                                <button
+                                  type="button"
+                                  data-noswipe="true"
+                                  onClick={async () => {
+                                    const name = customCategoryInput.trim();
+                                    if (!name) return;
+
+                                    await saveCustomCategory(name);
+                                    setCategorySheetValue(name);
+                                    setCustomCategoryInput("");
+                                    setIsAddingCategory(false);
+                                  }}
+                                  className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
+                                >
+                                  {t("שמור")}
+                                </button>
+                              </div>
+                            )}
+
+                            
+                          </div>
+
+                          <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+                            <button
+                              type="button"
+                              onClick={saveItemCategory}
+                              className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
+                            >
+                              {t("שמור")}
+                            </button>
+                            <button
+                              type="button"
+                              onClick={closeCategorySheet}
+                              className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
+                            >
+                              {t("נסגר")}
+                            </button>
+                          </div>
+                        </div>
+                      ) : null}
                     </div>
                   );
                 })}
               </div>
-            )}
+            );
+          })}
+        </div>
+
+        {purchasedItems.length > 0 ? (
+          <div className="space-y-2 pt-4 border-t border-slate-200">
+            <h3 className={`text-lg font-bold text-slate-700 ${rtlClasses.text} mb-2`}>
+              {t("נקנו")} ({purchasedItems.length})
+            </h3>
+
+            {purchasedItems.map((item) => (
+              <div
+                key={item.id}
+                className={`relative flex items-center justify-between p-3 ${
+                  deleteFlashIds.has(item.id) ? "bg-rose-50" : "bg-slate-100/50"
+                } rounded-2xl transition-all`}
+                dir="rtl"
+              >
+                <div className="flex items-center justify-between w-full">
+                  <div
+                    className="flex items-center gap-3 flex-1 justify-start cursor-pointer"
+                    onClick={() => togglePurchased(item.id)}
+                    style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                  >
+                    <CheckCircle2 className="w-6 h-6 text-slate-400 flex-shrink-0" />
+
+                    <span className="text-base font-bold text-slate-400 line-through truncate text-left">
+                      <span className="flex gap-1">
+                        <span>{item.name}</span>
+                        {(item.quantity || 1) > 1 && (
+                          <>
+                            <span>x</span>
+                            <span>{item.quantity}</span>
+                          </>
+                        )}
+                      </span>
+                    </span>
+                  </div>
+
+                  <button
+                    onClick={() => deleteItemWithFlash(item.id)}
+                    className="p-2 text-red-500 hover:text-red-600 transition-colors"
+                  >
+                    <Trash2 className="w-4 h-4" />
+                  </button>
+                </div>
+
+                <DogEarBadge
+                  itemId={item.id}
+                  mode="purchased"
+                  name={item.purchasedByName}
+                  initial={item.purchasedByInitial}
+                />
+              </div>
+            ))}
           </div>
-        )}
-      </main>
+        ) : null}
+      </div>
+    )}
+  </>
+) : (
+  <div className="space-y-6">
+    <div className={rtlClasses.text}>
+      <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
+      <p className="text-sm text-slate-400 font-bold">
+        <span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span>
+      </p>
+    </div>
 
+    {favoritesUnique.length === 0 ? (
+      <div className="text-center py-20 opacity-20">
+        <Star className="w-16 h-16 mx-auto mb-4 stroke-1" />
+        <p className="font-bold">{t("אין מועדפים עדיין")}</p>
+      </div>
+    ) : (
+      <div className="grid grid-cols-1 gap-3">
+        {favoritesUnique.map((fav) => {
+          const revealFavDelete = favSwipeUi.id === fav.id && favSwipeUi.rawDx > 0;
+          const revealFavAdd = favSwipeUi.id === fav.id && favSwipeUi.rawDx < 0;
 
+          return (
+            <div
+              key={fav.id}
+              className={`relative overflow-hidden rounded-2xl select-none transition-all duration-200 ease-out ${
+                favDeleteFlashIds.has(fav.id) ? "pointer-events-none" : ""
+              } ${
+                favLeavingIds.has(fav.id)
+                  ? "opacity-0 translate-y-1 scale-[0.99] pointer-events-none"
+                  : "opacity-100 translate-y-0 scale-100"
+              }`}
+              dir="ltr"
+              onPointerDown={onFavSwipePointerDown(fav.id)}
+              onPointerMove={onFavSwipePointerMove(fav.id)}
+              onPointerUp={onFavSwipePointerUp(fav.id)}
+              onPointerCancel={onFavSwipePointerCancel}
+              style={{ touchAction: "pan-y" }}
+            >
+              <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
+                <div
+                  className="absolute left-0 top-0 bottom-0 bg-rose-50"
+                  style={{
+                    width: revealFavDelete ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                    opacity: 0.9,
+                    zIndex: 0,
+                  }}
+                />
+                <div
+                  className="absolute right-0 top-0 bottom-0 bg-emerald-50"
+                  style={{
+                    width: revealFavAdd ? Math.min(Math.abs(favSwipeUi.rawDx), FAV_SWIPE_MAX_SHIFT_PX) : 0,
+                    opacity: 0.9,
+                    zIndex: 0,
+                  }}
+                />
+
+                <div className="absolute inset-0 flex items-center justify-between px-4 flex-row">
+                  <div
+                    className="text-rose-600"
+                    style={{
+                      zIndex: 2,
+                      opacity:
+                        revealFavDelete
+                          ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                            ? 1
+                            : 0.65
+                          : 0,
+                      transform:
+                        revealFavDelete && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                          ? "scale(1.15)"
+                          : "scale(1)",
+                      transition: "transform 120ms ease, opacity 120ms ease",
+                    }}
+                  >
+                    <Trash2 className="w-6 h-6" />
+                  </div>
+
+                  <div
+                    className="text-emerald-600"
+                    style={{
+                      zIndex: 2,
+                      opacity:
+                        revealFavAdd
+                          ? Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                            ? 1
+                            : 0.65
+                          : 0,
+                      transform:
+                        revealFavAdd && Math.abs(favSwipeUi.rawDx) >= FAV_SWIPE_THRESHOLD_PX
+                          ? "scale(1.15)"
+                          : "scale(1)",
+                      transition: "transform 120ms ease, opacity 120ms ease",
+                    }}
+                  >
+                    <ListPlusIcon className="w-6 h-6" />
+                  </div>
+                </div>
+              </div>
+
+              <div
+                className={`relative z-10 flex items-center justify-between p-4 rounded-2xl border border-slate-100 shadow-sm transition-colors ${
+                  favDeleteFlashIds.has(fav.id)
+                    ? "bg-rose-50"
+                    : favToListFlashIds.has(fav.id)
+                      ? "bg-emerald-100"
+                      : "bg-white"
+                }`}
+                style={{
+                  transform: favSwipeUi.id === fav.id ? `translateX(${favSwipeUi.dx}px)` : undefined,
+                  transition: favSwipeUi.id === fav.id ? "none" : "transform 160ms ease-out",
+                }}
+              >
+                <div className="flex items-center gap-2" />
+
+                <div
+                  className={`flex-1 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 truncate px-3 text-base`}
+                  style={{ direction: "rtl", unicodeBidi: "plaintext" }}
+                >
+                  {fav.name}
+                </div>
+
+                <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
+              </div>
+            </div>
+          );
+        })}
+      </div>
+    )}
+  </div>
+)}
+</main>
       {/* Bottom nav */}
 <div
   className="fixed bottom-0 left-0 right-0 z-50"

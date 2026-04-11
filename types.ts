@@ -14,6 +14,14 @@ export interface ShoppingItem {
   createdAt: number;
   purchasedAt?: number;
   category?: CategoryKey; // ← שדה אחד בלבד
+  
+  addedByUid?: string;
+  addedByName?: string;
+  addedByInitial?: string;
+  purchasedByUid?: string;
+  purchasedByName?: string;
+  purchasedByInitial?: string;
+  
 }
 
 export interface ShoppingList {
