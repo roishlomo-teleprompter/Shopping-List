@@ -83,6 +83,177 @@ import confetti from "canvas-confetti";
 import appLogo from "./logo-header-transparent.png";
 import { ShoppingItem, ShoppingList, Tab } from "./types.ts";
 
+function HeaderUsersPreview({
+  users,
+  isOwner,
+  ownerUid,
+  currentUid,
+  onRemoveUser,
+  t,
+}: {
+  users: {
+    id: string;
+    uid?: string;
+    label: string;
+    bg: string;
+    text?: string;
+    displayName?: string;
+    photoURL?: string;
+    isMore?: boolean;
+    hiddenUsers?: { uid: string; displayName: string }[];
+  }[];
+  isOwner: boolean;
+  ownerUid?: string;
+  currentUid?: string;
+  onRemoveUser: (uid: string) => void;
+  t: (key: string) => string;
+}) {
+  const [openId, setOpenId] = useState<string | null>(null);
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const autoCloseTimerRef = useRef<number | null>(null);
+
+  const tooltipAnimationStyle = `
+  @keyframes fadeIn {
+    from {
+      opacity: 0;
+      transform: translateY(-4px);
+    }
+    to {
+      opacity: 1;
+      transform: translateY(0);
+    }
+  }
+`;
+
+  useEffect(() => {
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target as Node | null;
+      if (!rootRef.current || !target) return;
+      if (!rootRef.current.contains(target)) {
+        setOpenId(null);
+        if (autoCloseTimerRef.current != null) {
+          window.clearTimeout(autoCloseTimerRef.current);
+          autoCloseTimerRef.current = null;
+        }
+      }
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () => {
+      document.removeEventListener("pointerdown", handlePointerDown);
+      if (autoCloseTimerRef.current != null) {
+        window.clearTimeout(autoCloseTimerRef.current);
+        autoCloseTimerRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div ref={rootRef} className="flex items-center">
+      <style>{tooltipAnimationStyle}</style>
+
+      {users.map((u, idx) => (
+        <div key={u.id} className={`relative ${idx > 0 ? "-mr-1" : ""}`}>
+          <div
+            onClick={(e) => {
+              e.stopPropagation();
+
+              setOpenId((prev) => {
+                const nextId = prev === u.id ? null : u.id;
+
+                if (autoCloseTimerRef.current != null) {
+                  window.clearTimeout(autoCloseTimerRef.current);
+                  autoCloseTimerRef.current = null;
+                }
+
+                if (nextId) {
+                  autoCloseTimerRef.current = window.setTimeout(() => {
+                    setOpenId(null);
+                    autoCloseTimerRef.current = null;
+                  }, 2200);
+                }
+
+                return nextId;
+              });
+            }}
+            className={`w-8 h-8 rounded-full border-2 border-white flex items-center justify-center text-sm font-black shadow-sm overflow-hidden cursor-pointer transition-all duration-200 ease-out ${
+              openId === u.id
+                ? "scale-110 z-20 shadow-lg ring-2 ring-indigo-200"
+                : "scale-100"
+            } ${u.bg} ${u.text || "text-white"}`}
+          >
+            {u.photoURL ? (
+  <img
+    src={u.photoURL}
+    alt={u.displayName || u.label}
+    referrerPolicy="no-referrer"
+    className="absolute inset-0 w-full h-full object-cover rounded-full"
+  />
+) : (
+  u.label
+)}
+          </div>
+
+          {openId === u.id ? (
+            <div className="absolute top-10 left-1/2 -translate-x-1/2 z-50">
+              <div className="rounded-xl bg-slate-900/95 text-white text-xs font-bold px-3 py-2 shadow-lg backdrop-blur-sm animate-[fadeIn_.18s_ease-out] whitespace-nowrap">
+                {u.isMore && Array.isArray(u.hiddenUsers) ? (
+  <div className="flex flex-col gap-1.5">
+    {u.hiddenUsers.map((hu, i) => (
+      <div
+        key={hu.uid || i}
+        className="flex items-center justify-between gap-3"
+      >
+        <span>{hu.displayName}</span>
+
+        {isOwner &&
+        hu.uid &&
+        hu.uid !== ownerUid &&
+        hu.uid !== currentUid ? (
+          <button
+            type="button"
+            onClick={(e) => {
+              e.stopPropagation();
+              onRemoveUser(hu.uid);
+            }}
+            className="text-rose-300 hover:text-rose-200"
+          >
+            {t("נתק משתמש")}
+          </button>
+        ) : null}
+      </div>
+    ))}
+  </div>
+) : (
+                  <div className="flex items-center justify-between gap-3">
+                    <span>{u.displayName}</span>
+
+                    {isOwner &&
+                    u.uid &&
+                    u.uid !== ownerUid &&
+                    u.uid !== currentUid ? (
+                      <button
+                        type="button"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          onRemoveUser(u.uid!);
+                        }}
+                        className="text-rose-300 hover:text-rose-200"
+                      >
+                      {t("נתק משתמש")}
+                      </button>
+                    ) : null}
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      ))}
+    </div>
+  );
+}
+
 type CalendarPluginType = {
   openCalendar: (options?: { title?: string; description?: string }) => Promise<void>;
 };
@@ -1702,6 +1873,15 @@ function getUserInitial(user?: FirebaseUser | null) {
   return name ? name.charAt(0).toUpperCase() : "";
 }
 
+function buildParticipantProfile(user?: FirebaseUser | null) {
+  return {
+    uid: String(user?.uid || "").trim(),
+    displayName: String(user?.displayName || user?.email || "").trim(),
+    photoURL: String(user?.photoURL || "").trim(),
+    email: String(user?.email || "").trim(),
+    updatedAt: Date.now(),
+  };
+}
 
 function buildCreatorLabel(
   lang: AppLang,
@@ -1932,7 +2112,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.1.0";
+const APP_VERSION = "1.1.3";
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -2110,7 +2290,6 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "בוא נתחיל להוסיף מוצרים לקניות 🛒": "בוא נתחיל להוסיף מוצרים לקניות 🛒",
     "תזכורת לקניות": "תזכורת לקניות",
     "התחבר עם גוגל": "התחבר עם גוגל",
-    "התנתקת מהרשימה": "התנתקת מהרשימה",
     "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.": "כדי להשתמש ברשימה ולהזמין חברים, צריך להתחבר עם גוגל.",
     "הרשימה שלי: חכמה": "My Easy List",
     "התנתק מרשימת קניות משותפת": "התנתק מרשימת קניות משותפת",
@@ -2120,6 +2299,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "Privacy Policy": "מדיניות פרטיות",
     "Terms & Conditions": "תנאים והגבלות",
     "יציאה": "התנתק",
+    "התנתקת מהרשימה": "התנתקת מהרשימה",
     "נקה רשימה": "נקה רשימה",
     "מועדפים": "מועדפים",
     "פריטים שחוזרים לסל": "פריטים שחוזרים לסל",
@@ -2184,6 +2364,17 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "סומן כנקנה על ידי": "סומן כנקנה על ידי",
       "משתמש לא ידוע": "משתמש לא ידוע",
       "את/ה": "את/ה",
+      "האם לנתק משתמש מהרשימה?": "האם לנתק משתמש מהרשימה?",
+      "נתק משתמש": "נתק משתמש",
+      "הוסרת מהרשימה": "הוסרת מהרשימה",
+      "דבר חופשי והוסף פריטים לרשימה": "דבר חופשי והוסף פריטים לרשימה",
+      "דוגמאות לפקודות קוליות": "דוגמאות לפקודות קוליות",
+      "דבר חופשי ולחץ שוב לסיום": "דבר חופשי ולחץ שוב לסיום",
+      "אל תציג שוב": "אל תציג שוב",
+      "התחל": "התחל",
+      "מחק רשימה": "מחק רשימה",
+      "סיימת לקנות?": "סיימת לקנות?",
+      "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2285,6 +2476,17 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "סומן כנקנה על ידי": "Marked as bought by",
     "משתמש לא ידוע": "Unknown user",
     "את/ה": "You",
+    "האם לנתק משתמש מהרשימה?": "Disconnect user from the list?",
+    "נתק משתמש": "Remove user",
+    "הוסרת מהרשימה": "You were removed from the list",
+    "דבר חופשי והוסף פריטים לרשימה": "Talk freely and add items to your list",
+    "דוגמאות לפקודות קוליות": "Voice command examples",
+    "דבר חופשי ולחץ שוב לסיום": "Speak freely and tap again to stop",
+    "אל תציג שוב": "Don't show again",
+    "התחל": "Start",
+    "מחק רשימה": "Clear list",
+    "סיימת לקנות?": "Done shopping?",
+    "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "All items are marked. Do you want to clear the list and start fresh?",
 },
 ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -2387,6 +2589,17 @@ ru: {
     "סומן כנקנה על ידי": "Отметил как купленное",
     "משתמש לא ידוע": "Неизвестный пользователь",
     "את/ה": "Вы",
+    "האם לנתק משתמש מהרשימה?": "Отключить пользователя от списка?",
+    "נתק משתמש": "Удалить пользователя",
+    "הוסרת מהרשימה": "Вы были удалены из списка",
+    "דבר חופשי והוסף פריטים לרשימה": "Говорите свободно и добавляйте товары в список",
+    "דוגמאות לפקודות קוליות": "Примеры голосовых команд",
+    "דבר חופשי ולחץ שוב לסיום": "Говорите свободно и нажмите снова, чтобы остановить",
+    "אל תציג שוב": "Больше не показывать",
+    "התחל": "Начать",
+    "מחק רשימה": "Очистить список",
+    "סיימת לקנות?": "Закончили покупки?",
+    "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "Все товары отмечены. Хотите очистить список и начать заново?",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2488,6 +2701,17 @@ ru: {
     "סומן כנקנה על ידי": "تم وضع علامة تم الشراء بواسطة",
     "משתמש לא ידוע": "مستخدم غير معروف",
     "את/ה": "أنت",
+    "האם לנתק משתמש מהרשימה?": "هل تريد إزالة المستخدم من القائمة؟",
+    "נתק משתמש": "إزالة المستخدم",
+    "הוסרת מהרשימה": "تمت إزالتك من القائمة",
+    "דבר חופשי והוסף פריטים לרשימה": "تحدث بحرية وأضف عناصر إلى القائمة",
+    "דוגמאות לפקודות קוליות": "أمثلة على الأوامر الصوتية",
+    "דבר חופשי ולחץ שוב לסיום": "تحدث بحرية واضغط مرة أخرى للإيقاف",
+    "אל תציג שוב": "لا تعرض مرة أخرى",
+    "התחל": "ابدأ",
+    "מחק רשימה": "مسح القائمة",
+    "סיימת לקנות?": "هل أنهيت التسوق؟",
+    "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "تم تحديد جميع العناصر. هل تريد تنظيف القائمة والبدء من جديد؟",
   },
 };
 
@@ -2498,17 +2722,17 @@ function translate(lang: AppLang, key: string) {
 }
 
 const getVoiceExamplesText = (lang: AppLang) => {
-switch (lang) {
-  case "en":
-    return '"bell pepper milk two eggs" | "clear list"';
-  case "ru":
-    return '"перец молоко два яйца" | "очистить список"';
-  case "ar":
-    return '"فلفل حليب بيضتين" | "امسح القائمة"';
-  case "he":
-  default:
-    return '"גמבה חלב שתי ביצים" | "מחק רשימה"';
-}
+  switch (lang) {
+    case "en":
+      return "rice, milk, 3 sugar, 5 tomatoes";
+    case "ru":
+      return "рис, молоко, 3 сахар, 5 помидоров";
+    case "ar":
+      return "أرز، حليب، 3 سكر، 5 طماطم";
+    case "he":
+    default:
+      return "אורז, חלב, 3 סוכר, 5 עגבניות";
+  }
 };
 
 const PASTEL_COLORS = [
@@ -2613,7 +2837,8 @@ useEffect(() => {
   };
 }, []);
 
-const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+
+  const [moreMenuOpen, setMoreMenuOpen] = useState(false);
   const [moreMenuView, setMoreMenuView] = useState<"main" | "language">("main");
   const appRootRef = useRef<HTMLDivElement | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
@@ -2648,6 +2873,7 @@ const [activeSuggestIndex, setActiveSuggestIndex] = useState(-1);
 const historyRef = useRef<Record<string, ItemHistoryEntry>>({});
 const blurCloseTimerRef = useRef<number | null>(null);
 const [userCategoryMap, setUserCategoryMap] = useState<UserCategoryMap>({});
+const [showBoughtAllModal, setShowBoughtAllModal] = useState(false);
 const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
 const [categorySheetValue, setCategorySheetValue] = useState<string>("other");
@@ -2657,10 +2883,10 @@ const [isAddingCategory, setIsAddingCategory] = useState(false);
 const [userCustomCategories, setUserCustomCategories] = useState<string[]>([]);
 const [editingCategoryItemId, setEditingCategoryItemId] = useState<string | null>(null);
 const [editingCategoryText, setEditingCategoryText] = useState("");
-const allCategoryOptions = useMemo(
-  () => [...CATEGORY_ORDER, ...userCustomCategories],
-  [userCustomCategories]
-);
+const allCategoryOptions = useMemo(() => {
+  const builtInWithoutOther = CATEGORY_ORDER.filter((c) => c !== "other");
+  return [...builtInWithoutOther, ...userCustomCategories, "other"];
+}, [userCustomCategories]);
 
 const [editingCustomCategory, setEditingCustomCategory] = useState<string | null>(null);
 const [editingCustomCategoryValue, setEditingCustomCategoryValue] = useState("");
@@ -3167,10 +3393,33 @@ useEffect(() => {
 }, [t]);
 
   // Voice (tap-to-record) UI state
+  const VOICE_COACH_DISMISS_KEY = "voiceCoachDismissed";
+  const VOICE_COACH_SEEN_COUNT_KEY = "voiceCoachSeenCount";
+  const VOICE_COACH_MAX_AUTO_SHOW = 3;
+
   type VoiceUiState = "idle" | "recording" | "processing" | "review";
   const [voiceUi, setVoiceUi] = useState<VoiceUiState>("idle");
   const [voiceSeconds, setVoiceSeconds] = useState(0);
   const [voiceDraft, setVoiceDraft] = useState<string>("");
+  const [showVoiceCoach, setShowVoiceCoach] = useState(false);
+const [dontShowVoiceCoachAgain, setDontShowVoiceCoachAgain] = useState(false);
+
+const [voiceCoachDismissed, setVoiceCoachDismissed] = useState<boolean>(() => {
+  try {
+    return localStorage.getItem(VOICE_COACH_DISMISS_KEY) === "true";
+  } catch {
+    return false;
+  }
+});
+
+const [voiceCoachSeenCount, setVoiceCoachSeenCount] = useState<number>(() => {
+  try {
+    const raw = Number(localStorage.getItem(VOICE_COACH_SEEN_COUNT_KEY) || "0");
+    return Number.isFinite(raw) ? raw : 0;
+  } catch {
+    return 0;
+  }
+});
   const voiceTimerRef = useRef<number | null>(null);
 
   const [undoToast, setUndoToast] = useState<{ msg: string; undoLabel: string; onUndo: () => void } | null>(null);
@@ -3203,10 +3452,33 @@ useEffect(() => {
   const SILENCE_MS_HE = 3000;
   const SILENCE_MS_EN = 5000;
   const MAX_SESSION_MS = 15000;
+  
 
   useEffect(() => {
     lastHeardRef.current = lastHeard || "";
   }, [lastHeard]);
+
+  useEffect(() => {
+  try {
+    localStorage.setItem(
+      VOICE_COACH_DISMISS_KEY,
+      voiceCoachDismissed ? "true" : "false"
+    );
+  } catch {
+    // ignore
+  }
+}, [voiceCoachDismissed]);
+
+useEffect(() => {
+  try {
+    localStorage.setItem(
+      VOICE_COACH_SEEN_COUNT_KEY,
+      String(voiceCoachSeenCount)
+    );
+  } catch {
+    // ignore
+  }
+}, [voiceCoachSeenCount]);
   useEffect(() => {
     return () => {
       if (pendingRestartTimerRef.current != null) {
@@ -3452,6 +3724,13 @@ if (deleteSwipe) {
   const latestListIdRef = useRef<string | null>(null);
   const latestItemsRef = useRef<ShoppingItem[]>([]);
   const confettiFiredRef = useRef(false);
+  const completionHandledByUserRef = useRef<string | null>(null);
+
+const getLastPurchasedItem = (itemsToCheck: ShoppingItem[]) => {
+  return [...itemsToCheck]
+    .filter((i) => i.isPurchased && i.purchasedAt)
+    .sort((a, b) => Number(b.purchasedAt || 0) - Number(a.purchasedAt || 0))[0];
+};
 
   useEffect(() => {
     latestListIdRef.current = list?.id ?? null;
@@ -3461,27 +3740,54 @@ if (deleteSwipe) {
     latestItemsRef.current = items;
   }, [items]);
 
-  useEffect(() => {
-    if (!items || items.length === 0) {
-      confettiFiredRef.current = false;
-      return;
-    }
+    useEffect(() => {
+  if (!items || items.length === 0) {
+    confettiFiredRef.current = false;
+    completionHandledByUserRef.current = null;
+    setShowBoughtAllModal(false);
+    return;
+  }
 
-    const allPurchased = items.every((i) => i.isPurchased);
+  const allPurchased = items.every((i) => i.isPurchased);
 
-    if (allPurchased && !confettiFiredRef.current) {
-      confettiFiredRef.current = true;
-      confetti({
-        particleCount: 140,
-        spread: 75,
-        origin: { y: 0.65 },
-      });
-    }
+  if (!allPurchased) {
+    confettiFiredRef.current = false;
+    completionHandledByUserRef.current = null;
+    setShowBoughtAllModal(false);
+    return;
+  }
 
-    if (!allPurchased) {
-      confettiFiredRef.current = false;
-    }
-  }, [items]);
+  const lastPurchasedItem = getLastPurchasedItem(items);
+  const lastPurchaserUid = String(lastPurchasedItem?.purchasedByUid || "").trim();
+  const currentUid = String(user?.uid || "").trim();
+
+  // ❌ אם זה לא המשתמש שסיים - אל תראה כלום
+  if (!lastPurchaserUid || !currentUid || lastPurchaserUid !== currentUid) {
+    setShowBoughtAllModal(false);
+    return;
+  }
+
+  // ❌ כבר הופעל - אל תפעיל שוב
+  if (confettiFiredRef.current) {
+    return;
+  }
+
+  // ✅ זה המשתמש שסיים
+  confettiFiredRef.current = true;
+  completionHandledByUserRef.current = currentUid;
+
+  confetti({
+    particleCount: 140,
+    spread: 75,
+    origin: { y: 0.65 },
+  });
+
+  // 🔥 פתיחת החלון רק לו
+  setTimeout(() => {
+  setShowBoughtAllModal(true);
+}, 900);
+
+}, [items, user?.uid]);
 
   useEffect(() => {
     if (!toast) return;
@@ -3564,9 +3870,54 @@ setList(newList);
     const itemsCol = collection(listRef, "items");
     const favsCol = collection(listRef, "favorites");
 
-    const unsubList = onSnapshot(listRef, (snap) => {
-      if (snap.exists()) setList({ ...(snap.data() as ShoppingList), id: snap.id });
-    });
+    const unsubList = onSnapshot(listRef, async (snap) => {
+  if (!snap.exists()) return;
+
+  const nextList = { ...(snap.data() as ShoppingList), id: snap.id };
+  const sharedWith = Array.isArray(nextList.sharedWith) ? nextList.sharedWith : [];
+  const stillHasAccess = !!user?.uid && sharedWith.includes(user.uid);
+
+  if (!stillHasAccess) {
+    if (localStorage.getItem("activeListId") === listRef.id) {
+      localStorage.removeItem("activeListId");
+    }
+
+    setList(null);
+    setItems([]);
+    setFavorites([]);
+    setShareMenuOpen(false);
+    setMoreMenuOpen(false);
+
+    const q = query(collection(db, "lists"), where("sharedWith", "array-contains", user!.uid));
+    const listsSnap = await getDocs(q);
+
+    if (listsSnap.empty) {
+      const newListRef = doc(collection(db, "lists"));
+      const newList: ShoppingList = {
+        id: newListRef.id,
+        title: "My Easy List",
+        ownerUid: user!.uid,
+        sharedWith: [user!.uid],
+        createdAt: Date.now(),
+        updatedAt: Date.now(),
+      };
+
+      await setDoc(newListRef, newList);
+      setList(newList);
+      localStorage.setItem("activeListId", newListRef.id);
+    } else {
+      const nextDoc = listsSnap.docs[0];
+      const fallbackList = { ...(nextDoc.data() as ShoppingList), id: nextDoc.id };
+      setList(fallbackList);
+      localStorage.setItem("activeListId", nextDoc.id);
+    }
+
+    setToast(t("הוסרת מהרשימה"));
+    return;
+  }
+
+  setList(nextList);
+});
 
     const unsubItems = onSnapshot(itemsCol, (snap) => {
       const docs = snap.docs.map((d) => d.data() as ShoppingItem);
@@ -3593,7 +3944,25 @@ favDocs.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdA
       unsubItems();
       unsubFavs();
     };
-  }, [list?.id]);
+  }, [list?.id, user?.uid, t]);
+
+useEffect(() => {
+  if (!list?.id || !user?.uid) return;
+
+  const profile = buildParticipantProfile(user);
+  if (!profile.uid) return;
+
+  const existing = (list as any)?.participantProfiles?.[user.uid];
+  const sameName = String(existing?.displayName || "") === profile.displayName;
+  const samePhoto = String(existing?.photoURL || "") === profile.photoURL;
+  const sameEmail = String(existing?.email || "") === profile.email;
+
+  if (sameName && samePhoto && sameEmail) return;
+
+  void updateDoc(doc(db, "lists", list.id), {
+    [`participantProfiles.${user.uid}`]: profile,
+  }).catch((e) => console.error("participantProfiles update failed", e));
+}, [list?.id, user?.uid, user?.displayName, user?.photoURL, user?.email]);
 
   const favoritesById = useMemo(() => {
     const s = new Set<string>();
@@ -3693,6 +4062,66 @@ useEffect(() => {
   );
 
 const isSharedList = (list?.sharedWith?.length || 0) > 1;
+const headerSharedUsersPreview = useMemo(() => {
+  const shared = Array.isArray(list?.sharedWith) ? list.sharedWith : [];
+  const profiles = ((list as any)?.participantProfiles || {}) as Record<
+    string,
+    { displayName?: string; photoURL?: string; email?: string }
+  >;
+
+  if (shared.length <= 1) return [];
+
+  const visibleUsers = shared.slice(0, 2).map((uid, index) => {
+    const profile = profiles[uid] || {};
+    const isMe = uid === user?.uid;
+
+    const displayName =
+      String(profile.displayName || profile.email || "").trim() ||
+      (isMe ? getUserDisplayName(user) : `User ${index + 1}`);
+
+    const initial =
+      displayName.trim().charAt(0).toUpperCase() ||
+      (isMe ? getUserInitial(user) || "U" : String(index + 1));
+
+   return {
+  id: uid,
+  uid,
+  label: initial,
+  bg: index % 2 === 0 ? "bg-indigo-500" : "bg-sky-500",
+  displayName,
+  photoURL: String(profile.photoURL || "").trim(),
+  isMore: false,
+  hiddenUsers: [],
+};
+  });
+
+  const extraCount = shared.length - visibleUsers.length;
+
+  if (extraCount > 0) {
+  const hiddenUsers = shared.slice(2).map((uid) => {
+  const profile = profiles[uid] || {};
+  return {
+    uid,
+    displayName:
+      String(profile.displayName || profile.email || "").trim() || "User",
+  };
+});
+
+visibleUsers.push({
+  id: "more",
+  uid: "",
+  label: `+${extraCount}`,
+  bg: "bg-slate-200",
+  text: "text-slate-600",
+  displayName: "",
+  photoURL: "",
+  isMore: true,
+  hiddenUsers,
+});
+}
+
+  return visibleUsers;
+}, [list?.sharedWith, (list as any)?.participantProfiles, user]);
 const sharedUserColorMap = useMemo(() => {
   return getStableSharedUserColorMap(items, list?.sharedWith || []);
 }, [items, list?.sharedWith]);
@@ -5258,6 +5687,20 @@ nativeFinalizeRef.current = false;
   }, Math.max(0, delayMs));
 };
 
+const shouldShowVoiceCoach = () => {
+  if (voiceCoachDismissed) return false;
+  if (voiceCoachSeenCount >= VOICE_COACH_MAX_AUTO_SHOW) return false;
+  return true;
+};
+
+const openVoiceCoachIfNeeded = () => {
+  if (!shouldShowVoiceCoach()) return false;
+
+  setDontShowVoiceCoachAgain(false);
+  setShowVoiceCoach(true);
+  setVoiceCoachSeenCount((prev) => prev + 1);
+  return true;
+};
 
   const startTapListening = async (bypassTapLock = false) => {
     nativeRestartRequestedRef.current = false;
@@ -6090,9 +6533,41 @@ const combined = mergeFinalAndInterimTranscript(finalText, interimText);
       localStorage.setItem("activeListId", nextDoc.id);
     }
 
-    setToast(t("התנתקת מהרשימה"));
+  setToast(t("הוסרת מהרשימה"));
   } catch (e) {
     console.error("leaveSharedList error", e);
+  }
+}
+
+async function removeSharedUser(targetUid: string) {
+  try {
+    if (!user || !list?.id) return;
+    if (user.uid !== list.ownerUid) return;
+    if (!targetUid) return;
+    if (targetUid === list.ownerUid) return;
+
+    const ok = window.confirm(t("האם לנתק משתמש מהרשימה?"));
+    if (!ok) return;
+
+    const ref = doc(db, "lists", list.id);
+    const snap = await getDoc(ref);
+
+    if (!snap.exists()) return;
+
+    const data = snap.data() as any;
+    const sharedWith = Array.isArray(data.sharedWith) ? data.sharedWith : [];
+    const updated = sharedWith.filter((uid: string) => uid !== targetUid);
+
+    await updateDoc(ref, {
+      sharedWith: updated,
+      [`participantProfiles.${targetUid}`]: deleteField(),
+      updatedAt: Date.now(),
+    });
+
+    setToast(t("בוצע"));
+  } catch (e) {
+    console.error("removeSharedUser error", e);
+    setToast(t("שגיאה"));
   }
 }
 
@@ -6309,10 +6784,11 @@ style={{
         className="sticky top-0 z-40 bg-slate-50"
         style={{ paddingTop: "max(env(safe-area-inset-top), 8px)" }}
       >
-        {/* Header */}
-      <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
-    <div className="flex items-center justify-between">   {/* Left: More */}
-    <div className="flex items-center gap-2">
+  {/* Header */}
+<header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
+  <div className="relative flex items-center justify-between gap-2 min-h-[44px]">
+    {/* Left: More */}
+    <div className="flex items-center gap-2 shrink-0">
       <button
         ref={moreBtnRef}
         type="button"
@@ -6326,21 +6802,41 @@ style={{
       </button>
     </div>
 
-    {/* Center: App title + logo + offline dot */}
-    <div className="flex items-center gap-2 min-w-0">
-      <span className={`w-2.5 h-2.5 rounded-full ${isOnline ? "bg-emerald-500" : "bg-slate-400"}`} aria-hidden="true" />
-      <img
-        src={appLogo}
-        alt="My Easy List"
-        className="w-8 h-8 object-contain shrink-0"
-      />
-      <span className="text-lg font-bold text-indigo-600 leading-tight whitespace-nowrap">My Easy List</span>
-    </div>
+ {/* Center title */}
+<div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2">
+  <div className="flex items-center gap-2">
+    <img
+      src={appLogo}
+      alt="My Easy List"
+      className="w-8 h-8 object-contain shrink-0"
+    />
+    <span className="text-lg font-bold text-indigo-600 whitespace-nowrap">
+      My Easy List
+    </span>
+  </div>
+</div>
 
-    
+{/* Avatars (separate layer) */}
+{headerSharedUsersPreview.length > 0 ? (
+  <div
+    onClick={toggleShareMenu}
+    className="absolute left-1/2 top-[calc(50%+18px)] -translate-x-1/2 flex items-center justify-center cursor-pointer"
+    title={t("שיתוף")}
+    aria-label={t("שיתוף")}
+  >
+    <HeaderUsersPreview
+      users={headerSharedUsersPreview}
+      isOwner={user?.uid === list?.ownerUid}
+      ownerUid={list?.ownerUid}
+      currentUid={user?.uid}
+      onRemoveUser={removeSharedUser}
+      t={t}
+    />
+  </div>
+) : null}
 
     {/* Right: Share */}
-    <div className="flex items-center gap-2">
+    <div className="flex items-center gap-2 shrink-0">
       <button
         ref={shareBtnRef}
         type="button"
@@ -6350,7 +6846,11 @@ style={{
         title={t("שיתוף")}
         aria-label={t("שיתוף")}
       >
-        {isCopied ? <Check className="w-5 h-5 text-emerald-500" /> : <Share2 className="w-5 h-5" />}
+        {isCopied ? (
+          <Check className="w-5 h-5 text-emerald-500" />
+        ) : (
+          <Share2 className="w-5 h-5" />
+        )}
       </button>
     </div>
   </div>
@@ -6626,7 +7126,7 @@ style={{
             }}
             className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white"
           >
-            {t("מחק")}
+           {t("נתק משתמש")}
           </button>
         </div>
       </div>
@@ -6636,24 +7136,35 @@ style={{
 ) : null}
 
         {/* Voice hint */}
-      <div className="px-5 pt-3">
-        <div className={`bg-white border border-slate-100 rounded-2xl px-4 py-2 shadow-sm ${isRTL ? "text-right" : "text-left"}`} dir={isRTL ? "rtl" : "ltr"}>
-          <div className="text-[11px] font-black text-slate-400">
-            {isListening ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע") : t("פקודות קוליות: לחץ על המיקרופון להתחלה, לחץ שוב להפסיק")}
-          </div>
-          {lastHeard ? (
-            <div
-  className={`text-sm font-bold text-slate-700 mt-1 ${isRTL ? "text-right" : "text-left"}`}
-  style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
->
-              {t("שמענו:")} {cleanVoicePreviewText(lastHeard)}
-            </div>
-          ) : null}
-          <div className="text-[10px] font-black text-slate-400 mt-1">
-            {t("דוגמאות:")} {getVoiceExamplesText(lang)}
-          </div>
-        </div>
+{(voiceUi === "recording" || voiceUi === "processing" || !!lastHeard) ? (
+  <div className="px-5 pt-3">
+    <div
+      className={`bg-white border border-slate-100 rounded-2xl px-4 py-2 shadow-sm ${
+        isRTL ? "text-right" : "text-left"
+      }`}
+      dir={isRTL ? "rtl" : "ltr"}
+    >
+      <div className="text-[11px] font-black text-slate-400">
+        {voiceUi === "recording"
+          ? t("מקשיב עכשיו - דבר ושחרר כדי לבצע")
+          : voiceUi === "processing"
+          ? t("מעבד")
+          : t("שמענו:")}
       </div>
+
+      {lastHeard ? (
+  <div
+    className={`text-sm font-bold text-slate-700 mt-1 ${isRTL ? "text-right" : "text-left"}`}
+    style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
+  >
+    {t("שמענו:")} {cleanVoicePreviewText(lastHeard)}
+  </div>
+) : null}
+
+      
+    </div>
+  </div>
+) : null}
 
       </div>
 
@@ -7534,26 +8045,35 @@ style={{
                 {voiceUi === "recording" ? (
                   <div className="absolute -top-7 left-1/2 -translate-x-1/2 px-3 py-1 rounded-full bg-black/80 text-white text-[12px] font-black flex items-center gap-2 whitespace-nowrap">
                     <span className="inline-block w-2 h-2 rounded-full bg-rose-500 animate-pulse" />
-                    {t(t("מקליט"))} {formatMmSs(voiceSeconds)}
+                   {t("מקליט")} {formatMmSs(voiceSeconds)} • {t("לחץ לסיום")}
                   </div>
                 ) : null}
 
                 <button
                   style={{ touchAction: "manipulation" }}
                   onPointerDown={(e) => {
-                    e.preventDefault();
+  e.preventDefault();
 
-                    if (Date.now() < micTapLockUntilRef.current) return;
-                    if (voiceUi === "review") return;
+  if (Date.now() < micTapLockUntilRef.current) return;
+  if (voiceUi === "review") return;
 
-                    if (voiceUi === "processing") {
-                      nativeRestartRequestedRef.current = true;
-                      return;
-                    }
+  if (voiceUi === "processing") {
+    nativeRestartRequestedRef.current = true;
+    return;
+  }
 
-                    if (voiceUi === "idle") void startTapListening();
-                    else if (voiceUi === "recording") void stopTapListening();
-                  }}
+  if (voiceUi === "idle") {
+    const openedCoach = openVoiceCoachIfNeeded();
+    if (openedCoach) return;
+
+    void startTapListening();
+    return;
+  }
+
+  if (voiceUi === "recording") {
+    void stopTapListening();
+  }
+}}
                   onClick={(e) => {
                     e.preventDefault();
                   }}
@@ -7561,12 +8081,12 @@ style={{
                     voiceUi === "recording" ? "bg-rose-500 text-white" : "bg-indigo-600 text-white hover:bg-indigo-700"
                   } ${voiceUi === "processing" ? "opacity-60" : ""}`}
                   title={
-                    voiceUi === "recording"
-                      ? t(t("לחץ לסיום"))
-                      : voiceUi === "processing"
-                      ? t(t("מעבד"))
-                      : t(t("לחץ כדי לדבר"))
-                  }
+  voiceUi === "recording"
+    ? t("לחץ לסיום")
+    : voiceUi === "processing"
+    ? t("מעבד")
+    : t("לחץ כדי לדבר")
+}
                 >
                   {voiceUi === "processing" ? (
                     <Loader2 className="w-7 h-7 animate-spin" />
@@ -7593,6 +8113,56 @@ style={{
         </div>
       </div>
 
+                  {/* Bought all items modal */}
+{showBoughtAllModal ? (
+  <div
+    className="fixed inset-0 z-[70] bg-black/30 flex items-center justify-center px-4"
+    dir={isRTL ? "rtl" : "ltr"}
+  >
+    <div className="w-full max-w-sm rounded-3xl bg-white shadow-2xl border border-slate-100 overflow-hidden">
+      <div className="p-6 space-y-4">
+
+        <div className="flex items-center gap-3">
+          <div className="w-10 h-10 shrink-0 rounded-2xl bg-emerald-50 flex items-center justify-center">
+            <CheckCircle2 className="w-5 h-5 text-emerald-500" />
+          </div>
+
+          <div className={`flex-1 ${rtlClasses.text}`}>
+            <h3 className="text-xl font-black text-slate-800">
+              {t("סיימת לקנות?")}
+            </h3>
+
+            <p className="mt-1 text-sm font-bold text-slate-400 leading-6">
+              {t("כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?")}
+            </p>
+          </div>
+        </div>
+
+        <div className={`flex gap-3 pt-3 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+          <button
+            type="button"
+            onClick={() => setShowBoughtAllModal(false)}
+            className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
+          >
+            {t("ביטול")}
+          </button>
+
+          <button
+            type="button"
+            onClick={async () => {
+              setShowBoughtAllModal(false);
+              await clearListServer();
+            }}
+            className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white shadow-lg shadow-indigo-100"
+          >
+            {t("נקה רשימה")}
+          </button>
+        </div>
+
+      </div>
+    </div>
+  </div>
+) : null}
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
@@ -7682,6 +8252,84 @@ style={{
           </button>
         </div>
       ) : null}
+      
+      {showVoiceCoach ? (
+  <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/20 backdrop-blur-[2px] px-4">
+  <div
+    className={`w-full max-w-[340px] rounded-[26px] bg-white shadow-[0_10px_30px_rgba(15,23,42,0.10)] border border-slate-100 p-4 ${
+      isRTL ? "text-right" : "text-left"
+    }`}
+    dir={isRTL ? "rtl" : "ltr"}
+  >
+      <div className="flex items-center gap-3 mb-2">
+  <div className="w-9 h-9 rounded-full bg-indigo-50 flex items-center justify-center shrink-0">
+    <Mic className="w-4.5 h-4.5 text-indigo-500" />
+  </div>
+  <div>
+    <div className="text-[15px] font-extrabold text-slate-800">
+      {t("דוגמאות לפקודות קוליות")}
+    </div>
+    <div className="text-[11px] font-bold text-slate-400 mt-0.5">
+      {t("דבר חופשי ולחץ שוב לסיום")}
+    </div>
+  </div>
+</div>
+
+     <div className="rounded-2xl bg-slate-50/80 border border-slate-100 px-4 py-2.5 text-sm font-bold text-slate-700 leading-7">
+  <div className="mb-1">{t("דוגמאות:")}</div>
+  <div>"{getVoiceExamplesText(lang)}"</div>
+  <div>"{t("מחק רשימה")}"</div>
+</div>
+
+      <label className="mt-4 flex items-center gap-2 text-sm font-bold text-slate-600 cursor-pointer">
+        <input
+  type="checkbox"
+  checked={dontShowVoiceCoachAgain}
+  onChange={(e) => {
+    const checked = e.target.checked;
+    setDontShowVoiceCoachAgain(checked);
+    setVoiceCoachDismissed(checked);
+
+    try {
+      localStorage.setItem(VOICE_COACH_DISMISS_KEY, checked ? "true" : "false");
+    } catch {
+      // ignore
+    }
+  }}
+  className="w-4 h-4 accent-indigo-600"
+/>
+      {t("אל תציג שוב")}
+      </label>
+
+      <div className={`mt-5 flex items-center gap-2 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+        <button
+          type="button"
+          onClick={() => {
+            setShowVoiceCoach(false);
+          }}
+          className="flex-1 rounded-2xl border border-slate-200 bg-white px-4 py-2.5 font-extrabold text-slate-700 hover:bg-slate-50"
+        >
+        {t("ביטול")}
+        </button>
+
+        <button
+          type="button"
+          onClick={() => {
+            if (dontShowVoiceCoachAgain) {
+              setVoiceCoachDismissed(true);
+            }
+            setShowVoiceCoach(false);
+            void startTapListening(true);
+          }}
+          className="flex-1 rounded-2xl bg-indigo-600 text-white px-4 py-2.5 font-extrabold shadow-md shadow-indigo-100 hover:bg-indigo-500"        >
+          {t("התחל")}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
+
       {toast ? (
         <div
           className="fixed left-1/2 -translate-x-1/2 bg-black text-white px-3 py-1.5 rounded-2xl shadow-lg z-50 text-[12px] font-bold whitespace-nowrap max-w-[92vw] overflow-hidden text-ellipsis"
