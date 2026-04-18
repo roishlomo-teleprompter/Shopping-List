@@ -2112,7 +2112,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.1.3";
+const APP_VERSION = "1.1.4";
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -7107,28 +7107,28 @@ style={{
           {t("קטגוריה זו תוסר וכל הפריטים שבה יעברו לקטגוריה אחר")}
         </div>
 
-        <div className={`mt-5 flex gap-3 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
-          <button
-            type="button"
-            onClick={() => setDeleteCategoryConfirm(null)}
-            className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700"
-          >
-            {t("ביטול")}
-          </button>
+       <div className={`mt-5 flex gap-3 ${isRTL ? "flex-row-reverse" : "flex-row-reverse"}`}>
+  <button
+    type="button"
+    onClick={async () => {
+      const categoryToDelete = deleteCategoryConfirm;
+      setDeleteCategoryConfirm(null);
+      if (!categoryToDelete) return;
+      await deleteCustomCategory(categoryToDelete);
+    }}
+    className="flex-1 py-3 rounded-2xl font-black text-white bg-gradient-to-r from-violet-600 to-indigo-600 shadow-lg shadow-violet-200"
+  >
+    {t("מחק קטגוריה")}
+  </button>
 
-          <button
-            type="button"
-            onClick={async () => {
-              const categoryToDelete = deleteCategoryConfirm;
-              setDeleteCategoryConfirm(null);
-              if (!categoryToDelete) return;
-              await deleteCustomCategory(categoryToDelete);
-            }}
-            className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white"
-          >
-           {t("נתק משתמש")}
-          </button>
-        </div>
+  <button
+    type="button"
+    onClick={() => setDeleteCategoryConfirm(null)}
+    className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-600"
+  >
+    {t("ביטול")}
+  </button>
+</div>
       </div>
     </div>
   ),
