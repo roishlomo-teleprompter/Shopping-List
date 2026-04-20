@@ -2112,7 +2112,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.1.4";
+const APP_VERSION = "1.1.5";
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -7351,7 +7351,11 @@ style={{
                         : 0
                     : 0;
 
-                  const effectiveDx = swipeUi.id === item.id ? swipeUi.dx : hintDx;
+                  const effectiveDx = isCategoryOpen
+  ? 0
+  : swipeUi.id === item.id
+    ? swipeUi.dx
+    : hintDx;
 
                   const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
                   const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
