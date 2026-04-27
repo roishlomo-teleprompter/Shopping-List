@@ -773,26 +773,7 @@ const handleJoin = async () => {
   }
 };
 
-      if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl" style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}>
-
-      <style>{`
-        html, body, #root {
-          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
-        }
-        *, *::before, *::after,
-        input, button, select, textarea, option, label {
-          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
-        }
-        input::placeholder, textarea::placeholder {
-          font-family: Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif !important;
-        }
-      `}</style>
-<Loader2 className="animate-spin text-indigo-600" />
-      </div>
-    );
-  }
+    
 
   return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
@@ -2112,7 +2093,51 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.1.5";
+const APP_VERSION = "1.1.9";
+
+const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
+
+type LastUiCache = {
+  list: ShoppingList | null;
+  items: ShoppingItem[];
+  favorites: FavoriteDoc[];
+  savedAt: number;
+};
+
+function loadLastUiCache(): LastUiCache | null {
+  try {
+    const raw = localStorage.getItem(LAST_UI_CACHE_KEY);
+    if (!raw) return null;
+
+    const parsed = JSON.parse(raw);
+    if (!parsed || typeof parsed !== "object") return null;
+
+    return {
+      list: parsed.list || null,
+      items: Array.isArray(parsed.items) ? parsed.items : [],
+      favorites: Array.isArray(parsed.favorites) ? parsed.favorites : [],
+      savedAt: Number(parsed.savedAt || 0),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function saveLastUiCache(cache: LastUiCache) {
+  try {
+    localStorage.setItem(LAST_UI_CACHE_KEY, JSON.stringify(cache));
+  } catch {
+    // ignore
+  }
+}
+
+function clearLastUiCache() {
+  try {
+    localStorage.removeItem(LAST_UI_CACHE_KEY);
+  } catch {
+    // ignore
+  }
+}
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -2375,6 +2400,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "מחק רשימה": "מחק רשימה",
       "סיימת לקנות?": "סיימת לקנות?",
       "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?",
+      "מסנכרן רשימה...": "מסנכרן רשימה...",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2487,6 +2513,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחק רשימה": "Clear list",
     "סיימת לקנות?": "Done shopping?",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "All items are marked. Do you want to clear the list and start fresh?",
+    "מסנכרן רשימה...": "Syncing list...",
 },
 ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -2600,6 +2627,7 @@ ru: {
     "מחק רשימה": "Очистить список",
     "סיימת לקנות?": "Закончили покупки?",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "Все товары отмечены. Хотите очистить список и начать заново?",
+    "מסנכרן רשימה...": "Синхронизация списка...",
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2712,6 +2740,7 @@ ru: {
     "מחק רשימה": "مسح القائمة",
     "סיימת לקנות?": "هل أنهيت التسوق؟",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "تم تحديد جميع العناصر. هل تريد تنظيف القائمة والبدء من جديد؟",
+    "מסנכרן רשימה...": "جارٍ مزامنة القائمة...",
   },
 };
 
@@ -2844,8 +2873,14 @@ useEffect(() => {
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuElRef = useRef<HTMLDivElement | null>(null);
   const [moreMenuPos, setMoreMenuPos] = useState<{ top: number; left: number; maxWidth: number } | null>(null);
-  const [list, setList] = useState<ShoppingList | null>(null);
-  const [items, setItems] = useState<ShoppingItem[]>([]);
+  const [showSyncHint, setShowSyncHint] = useState(false);
+ const [list, setList] = useState<ShoppingList | null>(() => {
+  return loadLastUiCache()?.list || null;
+});
+
+const [items, setItems] = useState<ShoppingItem[]>(() => {
+  return loadLastUiCache()?.items || [];
+});
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
   // UI-only cues
   const [favLeavingIds, setFavLeavingIds] = useState<Set<string>>(() => new Set()); // kept for backward compatibility (not used for delete flash)
@@ -2857,7 +2892,9 @@ useEffect(() => {
   const pendingEnterIdsRef = useRef<Set<string>>(new Set());
   const [enterAnim, setEnterAnim] = useState<Record<string, "from" | "to">>({});
 
-  const [favorites, setFavorites] = useState<FavoriteDoc[]>([]);
+  const [favorites, setFavorites] = useState<FavoriteDoc[]>(() => {
+  return loadLastUiCache()?.favorites || [];
+});
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
   const [inputValue, setInputValue] = useState("");
@@ -2907,6 +2944,18 @@ useEffect(() => {
   historyRef.current = loadItemHistory();
 }, []);
 
+
+useEffect(() => {
+  if (!list?.id) return;
+
+  saveLastUiCache({
+    list,
+    items,
+    favorites,
+    savedAt: Date.now(),
+  });
+}, [list, items, favorites]);
+
 const voiceExtraTerms = useMemo(() => {
   return getUserVoiceExtraTerms({
     history: historyRef.current,
@@ -2914,6 +2963,8 @@ const voiceExtraTerms = useMemo(() => {
     items,
   });
 }, [favorites, items]);
+
+
 
 useEffect(() => {
   if (pendingEnterIdsRef.current.size === 0) return;
@@ -3357,6 +3408,18 @@ const openCreatorHint = (itemId: string) => {
 const [authLoading, setAuthLoading] = useState(true);
 const [authInitialized, setAuthInitialized] = useState(false);
 const [listLoading, setListLoading] = useState(false);
+useEffect(() => {
+  if (!listLoading) {
+    setShowSyncHint(false);
+    return;
+  }
+
+  const timer = setTimeout(() => {
+    setShowSyncHint(true);
+  }, 300);
+
+  return () => clearTimeout(timer);
+}, [listLoading]);
 
   // Voice UI + state
   const [isListening, setIsListening] = useState(false);
@@ -3803,11 +3866,12 @@ const getLastPurchasedItem = (itemsToCheck: ShoppingItem[]) => {
           setAuthLoading(false);
 
           if (!u) {
-            setList(null);
-            setItems([]);
-            setFavorites([]);
-            return;
-          }
+  clearLastUiCache();
+  setList(null);
+  setItems([]);
+  setFavorites([]);
+  return;
+}
 
           setListLoading(true);
 
@@ -6617,19 +6681,9 @@ async function removeSharedUser(targetUid: string) {
     return () => document.removeEventListener("pointerdown", onDocPointerDown_moreMenu);
   }, [moreMenuOpen]);
 
-  if (!authInitialized) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl"
-           style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Heebo", "Rubik", Arial' }}>
-        <div className="flex flex-col items-center gap-3 opacity-70">
-          <Loader2 className="w-10 h-10 animate-spin" />
-          <div className="font-bold text-slate-500">...Loading</div>
-        </div>
-      </div>
-    );
-  }
+  // לא חוסמים את ה-UI בזמן בדיקת התחברות
 
-  if (!user) {
+  if (!user && authInitialized) {
     return (
       <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6" dir="rtl">
         <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6 text-center">
@@ -6660,22 +6714,6 @@ async function removeSharedUser(targetUid: string) {
           </button>
           <LegalFooter lang={lang} className="pt-1" />
         </div>
-      </div>
-    );
-  }
-
-  if (authLoading) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
-        <Loader2 className="animate-spin text-indigo-600" />
-      </div>
-    );
-  }
-
-  if (listLoading || !list?.id) {
-    return (
-      <div className="min-h-screen flex items-center justify-center bg-slate-50" dir="rtl">
-        <Loader2 className="animate-spin text-indigo-600" />
       </div>
     );
   }
@@ -7172,7 +7210,8 @@ style={{
       <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
 {activeTab === "list" ? (
   <>
-    <form onSubmit={addItem} className="relative">
+    <>
+ <form onSubmit={addItem} className="relative">
       <input
         ref={inputRef}
         value={inputValue}
@@ -7302,9 +7341,19 @@ style={{
           ))}
         </div>
       ) : null}
-    </form>
+          </form>
+  
+</>
 
-    {(items?.length ?? 0) === 0 ? (
+     {showSyncHint && (listLoading || !list?.id) ? (
+  <div className="flex items-center justify-center py-10 text-sm font-bold text-slate-400">
+    <Loader2 className="w-4 h-4 animate-spin ml-2" />
+{t("מסנכרן רשימה...")}
+  </div>
+
+
+) : (items?.length ?? 0) === 0 ? (
+  
       <div className="text-center py-16 px-4">
         <div className="mx-auto w-full max-w-[260px]">
           <img
