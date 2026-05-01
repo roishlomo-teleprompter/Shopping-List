@@ -842,20 +842,11 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean; forcedLang?: AppLang 
     ? translate(lang, "רשימות משותפות נפתחות רק באפליקציה")
     : translate(lang, "My Easy List זמין דרך האפליקציה");
 
-  const primaryStoreLabel = isAndroid
-    ? translate(lang, "גוגל פליי - בקרוב")
-    : isIOS
-      ? translate(lang, "אפ סטור - בקרוב")
-      : translate(lang, "גוגל פליי - בקרוב");
-
-  const secondaryStoreLabel = isAndroid
-    ? translate(lang, "אפ סטור - בקרוב")
-    : isIOS
-      ? translate(lang, "גוגל פליי - בקרוב")
-      : translate(lang, "אפ סטור - בקרוב");
+  const primaryStoreLabel = "Get it on Google Play";
+const secondaryStoreLabel = "App Store - Coming soon";
 
   const storeButtonClass =
-    "w-full rounded-2xl px-4 py-4 font-black border border-slate-200 bg-white text-slate-400 cursor-not-allowed";
+    "w-full rounded-2xl px-4 py-4 font-black border border-emerald-200 bg-emerald-500 text-white shadow-lg shadow-emerald-100";
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center p-6" dir="ltr">
@@ -875,13 +866,20 @@ const InstallLandingPage: React.FC<{ inviteMode?: boolean; forcedLang?: AppLang 
         </div>
 
         <div className="space-y-3">
-          <button type="button" disabled className={storeButtonClass}>
-            {primaryStoreLabel}
-          </button>
-          <button type="button" disabled className={storeButtonClass}>
-            {secondaryStoreLabel}
-          </button>
-        </div>
+  <button
+    type="button"
+    onClick={() =>
+      openExternalUrl("https://play.google.com/store/apps/details?id=com.rsh.myeasylist")
+    }
+    className={storeButtonClass}
+  >
+    {primaryStoreLabel}
+  </button>
+
+  <button type="button" disabled className={storeButtonClass}>
+    {secondaryStoreLabel}
+  </button>
+</div>
 
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
           {inviteMode
