@@ -882,9 +882,31 @@ const secondaryStoreLabel = "App Store - Coming soon";
 </div>
 
         <div className="rounded-2xl bg-slate-50 border border-slate-100 px-4 py-4 text-sm font-bold text-slate-500 leading-6">
-          {inviteMode
-            ? translate(lang, "אחרי התקנת האפליקציה פתח שוב את הקישור")
-            : translate(lang, "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")}
+         {inviteMode ? (
+  <div className="space-y-2">
+    {lang === "he" ? (
+      <>
+        <p>
+          התקן את האפליקציה, לאחר מכן חזור להודעת ההזמנה ולחץ שוב על הקישור.
+        </p>
+        <p className="text-emerald-600 font-black">
+          כך תתחבר לרשימה המשותפת.
+        </p>
+      </>
+    ) : (
+      <>
+        <p>
+          Install the app, then return to the invite message and tap the link again.
+        </p>
+        <p className="text-emerald-600 font-black">
+          This will connect you to the shared list.
+        </p>
+      </>
+    )}
+  </div>
+) : (
+  translate(lang, "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות")
+)}
         </div>
 
         <div className="pt-2 text-center text-xs font-bold text-slate-400">
@@ -2091,7 +2113,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.1.9";
+const APP_VERSION = "1.2.1";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -4981,21 +5003,48 @@ const appName = myListNameByLang[shareLang] || myListNameByLang.he;
 // If user didn't rename the list (or it matches a known default), localize it for sharing.
 const title = titleIsDefault ? `${appName}:` : rawTitle;
 
+const formatShareItemLine = (i: ShoppingItem) => {
+  const qtyText = formatItemQuantity(i.quantity || 1);
+
+  if ((i.quantity || 1) === 1) return `${RLE}${i.name}${PDF}`;
+
+  if (shareLang === "en" || shareLang === "ru") {
+    return `${RLE}${LRI}${qtyText}${PDI} ${i.name} X${PDF}`;
+  }
+
+  return `${RLE}${i.name} X ${LRI}${qtyText}${PDI}${PDF}`;
+};
+
+const categoryNameForShare = (category: string) => {
+  if (CATEGORY_ORDER.includes(category as CategoryKey)) {
+    return (
+      categoryLabelByLang[shareLang]?.[category as CategoryKey] ||
+      categoryLabelByLang.he[category as CategoryKey] ||
+      category
+    );
+  }
+
+  return category;
+};
+
 const lines =
   active.length > 0
-    ? active
-        .map((i) => {
-          const qtyText = formatItemQuantity(i.quantity || 1);
+    ? allCategoryOptions
+        .map((category) => {
+          const categoryItems = active.filter(
+            (i) =>
+              resolveItemCategory(i, userCategoryMap, userCustomCategories) ===
+              category
+          );
 
-          if ((i.quantity || 1) === 1) return `${RLE}${i.name}${PDF}`;
+          if (categoryItems.length === 0) return "";
 
-          if (shareLang === "en" || shareLang === "ru") {
-            return `${RLE}${LRI}${qtyText}${PDI} ${i.name} X${PDF}`;
-          }
-
-          return `${RLE}${i.name} X ${LRI}${qtyText}${PDI}${PDF}`;
+          return `*${categoryNameForShare(category)}:*\n${categoryItems
+            .map(formatShareItemLine)
+            .join("\n")}`;
         })
-        .join("\n")
+        .filter(Boolean)
+        .join("\n\n")
     : `${RLE}(${emptyByLang[shareLang] || emptyByLang.he})${PDF}`;
 
 const header = `*${title}*`;

@@ -1,0 +1,12 @@
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.myeasylist.app",
+      "sha256_cert_fingerprints": [
+        "64:DA:E8:E2:85:5B:7A:8E:8A:F8:06:9A:15:1E:29:81:69:4C:9B:3D:EF:15:10:98:86:14:FE:3E:E6:C1:33:4F"
+      ]
+    }
+  }
+]

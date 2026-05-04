@@ -1,5 +1,5 @@
 {
-	"appId": "com.myeasylist.app",
+	"appId": "com.rsh.myeasylist",
 	"appName": "My Easy List",
 	"webDir": "dist",
 	"bundledWebRuntime": false,
@@ -13,6 +13,7 @@
 	},
 	"packageClassList": [
 		"FirebaseAuthenticationPlugin",
+		"AppPlugin",
 		"CAPBrowserPlugin",
 		"SharePlugin",
 		"SpeechRecognitionPlugin"
