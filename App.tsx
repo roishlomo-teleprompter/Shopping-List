@@ -49,7 +49,9 @@ import {
   signInWithPopup,
   signInWithCredential,
   GoogleAuthProvider,
+  OAuthProvider,
   signOut,
+  deleteUser,
   User as FirebaseUser,
   setPersistence,
   browserLocalPersistence,
@@ -865,19 +867,35 @@ const secondaryStoreLabel = "App Store - Coming soon";
           <p className="text-sm font-bold text-slate-400">{installSubtitle}</p>
         </div>
 
-        <div className="space-y-3">
+       <div className="flex items-center justify-center gap-3 pt-1">
+  <button
+    type="button"
+    onClick={() =>
+      openExternalUrl("https://apps.apple.com/app/id6763803409")
+    }
+    className="block"
+    aria-label="Download on the App Store"
+  >
+    <img
+      src="https://developer.apple.com/assets/elements/badges/download-on-the-app-store.svg"
+      alt="Download on the App Store"
+      className="h-12 w-auto"
+    />
+  </button>
+
   <button
     type="button"
     onClick={() =>
       openExternalUrl("https://play.google.com/store/apps/details?id=com.rsh.myeasylist")
     }
-    className={storeButtonClass}
+    className="block"
+    aria-label="Get it on Google Play"
   >
-    {primaryStoreLabel}
-  </button>
-
-  <button type="button" disabled className={storeButtonClass}>
-    {secondaryStoreLabel}
+    <img
+      src="https://upload.wikimedia.org/wikipedia/commons/7/78/Google_Play_Store_badge_EN.svg"
+      alt="Get it on Google Play"
+      className="h-12 w-auto"
+    />
   </button>
 </div>
 
@@ -2113,7 +2131,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.2.1";
+const APP_VERSION = "1.2.2";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -2207,29 +2225,145 @@ const categoryLabelByLang: Record<AppLang, Record<CategoryKey, string>> = {
 
 const categoryKeywords: Record<CategoryKey, string[]> = {
   vegetables_fruits: [
-    "עגבניה","עגבניות","מלפפון","מלפפונים","בצל","בצלים","שום","גזר","תפוח","תפוחים","בננה","בננות","אבוקדו","פלפל","פלפלים","חסה","לימון","תפוז",
-    "tomato","tomatoes","cucumber","cucumbers","onion","onions","garlic","carrot","carrots","apple","apples","banana","bananas","avocado","pepper","peppers","lettuce","lemon","orange",
-    "помидор","помидоры","огурец","огурцы","лук","чеснок","морковь","яблоко","яблоки","банан","бананы","авокадо","перец","салат","лимон","апельсин",
-    "طماطم","خيار","بصل","ثوم","جزر","تفاح","موز","أفوكادو","افوكادو","فلفل","خس","ليمون","برتقال"
+    // Hebrew
+    "עגבניה","עגבניות","מלפפון","מלפפונים","בצל","בצלים","בצל ירוק","שום","גזר","תפוח אדמה","תפוחי אדמה","בטטה",
+    "פלפל","פלפלים","פלפל חריף","חסה","כרוב","כרובית","ברוקולי","קישוא","חציל","תירס","פטריה","פטריות",
+    "דלעת","סלרי","אפונה","שעועית ירוקה","צנון","סלק","תרד","קייל","פטרוזיליה","כוסברה","שמיר","נענע",
+    "ג׳ינג׳ר","כורכום","שורש חזרת",
+
+    "תפוח","תפוחים","בננה","בננות","אבוקדו","לימון","תפוז","תפוזים","קלמנטינה","אשכולית","אגס","אגסים",
+    "אפרסק","אפרסקים","שזיף","שזיפים","ענבים","אבטיח","מלון","קיווי","מנגו","אננס","תות","תותים",
+    "אוכמניות","פטל","רימון","קוקוס","תמר","תמרים","תאנה","תאנים",
+
+    // English
+    "tomato","tomatoes","cucumber","cucumbers","onion","onions","green onion","spring onion","garlic",
+    "carrot","carrots","potato","potatoes","sweet potato","sweet potatoes",
+    "pepper","peppers","hot pepper","lettuce","cabbage","cauliflower","broccoli","zucchini","eggplant",
+    "corn","mushroom","mushrooms","pumpkin","celery","peas","green beans","radish","beet","beets",
+    "spinach","kale","parsley","cilantro","dill","mint","ginger","turmeric","horseradish",
+
+    "apple","apples","banana","bananas","avocado","lemon","lemons","orange","oranges","mandarin",
+    "grapefruit","pear","pears","peach","peaches","plum","plums","grapes","watermelon","melon",
+    "kiwi","kiwis","mango","pineapple","strawberry","strawberries","blueberry","blueberries",
+    "raspberry","pomegranate","coconut","date","dates","fig","figs",
+
+    // Russian
+    "помидор","помидоры","огурец","огурцы","лук","зелёный лук","чеснок","морковь","картофель",
+    "батат","перец","острый перец","салат","капуста","цветная капуста","брокколи","кабачок",
+    "баклажан","кукуруза","гриб","грибы","тыква","сельдерей","горох","зелёная фасоль",
+    "редис","свекла","шпинат","петрушка","кинза","укроп","мята","имбирь","куркума",
+
+    "яблоко","яблоки","банан","бананы","авокадо","лимон","апельсин","апельсины","мандарин",
+    "грейпфрут","груша","груши","персик","персики","слива","сливы","виноград","арбуз",
+    "дыня","киви","манго","ананас","клубника","черника","малина","гранат","кокос",
+    "финик","инжир",
+
+    // Arabic
+    "طماطم","بندورة","خيار","بصل","بصل أخضر","ثوم","جزر","بطاطا","بطاطس","بطاطا حلوة",
+    "فلفل","فلفل حار","خس","ملفوف","قرنبيط","بروكلي","كوسا","باذنجان","ذرة","فطر",
+    "يقطين","كرفس","بازلاء","فاصوليا خضراء","فجل","شمندر","سبانخ","بقدونس","كزبرة",
+    "شبت","نعناع","زنجبيل","كركم",
+
+    "تفاح","موز","أفوكادو","افوكادو","ليمون","برتقال","يوسفي","جريب فروت","كمثرى",
+    "خوخ","برقوق","عنب","بطيخ","شمام","كيوي","مانجو","أناناس","فراولة","توت",
+    "رمان","جوز الهند","تمر","تين"
   ],
-  dairy_eggs: [
-    "חלב","גבינה","גבינות","יוגורט","יוגורטים","ביצה","ביצים","קוטג","קוטג'","שמנת","חמאה",
-    "milk","cheese","cheeses","yogurt","yoghurt","egg","eggs","cottage","cream","butter",
-    "молоко","сыр","йогурт","яйцо","яйца","творог","сливки","масло",
-    "حليب","جبنة","جبن","لبن","بيض","قشطة","زبدة"
-  ],
-  meat_fish: [
-    "עוף","חזה עוף","בשר","בשר טחון","דג","דגים","סלמון","טונה","נקניקיות",
-    "chicken","meat","ground beef","beef","fish","salmon","tuna","sausages",
-    "курица","мясо","фарш","рыба","лосось","тунец","сосиски",
-    "دجاج","لحم","لحم مفروم","سمك","سلمون","تونة","نقانق"
-  ],
-  bakery_bread: [
-    "לחם","לחמים","פיתה","פיתות","חלה","חלות","בגט","לחמניה","לחמניות","טוסט","טורטיה",
-    "bread","breads","pita","pitas","challah","baguette","roll","rolls","bun","buns","toast","tortilla",
-    "хлеб","пита","батон","багет","булка","булочки","тост","тортилья",
-    "خبز","بيتا","باغيت","لفافة","لفافات","توست","تورتيلا"
-  ],
+
+dairy_eggs: [
+  // Hebrew
+  "חלב","גבינה","גבינות","יוגורט","יוגורטים","ביצה","ביצים","קוטג","קוטג'","שמנת","חמאה",
+  "גבינה צהובה","גבינה לבנה","גבינת שמנת","מוצרלה","פטה","פרמזן","קשקבל","ריקוטה",
+  "לאבנה","גאודה","גבינה בולגרית","שמנת מתוקה","שמנת לבישול","שמנת חמוצה",
+  "חלב סויה","חלב שקדים","חלב שיבולת שועל","חלב קוקוס",
+  "אשל","לבן","מעדן","מעדנים","גלידה","קצפת",
+
+  // English
+  "milk","cheese","cheeses","yogurt","yoghurt","egg","eggs","cottage","cream","butter",
+  "yellow cheese","white cheese","cream cheese","mozzarella","feta","parmesan","ricotta",
+  "gouda","bulgarian cheese","sweet cream","sour cream","whipping cream",
+  "soy milk","almond milk","oat milk","coconut milk",
+  "labneh","ice cream","dessert","pudding",
+
+  // Russian
+  "молоко","сыр","йогурт","яйцо","яйца","творог","сливки","масло",
+  "сметана","моцарелла","фета","пармезан","рикотта","гауда",
+  "соевое молоко","миндальное молоко","овсяное молоко","кокосовое молоко",
+  "мороженое","десерт",
+
+  // Arabic
+  "حليب","جبنة","جبن","لبن","بيض","قشطة","زبدة",
+  "جبنة صفراء","جبنة بيضاء","جبنة كريمية","موزاريلا","فيتا","بارميزان",
+  "كريمة","كريمة طبخ","كريمة حامضة",
+  "حليب الصويا","حليب اللوز","حليب الشوفان","حليب جوز الهند",
+  "لبنة","بوظة","آيس كريم","مهلبية"
+],
+
+meat_fish: [
+  // Hebrew
+  "עוף","חזה עוף","שוקיים","כנפיים","פרגית","שניצל","בשר","בשר טחון","סטייק",
+  "אנטריקוט","אסאדו","קבב","המבורגר","נקניק","נקניקים","נקניקיות","פסטרמה",
+  "כבש","כבד","הודו","חזה הודו","עגל",
+
+  "דג","דגים","סלמון","טונה","אמנון","מוסר","בורי","דניס","סרדינים",
+  "פילה סלמון","פילה דג","טונה בשימורים","פירות ים",
+
+  // English
+  "chicken","chicken breast","drumsticks","wings","pargiyot","schnitzel",
+  "meat","ground beef","beef","steak","entrecote","asado","kebab","burger",
+  "sausage","sausages","pastrami","lamb","liver","turkey","turkey breast",
+  "veal",
+
+  "fish","salmon","tuna","tilapia","sea bass","bream","sardines",
+  "salmon fillet","fish fillet","canned tuna","seafood",
+
+  // Russian
+  "курица","куриная грудка","крылья","ножки","шницель",
+  "мясо","фарш","говядина","стейк","кебаб","бургер",
+  "колбаса","сосиски","пастрами","баранина","печень",
+  "индейка","грудка индейки",
+
+  "рыба","лосось","тунец","тиляпия","сардины",
+  "филе лосося","рыбное филе","консервированный тунец",
+  "морепродукты",
+
+  // Arabic
+  "دجاج","صدر دجاج","أجنحة","أفخاذ","شنيتسل",
+  "لحم","لحم مفروم","لحم بقري","ستيك","كباب","برغر",
+  "نقانق","مرتديلا","بسترمة","لحم غنم","كبدة",
+  "ديك رومي","صدر ديك رومي",
+
+  "سمك","سلمون","تونة","بلطي","سردين",
+  "فيليه سلمون","فيليه سمك","تونة معلبة",
+  "مأكولات بحرية"
+],
+
+
+bakery_bread: [
+  // Hebrew
+  "לחם","לחמים","פיתה","פיתות","חלה","חלות","בגט","לחמניה","לחמניות","טוסט","טורטיה",
+  "ג׳בטה","בריוש","קרואסון","מאפה","מאפים","בורקס","עוגה","עוגיות","עוגיה",
+  "בייגל","דונאט","סופגניה","קמח","שמרים","פירורי לחם","לחם מלא",
+  "לחם שיפון","לחם מחמצת","טוסטונים","קרקרים","מצה","מצות",
+
+  // English
+  "bread","breads","pita","pitas","challah","baguette","roll","rolls","bun","buns","toast","tortilla",
+  "ciabatta","brioche","croissant","pastry","pastries","burekas","cake","cookies","cookie",
+  "bagel","donut","doughnut","sufganiya","flour","yeast","breadcrumbs","whole wheat bread",
+  "rye bread","sourdough","crackers","matzah","matzot",
+
+  // Russian
+  "хлеб","пита","батон","багет","булка","булочки","тост","тортилья",
+  "чиабатта","бриошь","круассан","выпечка","бурекас","торт","печенье",
+  "бублик","пончик","мука","дрожжи","сухари","цельнозерновой хлеб",
+  "ржаной хлеб","крекеры","маца",
+
+  // Arabic
+  "خبز","بيتا","باغيت","لفافة","لفافات","توست","تورتيلا",
+  "تشاباتا","بريوش","كرواسون","معجنات","بوركس","كعكة","بسكويت",
+  "بيغل","دونات","طحين","خميرة","بقسماط","خبز قمح كامل",
+  "خبز الجاودار","كراكر","ماتسا"
+],
+
   other: [],
 };
 
@@ -2421,6 +2555,12 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "סיימת לקנות?": "סיימת לקנות?",
       "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?",
       "מסנכרן רשימה...": "מסנכרן רשימה...",
+      "מחיקת חשבון": "מחיקת חשבון",
+"למחוק את החשבון?": "למחוק את החשבון?",
+"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.",
+"מחק חשבון": "מחק חשבון",
+"החשבון נמחק": "החשבון נמחק",
+"צריך להתחבר מחדש": "צריך להתחבר מחדש",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2534,6 +2674,13 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "סיימת לקנות?": "Done shopping?",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "All items are marked. Do you want to clear the list and start fresh?",
     "מסנכרן רשימה...": "Syncing list...",
+    "מחיקת חשבון": "Delete account",
+"למחוק את החשבון?": "Delete account?",
+"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "This will delete your user details and remove you from your lists.",
+"מחק חשבון": "Delete account",
+"החשבון נמחק": "Account deleted",
+"צריך להתחבר מחדש": "Please sign in again",
+
 },
 ru: {
     "__toast_no_internet__": "Нет подключения к интернету",
@@ -2648,6 +2795,16 @@ ru: {
     "סיימת לקנות?": "Закончили покупки?",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "Все товары отмечены. Хотите очистить список и начать заново?",
     "מסנכרן רשימה...": "Синхронизация списка...",
+    "מחיקת חשבון": "Удалить аккаунт",
+"למחוק את החשבון?": "Удалить аккаунт?",
+"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "Это действие удалит данные пользователя и удалит вас из списков.",
+"מחק חשבון": "Удалить аккаунт",
+"החשבון נמחק": "Аккаунт удалён",
+"צריך להתחבר מחדש": "Пожалуйста, войдите снова",
+"מעבד": "Обработка",
+"שגיאה": "Ошибка",
+"ביטול": "Отмена",
+
 },
   ar: {
     "__toast_no_internet__": "لا يوجد اتصال بالإنترنت",
@@ -2761,6 +2918,16 @@ ru: {
     "סיימת לקנות?": "هل أنهيت التسوق؟",
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "تم تحديد جميع العناصر. هل تريد تنظيف القائمة والبدء من جديد؟",
     "מסנכרן רשימה...": "جارٍ مزامنة القائمة...",
+    "מחיקת חשבון": "حذف الحساب",
+"למחוק את החשבון?": "هل تريد حذف الحساب؟",
+"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "سيؤدي هذا إلى حذف بيانات المستخدم وإزالتك من القوائم.",
+"מחק חשבון": "حذف الحساب",
+"החשבון נמחק": "تم حذف الحساب",
+"צריך להתחבר מחדש": "يرجى تسجيل الدخول مرة أخرى",
+"מעבד": "جاري المعالجة",
+"שגיאה": "خطأ",
+"ביטול": "إلغاء",
+
   },
 };
 
@@ -3410,6 +3577,47 @@ useEffect(() => {
   }, [shareMenuOpen, moreMenuOpen, updateShareMenuPos, updateMoreMenuPos]);
 
 const [showClearConfirm, setShowClearConfirm] = useState(false);
+const [showDeleteAccountConfirm, setShowDeleteAccountConfirm] = useState(false);
+const [isDeletingAccount, setIsDeletingAccount] = useState(false);
+
+const deleteAccountPermanently = async () => {
+  console.log("DELETE_ACCOUNT_FUNCTION_START");
+
+  try {
+    const currentUser = auth.currentUser;
+
+    if (!currentUser) {
+      alert(t("צריך להתחבר מחדש"));
+      return;
+    }
+
+    setIsDeletingAccount(true);
+
+    await deleteUser(currentUser);
+
+    clearLastUiCache();
+    localStorage.removeItem("activeListId");
+
+    setShowDeleteAccountConfirm(false);
+    setList(null);
+    setItems([]);
+    setFavorites([]);
+    setUser(null);
+
+    setToast(t("החשבון נמחק"));
+  } catch (e: any) {
+    if (e?.code === "auth/requires-recent-login") {
+     setToast(t("צריך להתחבר מחדש"));
+      await signOutSmart();
+    } else {
+      setToast(e?.message || t("שגיאה"));
+    }
+  } finally {
+    setIsDeletingAccount(false);
+  }
+};
+
+
 const [creatorHintOpenId, setCreatorHintOpenId] = useState<string | null>(null);
 const creatorHintTimerRef = useRef<number | null>(null);
 const openCreatorHint = (itemId: string) => {
@@ -7047,6 +7255,9 @@ style={{
   </span>
 </button>
 
+
+
+
             <button
   type="button"
   onClick={() => {
@@ -7124,7 +7335,29 @@ style={{
 
 <div className="h-px bg-slate-100" />
 
-        
+<button
+  type="button"
+  onClick={() => {
+    setMoreMenuOpen(false);
+    setMoreMenuView("main");
+    setShowDeleteAccountConfirm(true);
+  }}
+  className={`w-full py-3 hover:bg-rose-50 flex items-center gap-3 text-rose-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Trash2 className="w-4 h-4 text-rose-600 shrink-0" />
+
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("מחיקת חשבון")}
+  </span>
+</button>
+
+
+
+
           <button
   type="button"
   onClick={() => {
@@ -8263,6 +8496,58 @@ style={{
     </div>
   </div>
 ) : null}
+
+
+      {/* Delete Account Confirm Modal */}
+{showDeleteAccountConfirm ? (
+  <div
+    className="fixed inset-0 z-[60] bg-black/40 flex items-center justify-center p-6"
+    dir={isRTL ? "rtl" : "ltr"}
+  >
+    <div className="bg-white w-full max-w-sm rounded-3xl shadow-xl p-6 space-y-5">
+      <div className="flex items-center gap-3">
+        <div className="w-10 h-10 rounded-full bg-rose-50 text-rose-600 flex items-center justify-center">
+          <AlertCircle className="w-5 h-5" />
+        </div>
+
+        <div className={rtlClasses.text}>
+          <div className="text-lg font-black text-slate-800">
+            {t("למחוק את החשבון?")}
+          </div>
+
+          <div className="text-sm font-bold text-slate-400">
+            {t("הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.")}
+          </div>
+        </div>
+      </div>
+
+      <div className={`flex gap-3 pt-3 ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
+        <button
+          type="button"
+          disabled={isDeletingAccount}
+          onClick={() => setShowDeleteAccountConfirm(false)}
+          className="flex-1 py-3 rounded-2xl font-black bg-slate-100 text-slate-700 disabled:opacity-60"
+        >
+          {t("ביטול")}
+        </button>
+
+        <button
+          type="button"
+          disabled={isDeletingAccount}
+          onClick={() => {
+            void deleteAccountPermanently();
+          }}
+          className="flex-1 py-3 rounded-2xl font-black bg-rose-600 text-white disabled:opacity-60"
+        >
+          {isDeletingAccount ? t("מעבד") : t("מחק חשבון")}
+        </button>
+      </div>
+    </div>
+  </div>
+) : null}
+
+
+
 
       {/* Clear Confirm Modal */}
       {showClearConfirm ? (
