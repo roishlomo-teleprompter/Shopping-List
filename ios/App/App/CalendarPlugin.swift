@@ -1,3 +1,4 @@
+
 import Foundation
 import Capacitor
 import EventKit
@@ -7,6 +8,7 @@ import EventKitUI
 public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegate {
     public let identifier = "CalendarPlugin"
     public let jsName = "CalendarPlugin"
+
     public let pluginMethods: [CAPPluginMethod] = [
         CAPPluginMethod(name: "openCalendar", returnType: CAPPluginReturnPromise)
     ]
@@ -15,7 +17,8 @@ public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegat
     private var pendingCall: CAPPluginCall?
 
     @objc func openCalendar(_ call: CAPPluginCall) {
-        let title = call.getString("title") ?? "Shopping Reminder - My Easy List"
+        print("CALENDAR_PLUGIN_OPEN_CALLED")
+        let title = call.getString("title") ?? "תזכורת לקניות - My Easy List"
         let description = call.getString("description") ?? ""
 
         let nowMs = Date().timeIntervalSince1970 * 1000
@@ -29,7 +32,28 @@ public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegat
             self.pendingCall = call
 
             if #available(iOS 17.0, *) {
-                self.presentEditor(title: title, description: description, startDate: startDate, endDate: endDate)
+                self.eventStore.requestFullAccessToEvents { granted, error in
+                    DispatchQueue.main.async {
+                        if let error = error {
+                            self.pendingCall?.reject("Calendar permission failed: \(error.localizedDescription)")
+                            self.pendingCall = nil
+                            return
+                        }
+
+                        guard granted else {
+                            self.pendingCall?.reject("Calendar permission denied")
+                            self.pendingCall = nil
+                            return
+                        }
+
+                        self.presentEditor(
+                            title: title,
+                            description: description,
+                            startDate: startDate,
+                            endDate: endDate
+                        )
+                    }
+                }
             } else {
                 self.eventStore.requestAccess(to: .event) { granted, error in
                     DispatchQueue.main.async {
@@ -45,7 +69,12 @@ public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegat
                             return
                         }
 
-                        self.presentEditor(title: title, description: description, startDate: startDate, endDate: endDate)
+                        self.presentEditor(
+                            title: title,
+                            description: description,
+                            startDate: startDate,
+                            endDate: endDate
+                        )
                     }
                 }
             }
@@ -58,6 +87,8 @@ public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegat
         event.notes = description
         event.startDate = startDate
         event.endDate = endDate
+        event.calendar = eventStore.defaultCalendarForNewEvents
+        event.addAlarm(EKAlarm(relativeOffset: -900))
 
         let editor = EKEventEditViewController()
         editor.eventStore = eventStore
@@ -73,8 +104,10 @@ public class CalendarPlugin: CAPPlugin, CAPBridgedPlugin, EKEventEditViewDelegat
         vc.present(editor, animated: true)
     }
 
-    public func eventEditViewController(_ controller: EKEventEditViewController,
-                                        didCompleteWith action: EKEventEditViewAction) {
+    public func eventEditViewController(
+        _ controller: EKEventEditViewController,
+        didCompleteWith action: EKEventEditViewAction
+    ) {
         controller.dismiss(animated: true) {
             self.pendingCall?.resolve([
                 "action": self.actionName(action)

@@ -257,22 +257,16 @@ function HeaderUsersPreview({
 }
 
 type CalendarPluginType = {
-  openCalendar: (options?: { title?: string; description?: string }) => Promise<void>;
+  openCalendar: (options?: {
+    title?: string;
+    description?: string;
+    startTime?: number;
+    endTime?: number;
+  }) => Promise<void>;
 };
 
 const CalendarPlugin = registerPlugin<CalendarPluginType>("CalendarPlugin");
 
-/**
- * Force Firebase auth persistence to LOCAL (so you won't need to login every time).
- * Runs once on module load.
- */
-(async () => {
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch (e) {
-    // ignore
-  }
-})();
 
 // ---------------------------
 // Helpers
@@ -564,7 +558,16 @@ function isGoogleSignInUserCancelError(e: any) {
   );
 }
 
+let signInInProgress = false;
+
 async function signInSmart() {
+    if (signInInProgress) {
+    return false;
+  }
+
+  signInInProgress = true;
+
+  try {
   const platform = (() => {
     try {
       return String(Capacitor.getPlatform?.() || "web").toLowerCase();
@@ -579,15 +582,31 @@ async function signInSmart() {
     platform === "native" ||
     Capacitor.isNativePlatform();
 
+ 
   if (isNative) {
   try {
     const result = await FirebaseAuthentication.signInWithGoogle();
-    const idToken = result.credential?.idToken;
-    if (!idToken) {
-      throw new Error("Google native sign-in returned without idToken");
+
+    console.log("NATIVE_GOOGLE_RESULT", {
+  hasIdToken: !!result.credential?.idToken,
+  hasAccessToken: !!result.credential?.accessToken,
+  hasUser: !!result.user,
+});
+
+    const idToken = result.credential?.idToken || undefined;
+    const accessToken = result.credential?.accessToken || undefined;
+
+    if (!idToken && !accessToken) {
+      throw new Error("Google native sign-in returned without idToken/accessToken");
     }
-    const credential = GoogleAuthProvider.credential(idToken);
+
+    const credential = GoogleAuthProvider.credential(idToken, accessToken);
+    console.log("WEB_FIREBASE_SIGNIN_BEFORE");
     await signInWithCredential(auth, credential);
+    console.log("WEB_FIREBASE_SIGNIN_AFTER", {
+  uid: auth.currentUser?.uid || null,
+});
+
     return true;
   } catch (e: any) {
     if (isGoogleSignInUserCancelError(e)) {
@@ -619,7 +638,62 @@ async function signInSmart() {
 }
     throw e;
   }
+  } finally {
+    signInInProgress = false;
+  }
 }
+
+async function signInWithAppleSmart() {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "ios") {
+    return false;
+  }
+
+  try {
+    const result = await FirebaseAuthentication.signInWithApple();
+
+    console.log("NATIVE_APPLE_RESULT", {
+      hasIdToken: !!result.credential?.idToken,
+      hasAccessToken: !!result.credential?.accessToken,
+      hasUser: !!result.user,
+    });
+
+    const idToken = result.credential?.idToken || undefined;
+    const accessToken = result.credential?.accessToken || undefined;
+
+    if (!idToken && !accessToken) {
+      throw new Error("Apple native sign-in returned without idToken/accessToken");
+    }
+
+   const nonce =
+  (result as any)?.credential?.nonce ||
+  (result as any)?.credential?.rawNonce ||
+  (result as any)?.nonce ||
+  (result as any)?.rawNonce ||
+  undefined;
+
+const provider = new OAuthProvider("apple.com");
+const credential = provider.credential({
+  idToken,
+  accessToken,
+  rawNonce: nonce,
+});
+
+await signInWithCredential(auth, credential);
+
+    return true;
+  } catch (e: any) {
+    console.error("APPLE_SIGNIN_ERROR_FULL", {
+      message: e?.message,
+      code: e?.code,
+      stack: e?.stack,
+      raw: JSON.stringify(e, null, 2),
+      full: e,
+    });
+
+    throw new Error(e?.message || "Apple sign-in failed");
+  }
+}
+
 
 async function waitForFirebaseUser(timeoutMs = 4000): Promise<FirebaseUser | null> {
   if (auth.currentUser) return auth.currentUser;
@@ -706,10 +780,45 @@ const lang = (() => {
   const token = searchParams.get("token");
 
   const [user, setUser] = useState<FirebaseUser | null>(auth.currentUser);
-  const [authLoading, setAuthLoading] = useState(true);
+const [authLoading, setAuthLoading] = useState(true);
+const [authInitialized, setAuthInitialized] = useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+useEffect(() => {
+  const onError = (e: ErrorEvent) => {
+    console.error("WINDOW_ERROR_FULL", {
+      message: e.message,
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+      stack:
+        (e.error as any)?.stack ||
+        (e.error as any)?.message ||
+        JSON.stringify(e.error, null, 2),
+      raw: e.error,
+    });
+  };
+
+  const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+    console.error("UNHANDLED_REJECTION_FULL", {
+      reason: e.reason,
+      stack:
+        (e.reason as any)?.stack ||
+        (e.reason as any)?.message ||
+        JSON.stringify(e.reason, null, 2),
+    });
+  };
+
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+  return () => {
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onUnhandledRejection);
+  };
+}, []);
+
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -2131,7 +2240,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.3.0";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -3805,21 +3914,27 @@ useEffect(() => {
   // Swipe gestures (active items): swipe left = delete, swipe right = favorite
   // Works on desktop (mouse drag) and mobile (touch).
   const swipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
-  const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
-  const swipeConsumedRef = useRef(false);
-  const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
-  const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
-  const swipeVibratedRef = useRef<Record<string, boolean>>({});
+const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
+const swipeConsumedRef = useRef(false);
+const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+const swipeVibratedRef = useRef<Record<string, boolean>>({});
+const cardTapHandledRef = useRef(false);
+  
 
   const SWIPE_THRESHOLD_PX = 70;
   const SWIPE_MAX_SHIFT_PX = 110;
 
   const isNoSwipeTarget = (t: EventTarget | null) => {
-    const el = t as HTMLElement | null;
-    if (!el) return false;
-    // Don't start swipe from buttons/inputs (qty buttons etc.)
-    return Boolean(el.closest("button, input, textarea, select, a, [data-noswipe='true']"));
-  };
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+
+  return Boolean(
+    el.closest(
+      "button, input, textarea, select, a, [data-noswipe='true'], [data-no-card-tap='true']"
+    )
+  );
+};
 
   const onSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
     if (isNoSwipeTarget(e.target)) return;
@@ -3827,7 +3942,7 @@ useEffect(() => {
         swipeConsumedRef.current = false;
     swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
     swipeLastRef.current = { x: e.clientX, y: e.clientY };
-    setSwipeUi({ id, dx: 0 });
+    setSwipeUi({ id: null, dx: 0 });
     swipeVibratedRef.current[id] = false;
   };
 
@@ -3859,7 +3974,9 @@ useEffect(() => {
         swipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
       } catch (e) {}
     }
-    setSwipeUi({ id, dx });
+    if (Math.abs(dxRaw) > 6 && Math.abs(dxRaw) >= Math.abs(e.clientY - s.y)) {
+  setSwipeUi({ id, dx });
+}
   };
 
   const onSwipePointerUp = (id: string) => (e: React.PointerEvent) => {
@@ -5080,17 +5197,27 @@ const openNativeCalendar = async () => {
 const calendarTitle = `${t("תזכורת לקניות")} - My Easy List`;
 const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
 
-  const isNative = Capacitor.isNativePlatform();
+const isNative = Capacitor.isNativePlatform();
+
 if (isNative) {
   try {
+    const start = Date.now() + 60 * 60 * 1000;
+    const end = start + 30 * 60 * 1000;
+
     await CalendarPlugin.openCalendar({
       title: calendarTitle,
       description: calendarDescription,
+      startTime: start,
+      endTime: end,
     });
+
     return;
   } catch (e) {
     console.error("CalendarPlugin failed", e);
-    setToast("CalendarPlugin נכשל באנדרואיד");
+
+    alert("CalendarPlugin failed: " + JSON.stringify(e));
+
+    setToast(t("שגיאה"));
     return;
   }
 }
@@ -6033,7 +6160,6 @@ const openVoiceCoachIfNeeded = () => {
 
     if (!user) {
       setToast(t("צריך להתחבר לפני פקודות קוליות"));
-      signInSmart();
       return;
     }
 
@@ -6570,7 +6696,6 @@ setVoiceUi("review");
 
     if (!user) {
       setToast(t("צריך להתחבר לפני פקודות קוליות"));
-      signInSmart();
       return;
     }
 
@@ -6953,20 +7078,69 @@ async function removeSharedUser(targetUid: string) {
     if (!ok) {
       return;
     }
-  } catch (e) {
-    console.error(e);
-  }
+  } catch (e: any) {
+  console.error("GOOGLE_SIGNIN_ERROR_FULL", {
+    message: e?.message,
+    code: e?.code,
+    stack: e?.stack,
+    raw: JSON.stringify(e, null, 2),
+    full: e,
+  });
+}
 }}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
-          >
-            <LogIn className="w-4 h-4" />
-            {t("התחבר עם גוגל")}
-          </button>
-          <LegalFooter lang={lang} className="pt-1" />
-        </div>
-      </div>
-    );
-  }
+
+className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 text-slate-800 py-4 rounded-2xl font-black shadow-sm"
+>
+  <svg width="20" height="20" viewBox="0 0 48 48">
+    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/>
+    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+    <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.3l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.5 16.2 44 24 44z"/>
+    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.1 3-3.4 5.4-6.5 6.9l6.2 5.2C38.3 36.9 44 31 44 24c0-1.3-.1-2.7-.4-3.5z"/>
+  </svg>
+
+  <span>Continue with Google</span>
+</button>
+
+{Capacitor.getPlatform() === "ios" && (
+  <button
+    type="button"
+    onClick={async () => {
+      try {
+        const ok = await signInWithAppleSmart();
+        if (!ok) return;
+      } catch (e: any) {
+        console.error("APPLE_BUTTON_ERROR_FULL", {
+          message: e?.message,
+          code: e?.code,
+          stack: e?.stack,
+          raw: JSON.stringify(e, null, 2),
+          full: e,
+        });
+        alert(e?.message || "Apple sign-in failed");
+      }
+    }}
+    className="w-full flex items-center justify-center gap-3 bg-black text-white py-4 rounded-2xl font-black shadow-sm"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M16.365 1.43c0 1.14-.42 2.24-1.16 3.05-.83.9-2.19 1.6-3.39 1.5-.15-1.12.45-2.32 1.16-3.05.78-.82 2.13-1.42 3.39-1.5zM20.54 17.09c-.58 1.3-.85 1.88-1.6 3.02-1.04 1.58-2.5 3.55-4.31 3.57-1.61.02-2.03-1.05-4.22-1.04-2.19.01-2.66 1.06-4.27 1.04-1.81-.02-3.19-1.8-4.23-3.38-2.9-4.4-3.2-9.56-1.42-12.3 1.27-1.96 3.28-3.1 5.17-3.1 1.93 0 3.15 1.06 4.75 1.06 1.56 0 2.5-1.06 4.73-1.06 1.68 0 3.46.91 4.73 2.47-4.16 2.28-3.49 8.24.67 9.72z"/>
+    </svg>
+
+    <span>Continue with Apple</span>
+  </button>
+)}
+
+<LegalFooter lang={lang} className="pt-1" />
+
+</div>
+</div>
+);
+}
 
 
 
@@ -7057,7 +7231,7 @@ style={{
   return (
     <div
   ref={appRootRef}
-  className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible"
+ className="flex flex-col h-[100dvh] max-h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow-2xl overflow-hidden"
   dir={isRTL ? "rtl" : "ltr"}
   style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}
 >
@@ -7070,7 +7244,7 @@ style={{
       {/* Sticky top chrome */}
       <div
         className="sticky top-0 z-40 bg-slate-50"
-        style={{ paddingTop: "max(env(safe-area-inset-top), 8px)" }}
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 34px)" }}
       >
   {/* Header */}
 <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
@@ -7482,11 +7656,11 @@ style={{
       </div>
 
       {/* Content */}
-      <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
+    <div className="flex-1 min-h-0 flex flex-col p-5 overflow-hidden">
 {activeTab === "list" ? (
   <>
     <>
- <form onSubmit={addItem} className="relative">
+ <form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
       <input
         ref={inputRef}
         value={inputValue}
@@ -7617,6 +7791,7 @@ style={{
         </div>
       ) : null}
           </form>
+          
   
 </>
 
@@ -7643,7 +7818,9 @@ style={{
         </div>
       </div>
     ) : (
-      <div className="space-y-4">
+     <div
+ className="overflow-y-auto no-scrollbar -mx-5 px-5">
+        <div className="space-y-4 pb-36">
         <div className="space-y-3">
           {allCategoryOptions.map((categoryKey) => {
             const categoryItems = groupedActiveItems[categoryKey];
@@ -7675,14 +7852,27 @@ style={{
                         : 0
                     : 0;
 
-                  const effectiveDx = isCategoryOpen
+                  const isAnySwipeActive = swipeUi.id !== null;
+const isInitialHintActive = !isAnySwipeActive && isHintItem && hintDx !== 0;
+
+const effectiveDx = isCategoryOpen
   ? 0
   : swipeUi.id === item.id
     ? swipeUi.dx
-    : hintDx;
+    : isAnySwipeActive
+      ? 0
+      : hintDx;
 
-                  const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
-                  const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
+const revealDelete =
+  !isCategoryOpen &&
+  (isInitialHintActive || swipeUi.id === item.id) &&
+  (isRTL ? effectiveDx > 0 : effectiveDx < 0);
+
+const revealFavorite =
+  !isCategoryOpen &&
+  (isInitialHintActive || swipeUi.id === item.id) &&
+  (isRTL ? effectiveDx < 0 : effectiveDx > 0);
+
 
                   return (
                     <div
@@ -7696,10 +7886,12 @@ style={{
                       }`}
                       dir="rtl"
                       onPointerDown={(e) => {
-                      pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
-                      onSwipePointerDown(item.id)(e);
-                      startItemLongPress(item, e)();
-                    }}
+  if (isNoSwipeTarget(e.target)) return;
+
+  pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+  onSwipePointerDown(item.id)(e);
+  startItemLongPress(item, e)();
+}}
                       onPointerMove={(e) => {
                         
 
@@ -7715,11 +7907,47 @@ style={{
 
                         onSwipePointerMove(item.id)(e);
                       }}
-                      onPointerUp={(e) => {
-                        pointerLongPressStartRef.current = null;
-                        onSwipePointerUp(item.id)(e);
-                        clearItemLongPress();
-                      }}
+                    onPointerUp={(e) => {
+  const s = pointerLongPressStartRef.current;
+
+  if (isNoSwipeTarget(e.target)) {
+    pointerLongPressStartRef.current = null;
+    clearItemLongPress();
+    return;
+  }
+
+  pointerLongPressStartRef.current = null;
+
+  onSwipePointerUp(item.id)(e);
+  clearItemLongPress();
+
+  if (swipeConsumedRef.current) return;
+  if (deleteFlashIds.has(item.id)) return;
+
+  if (longPressTriggeredRef.current) {
+    longPressTriggeredRef.current = false;
+    return;
+  }
+
+  if (s) {
+    const dx = Math.abs(e.clientX - s.x);
+    const dy = Math.abs(e.clientY - s.y);
+
+    if (dx <= 6 && dy <= 6) {
+      cardTapHandledRef.current = true;
+
+      if (categorySheetOpen && categorySheetItem?.id === item.id) {
+        closeCategorySheet();
+      } else {
+        markPurchasedWithAnimation(item.id);
+      }
+
+      window.setTimeout(() => {
+        cardTapHandledRef.current = false;
+      }, 0);
+    }
+  }
+}}
                       onPointerCancel={() => {
                         pointerLongPressStartRef.current = null;
                         onSwipePointerCancel();
@@ -7729,42 +7957,48 @@ style={{
                         pointerLongPressStartRef.current = null;
                         clearItemLongPress();
                       }}
-                      onTouchStart={(e) => {
-                        
+                     onTouchStart={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  if (isNoSwipeTarget(e.target)) return;
 
-                        const t0 = e.touches[0];
-                        touchLongPressStartRef.current = t0 ? { x: t0.clientX, y: t0.clientY } : null;
+  const t0 = e.touches[0];
+  touchLongPressStartRef.current = t0 ? { x: t0.clientX, y: t0.clientY } : null;
 
-                        onSwipeTouchStart(item.id)(e);
-                        startItemLongPress(item, e)();
-                      }}
-                      onTouchMove={(e) => {
-                        
+  onSwipeTouchStart(item.id)(e);
+  startItemLongPress(item, e)();
+}}
+onTouchMove={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
 
-                        const t0 = e.touches[0];
-                        const s = touchLongPressStartRef.current;
+  const t0 = e.touches[0];
+  const s = touchLongPressStartRef.current;
 
-                        if (t0 && s) {
-                          const dx = Math.abs(t0.clientX - s.x);
-                          const dy = Math.abs(t0.clientY - s.y);
+  if (t0 && s) {
+    const dx = Math.abs(t0.clientX - s.x);
+    const dy = Math.abs(t0.clientY - s.y);
 
-                          if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
-                            clearItemLongPress();
-                          }
-                        }
+    if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
+      clearItemLongPress();
+    }
+  }
 
-                        onSwipeTouchMove(item.id)(e);
-                      }}
-                      onTouchEnd={(e) => {
-                        touchLongPressStartRef.current = null;
-                        onSwipeTouchEnd(item.id)(e);
-                        clearItemLongPress();
-                      }}
-                      onTouchCancel={() => {
-                        touchLongPressStartRef.current = null;
-                        clearItemLongPress();
-                      }}
-                      style={{ touchAction: "pan-y" }}
+  onSwipeTouchMove(item.id)(e);
+}}
+onTouchEnd={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+
+  touchLongPressStartRef.current = null;
+  onSwipeTouchEnd(item.id)(e);
+  clearItemLongPress();
+}}
+onTouchCancel={() => {
+  touchLongPressStartRef.current = null;
+  clearItemLongPress();
+}}
+style={{
+  touchAction: "pan-y",
+  contain: "paint",
+}}
                     >
                       <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
                         <div
@@ -7842,20 +8076,29 @@ style={{
                         dir={isRTL ? "rtl" : "ltr"}
                         style={{
                           transform: `translateX(${effectiveDx}px)`,
-                          transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
+                         transition:
+  swipeUi.id === item.id || swipeUi.id !== null
+    ? "none"
+    : "transform 260ms ease",
+
                         }}
                       >
                         <div
   className={`flex-1 min-w-0 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 cursor-pointer px-3`}
   style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
  onClick={() => {
+if (cardTapHandledRef.current) return;
   if (swipeConsumedRef.current) return;
+  
   if (deleteFlashIds.has(item.id)) return;
 
-  if (longPressTriggeredRef.current) {
-    longPressTriggeredRef.current = false;
+ if (longPressTriggeredRef.current) {
+  longPressTriggeredRef.current = false;
+
+  if (categorySheetOpen && categorySheetItem?.id === item.id) {
     return;
   }
+}
 
   if (categorySheetOpen && categorySheetItem?.id === item.id) {
     closeCategorySheet();
@@ -7876,7 +8119,7 @@ style={{
           saveCategoryItemName(item.id);
         }
       }}
-      className={`w-full text-sm font-bold outline-none bg-white border border-indigo-200 rounded-xl px-2 py-1 ${isRTL ? "text-right" : "text-left"}`}
+      className={`w-full text-base font-bold outline-none bg-white border border-indigo-200 rounded-xl px-2 py-1 ${isRTL ? "text-right" : "text-left"}`}
       dir={isRTL ? "rtl" : "ltr"}
       onClick={(e) => e.stopPropagation()}
     />
@@ -8081,13 +8324,17 @@ style={{
                             </div>
 
                             <button
-                              type="button"
-                              data-noswipe="true"
-                              onClick={() => setIsAddingCategory(true)}
-                              className="w-full text-sm font-bold text-indigo-600 py-2"
-                            >
-                              {t("➕ הוסף קטגוריה")}
-                            </button>
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={(e) => {
+    e.stopPropagation();
+    setIsAddingCategory(true);
+  }}
+  className="w-full text-sm font-bold text-indigo-600 py-2"
+>
+  {t("➕ הוסף קטגוריה")}
+</button>
 
                             {isAddingCategory && (
                               <div className="px-2 py-2 space-y-2" data-noswipe="true">
@@ -8103,21 +8350,24 @@ style={{
                                 />
 
                                 <button
-                                  type="button"
-                                  data-noswipe="true"
-                                  onClick={async () => {
-                                    const name = customCategoryInput.trim();
-                                    if (!name) return;
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={async (e) => {
+    e.stopPropagation();
 
-                                    await saveCustomCategory(name);
-                                    setCategorySheetValue(name);
-                                    setCustomCategoryInput("");
-                                    setIsAddingCategory(false);
-                                  }}
-                                  className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
-                                >
-                                  {t("שמור")}
-                                </button>
+    const name = customCategoryInput.trim();
+    if (!name) return;
+
+    await saveCustomCategory(name);
+    setCategorySheetValue(name);
+    setCustomCategoryInput("");
+    setIsAddingCategory(false);
+  }}
+  className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
+>
+  {t("שמור")}
+</button>
                               </div>
                             )}
 
@@ -8126,19 +8376,29 @@ style={{
 
                           <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
                             <button
-                              type="button"
-                              onClick={saveItemCategory}
-                              className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
-                            >
-                              {t("שמור")}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeCategorySheet}
-                              className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
-                            >
-                              {t("נסגר")}
-                            </button>
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={(e) => {
+    e.stopPropagation();
+    saveItemCategory();
+  }}
+  className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
+>
+  {t("שמור")}
+</button>
+<button
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={(e) => {
+    e.stopPropagation();
+    closeCategorySheet();
+  }}
+  className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
+>
+  {t("נסגר")}
+</button>
                           </div>
                         </div>
                       ) : null}
@@ -8193,7 +8453,7 @@ style={{
                   </button>
                 </div>
 
-                <DogEarBadge
+                  <DogEarBadge
                   itemId={item.id}
                   mode="purchased"
                   name={item.purchasedByName}
@@ -8203,10 +8463,12 @@ style={{
             ))}
           </div>
         ) : null}
+        </div>
       </div>
     )}
   </>
 ) : (
+  <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar -mx-5 px-5 pb-36">
   <div className="space-y-6">
     <div className={rtlClasses.text}>
       <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
@@ -8328,14 +8590,17 @@ style={{
 
                 <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
               </div>
+              
             </div>
           );
-        })}
+            })}
       </div>
     )}
+    </div>
   </div>
 )}
-</main>
+ 
+</div>
       {/* Bottom nav */}
 <div
   className="fixed bottom-0 left-0 right-0 z-50"

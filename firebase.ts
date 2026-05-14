@@ -1,10 +1,13 @@
-
 import { initializeApp } from "firebase/app";
-import { getAuth, GoogleAuthProvider } from "firebase/auth";
 import {
-  getFirestore,
-  enableMultiTabIndexedDbPersistence,
-} from "firebase/firestore";
+  getAuth,
+  initializeAuth,
+  GoogleAuthProvider,
+  indexedDBLocalPersistence,
+  browserLocalPersistence,
+  inMemoryPersistence,
+} from "firebase/auth";
+import { getFirestore } from "firebase/firestore";
 
 const firebaseConfig = {
   apiKey: "AIzaSyA6gk3B0uFG3y7v4jhCWb9zzlPSmX0CjdU",
@@ -17,21 +20,16 @@ const firebaseConfig = {
 
 const app = initializeApp(firebaseConfig);
 
-export const auth = getAuth(app);
+const isIosCapacitor =
+  typeof window !== "undefined" &&
+  window.location.protocol === "capacitor:";
+
+export const auth = isIosCapacitor
+  ? initializeAuth(app, {
+      persistence: indexedDBLocalPersistence,
+    })
+  : getAuth(app);
+
 export const googleProvider = new GoogleAuthProvider();
 
 export const db = getFirestore(app);
-
-/**
- * 🔥 Enable REAL offline support
- * Works across multiple tabs.
- */
-enableMultiTabIndexedDbPersistence(db).catch((err: any) => {
-  if (err?.code === "failed-precondition") {
-    console.warn("Multiple tabs open, offline persistence limited.");
-  } else if (err?.code === "unimplemented") {
-    console.warn("Browser does not support offline persistence.");
-  } else {
-    console.warn("Firestore persistence error:", err);
-  }
-});
