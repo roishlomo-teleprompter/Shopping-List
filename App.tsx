@@ -2131,7 +2131,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.2.2";
+const APP_VERSION = "1.2.3";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -6957,11 +6957,17 @@ async function removeSharedUser(targetUid: string) {
     console.error(e);
   }
 }}
-            className="w-full flex items-center justify-center gap-2 bg-indigo-600 text-white py-4 rounded-2xl font-black"
-          >
-            <LogIn className="w-4 h-4" />
-            {t("התחבר עם גוגל")}
-          </button>
+            className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 text-slate-800 py-4 rounded-2xl font-black shadow-sm"
+>
+  <svg width="20" height="20" viewBox="0 0 48 48">
+    <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/>
+    <path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 16 19 12 24 12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/>
+    <path fill="#4CAF50" d="M24 44c5.2 0 10-2 13.5-5.3l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.3 0-9.7-3.3-11.3-8l-6.5 5C9.5 39.5 16.2 44 24 44z"/>
+    <path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-1.1 3-3.4 5.4-6.5 6.9l6.2 5.2C38.3 36.9 44 31 44 24c0-1.3-.1-2.7-.4-3.5z"/>
+  </svg>
+
+  <span>Continue with Google</span>
+</button>
           <LegalFooter lang={lang} className="pt-1" />
         </div>
       </div>
@@ -7482,11 +7488,11 @@ style={{
       </div>
 
       {/* Content */}
-      <main className="flex-1 p-5 space-y-6 overflow-y-auto no-scrollbar">
+      <main className="flex-1 min-h-0 p-5 space-y-6 overflow-y-auto no-scrollbar">
 {activeTab === "list" ? (
   <>
     <>
- <form onSubmit={addItem} className="relative">
+ <form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
       <input
         ref={inputRef}
         value={inputValue}
@@ -7617,8 +7623,10 @@ style={{
         </div>
       ) : null}
           </form>
+
+      </>
   
-</>
+<div className="flex-1 min-h-0 overflow-y-auto no-scrollbar -mx-5 px-5 pb-36">
 
      {showSyncHint && (listLoading || !list?.id) ? (
   <div className="flex items-center justify-center py-10 text-sm font-bold text-slate-400">
@@ -8205,6 +8213,7 @@ style={{
         ) : null}
       </div>
     )}
+    </div>
   </>
 ) : (
   <div className="space-y-6">
