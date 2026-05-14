@@ -2131,7 +2131,7 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.2.3";
+const APP_VERSION = "1.3.0";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -7063,7 +7063,7 @@ style={{
   return (
     <div
   ref={appRootRef}
-  className="flex flex-col min-h-screen max-w-md mx-auto bg-slate-50 relative pb-44 shadow-2xl overflow-visible"
+className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow-2xl overflow-hidden"
   dir={isRTL ? "rtl" : "ltr"}
   style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}
 >
@@ -7488,11 +7488,10 @@ style={{
       </div>
 
       {/* Content */}
-      <main className="flex-1 min-h-0 p-5 space-y-6 overflow-y-auto no-scrollbar">
+      <main className="flex-1 min-h-0 flex flex-col p-5 overflow-hidden">
 {activeTab === "list" ? (
-  <>
     <>
- <form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
+<form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
       <input
         ref={inputRef}
         value={inputValue}
@@ -7624,7 +7623,7 @@ style={{
       ) : null}
           </form>
 
-      </>
+      
   
 <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar -mx-5 px-5 pb-36">
 
@@ -8216,8 +8215,8 @@ style={{
     </div>
   </>
 ) : (
-  <div className="space-y-6">
-    <div className={rtlClasses.text}>
+<div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-6 pb-36">
+      <div className={rtlClasses.text}>
       <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
       <p className="text-sm text-slate-400 font-bold">
         <span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span>
