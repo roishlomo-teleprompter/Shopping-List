@@ -12,6 +12,7 @@
 		}
 	},
 	"packageClassList": [
+		"KeepAwakePlugin",
 		"FirebaseAuthenticationPlugin",
 		"AppPlugin",
 		"CAPBrowserPlugin",

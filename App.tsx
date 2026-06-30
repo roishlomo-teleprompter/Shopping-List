@@ -27,6 +27,7 @@ import {
   Calendar,
   MoreVertical,
   Languages,
+  Monitor,
   Shield,
   FileText,
   Pencil,
@@ -80,6 +81,7 @@ import { Share } from "@capacitor/share";
 import { App as CapacitorApp } from "@capacitor/app";
 import { FirebaseAuthentication } from "@capacitor-firebase/authentication";
 import { SpeechRecognition } from "@capgo/capacitor-speech-recognition";
+import { KeepAwake } from "@capacitor-community/keep-awake";
 import { auth, db, googleProvider } from "./firebase.ts";
 import confetti from "canvas-confetti";
 import appLogo from "./logo-header-transparent.png";
@@ -2131,7 +2133,11 @@ function getAutocompleteSuggestions(opts: {
 }
 
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
-const APP_VERSION = "1.3.0";
+const APP_VERSION = "1.4.3";
+
+type AppThemeMode = "light" | "dark" | "night" | "system";
+
+const APP_THEME_STORAGE_KEY = "shoppingListThemeMode";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
 
@@ -2475,6 +2481,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "וואטסאפ": "וואטסאפ",
     "הזמנה לא בתוקף": "הזמנה לא בתוקף",
     "שפה": "שפה",
+    "רזולוציה": "רזולוציה",
     "Privacy Policy": "מדיניות פרטיות",
     "Terms & Conditions": "תנאים והגבלות",
     "יציאה": "התנתק",
@@ -2556,11 +2563,14 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?",
       "מסנכרן רשימה...": "מסנכרן רשימה...",
       "מחיקת חשבון": "מחיקת חשבון",
-"למחוק את החשבון?": "למחוק את החשבון?",
-"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.",
-"מחק חשבון": "מחק חשבון",
-"החשבון נמחק": "החשבון נמחק",
-"צריך להתחבר מחדש": "צריך להתחבר מחדש",
+      "למחוק את החשבון?": "למחוק את החשבון?",
+      "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.",
+      "מחק חשבון": "מחק חשבון",
+      "החשבון נמחק": "החשבון נמחק",
+      "צריך להתחבר מחדש": "צריך להתחבר מחדש",
+      "המסך נשאר דולק": "המסך נשאר דולק",
+      "השאר מסך דולק": "השאר מסך דולק",
+      "הפריט הוחזר לרשימה": "הפריט הוחזר לרשימה",
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2579,6 +2589,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "התנתק מרשימת קניות משותפת": "Leave shared list",
     "וואטסאפ": "WhatsApp",
     "שפה": "Language",
+    "רזולוציה": "Resolution",
     "Privacy Policy": "Privacy Policy",
     "Terms & Conditions": "Terms & Conditions",
     "יציאה": "Log out",
@@ -2675,11 +2686,14 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "All items are marked. Do you want to clear the list and start fresh?",
     "מסנכרן רשימה...": "Syncing list...",
     "מחיקת חשבון": "Delete account",
-"למחוק את החשבון?": "Delete account?",
-"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "This will delete your user details and remove you from your lists.",
-"מחק חשבון": "Delete account",
-"החשבון נמחק": "Account deleted",
-"צריך להתחבר מחדש": "Please sign in again",
+    "למחוק את החשבון?": "Delete account?",
+    "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "This will delete your user details and remove you from your lists.",
+    "מחק חשבון": "Delete account",
+    "החשבון נמחק": "Account deleted",
+    "צריך להתחבר מחדש": "Please sign in again",
+    "המסך נשאר דולק": "Screen stays awake",
+    "השאר מסך דולק": "Keep screen awake",
+    "הפריט הוחזר לרשימה": "Item restored to the list",
 
 },
 ru: {
@@ -2699,6 +2713,7 @@ ru: {
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
     "וואטסאפ": "WhatsApp",
     "שפה": "Язык",
+    "רזולוציה": "Разрешение",
     "Privacy Policy": "Политика конфиденциальности",
     "Terms & Conditions": "Условия использования",
     "יציאה": "Выйти",
@@ -2796,11 +2811,14 @@ ru: {
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "Все товары отмечены. Хотите очистить список и начать заново?",
     "מסנכרן רשימה...": "Синхронизация списка...",
     "מחיקת חשבון": "Удалить аккаунт",
-"למחוק את החשבון?": "Удалить аккаунт?",
-"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "Это действие удалит данные пользователя и удалит вас из списков.",
-"מחק חשבון": "Удалить аккаунт",
-"החשבון נמחק": "Аккаунт удалён",
-"צריך להתחבר מחדש": "Пожалуйста, войдите снова",
+    "למחוק את החשבון?": "Удалить аккаунт?",
+    "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "Это действие удалит данные пользователя и удалит вас из списков.",
+    "מחק חשבון": "Удалить аккаунт",
+    "החשבון נמחק": "Аккаунт удалён",
+    "צריך להתחבר מחדש": "Пожалуйста, войдите снова",
+    "המסך נשאר דולק": "Экран не выключается",
+    "השאר מסך דולק": "Не выключать экран",
+    "הפריט הוחזר לרשימה": "Товар возвращён в список",
 
 
 },
@@ -2820,6 +2838,7 @@ ru: {
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
     "וואטסאפ": "واتساب",
     "שפה": "اللغة",
+    "רזולוציה": "الدقة",
     "Privacy Policy": "سياسة الخصوصية",
     "Terms & Conditions": "الشروط والأحكام",
     "יציאה": "تسجيل الخروج",
@@ -2917,11 +2936,14 @@ ru: {
     "כל הפריטים סומנו. רוצה לנקות את הרשימה ולהתחיל מחדש?": "تم تحديد جميع العناصر. هل تريد تنظيف القائمة والبدء من جديد؟",
     "מסנכרן רשימה...": "جارٍ مزامنة القائمة...",
     "מחיקת חשבון": "حذف الحساب",
-"למחוק את החשבון?": "هل تريد حذف الحساب؟",
-"הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "سيؤدي هذا إلى حذف بيانات المستخدم وإزالتك من القوائم.",
-"מחק חשבון": "حذف الحساب",
-"החשבון נמחק": "تم حذف الحساب",
-"צריך להתחבר מחדש": "يرجى تسجيل الدخول مرة أخرى",
+    "למחוק את החשבון?": "هل تريد حذف الحساب؟",
+    "הפעולה תמחק את פרטי המשתמש ותסיר אותך מהרשימות.": "سيؤدي هذا إلى حذف بيانات المستخدم وإزالتك من القوائم.",
+    "מחק חשבון": "حذف الحساب",
+    "החשבון נמחק": "تم حذف الحساب",
+    "צריך להתחבר מחדש": "يرجى تسجيل الدخول مرة أخرى",
+    "המסך נשאר דולק": "تبقى الشاشة قيد التشغيل",
+    "השאר מסך דולק": "إبقاء الشاشة قيد التشغيل",
+    "הפריט הוחזר לרשימה": "تمت إعادة العنصر إلى القائمة",
 
   },
 };
@@ -3050,7 +3072,57 @@ useEffect(() => {
 
 
   const [moreMenuOpen, setMoreMenuOpen] = useState(false);
+  const KEEP_AWAKE_STORAGE_KEY = "keepAwakeEnabled";
+const [keepAwakeEnabled, setKeepAwakeEnabled] = useState<boolean>(() => {
+  try {
+    return localStorage.getItem(KEEP_AWAKE_STORAGE_KEY) === "true";
+  } catch {
+    return false;
+  }
+});
+
+useEffect(() => {
+  try {
+    localStorage.setItem(KEEP_AWAKE_STORAGE_KEY, keepAwakeEnabled ? "true" : "false");
+  } catch {
+    // ignore
+  }
+
+  if (!Capacitor.isNativePlatform()) return;
+
+  void (async () => {
+    try {
+      if (keepAwakeEnabled) {
+        await KeepAwake.keepAwake();
+      } else {
+        await KeepAwake.allowSleep();
+      }
+    } catch (e) {
+      console.error("KeepAwake failed", e);
+    }
+  })();
+}, [keepAwakeEnabled]);
+
   const [moreMenuView, setMoreMenuView] = useState<"main" | "language">("main");
+  const APP_ZOOM_STORAGE_KEY = "myEasyListAppZoom";
+const APP_ZOOM_OPTIONS = [0.9, 1, 1.1] as const;
+
+const [appZoom, setAppZoom] = useState<number>(() => {
+  try {
+    const saved = Number(localStorage.getItem(APP_ZOOM_STORAGE_KEY) || "1");
+    return APP_ZOOM_OPTIONS.includes(saved as any) ? saved : 1;
+  } catch {
+    return 1;
+  }
+});
+
+useEffect(() => {
+  try {
+    localStorage.setItem(APP_ZOOM_STORAGE_KEY, String(appZoom));
+  } catch {
+    // ignore
+  }
+}, [appZoom]);
   const appRootRef = useRef<HTMLDivElement | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuElRef = useRef<HTMLDivElement | null>(null);
@@ -3079,6 +3151,42 @@ const [items, setItems] = useState<ShoppingItem[]>(() => {
 });
   const [activeTab, setActiveTab] = useState<Tab>("list");
 
+  const [themeMode, setThemeMode] = useState<AppThemeMode>(() => {
+  try {
+    const saved = localStorage.getItem(APP_THEME_STORAGE_KEY) as AppThemeMode | null;
+    if (saved === "light" || saved === "dark" || saved === "night" || saved === "system") {
+      return saved;
+    }
+  } catch {}
+
+  return "system";
+});
+
+useEffect(() => {
+  try {
+    localStorage.setItem(APP_THEME_STORAGE_KEY, themeMode);
+  } catch {}
+
+  const media = window.matchMedia("(prefers-color-scheme: dark)");
+
+  const applyTheme = () => {
+    const systemIsDark = media.matches;
+    const effectiveTheme = themeMode === "system"
+      ? systemIsDark ? "dark" : "light"
+      : themeMode;
+
+    // Dark mode temporarily disabled
+  };
+
+  applyTheme();
+
+  media.addEventListener("change", applyTheme);
+
+  return () => {
+    media.removeEventListener("change", applyTheme);
+  };
+}, [themeMode]);
+
   const [inputValue, setInputValue] = useState("");
   const swipeHintStartedRef = useRef(false);
   const swipeHintIdleTimerRef = useRef<number | null>(null);
@@ -3100,12 +3208,30 @@ const [categorySheetPos, setCategorySheetPos] = useState<{ x: number; y: number 
 const [customCategoryInput, setCustomCategoryInput] = useState("");
 const [isAddingCategory, setIsAddingCategory] = useState(false);
 const [userCustomCategories, setUserCustomCategories] = useState<string[]>([]);
+const [categoryOrder, setCategoryOrder] = useState<string[]>([]);
 const [editingCategoryItemId, setEditingCategoryItemId] = useState<string | null>(null);
 const [editingCategoryText, setEditingCategoryText] = useState("");
 const allCategoryOptions = useMemo(() => {
   const builtInWithoutOther = CATEGORY_ORDER.filter((c) => c !== "other");
   return [...builtInWithoutOther, ...userCustomCategories, "other"];
 }, [userCustomCategories]);
+
+const orderedCategoryOptions = useMemo(() => {
+  const base = [...allCategoryOptions];
+
+  if (!categoryOrder.length) return base;
+
+  return base.sort((a, b) => {
+    const ai = categoryOrder.indexOf(a);
+    const bi = categoryOrder.indexOf(b);
+
+    if (ai === -1 && bi === -1) return 0;
+    if (ai === -1) return 1;
+    if (bi === -1) return -1;
+
+    return ai - bi;
+  });
+}, [allCategoryOptions, categoryOrder]);
 
 const [editingCustomCategory, setEditingCustomCategory] = useState<string | null>(null);
 const [editingCustomCategoryValue, setEditingCustomCategoryValue] = useState("");
@@ -3355,6 +3481,41 @@ const deleteCustomCategory = async (name: string) => {
   setToast(t("הקטגוריה נמחקה"));
 };
 
+const moveCategory = async (category: string, direction: "up" | "down") => {
+  if (!user?.uid) return;
+
+  const baseOrder = [...allCategoryOptions];
+  const currentOrder = categoryOrder.length
+    ? baseOrder.sort((a, b) => {
+        const ai = categoryOrder.indexOf(a);
+        const bi = categoryOrder.indexOf(b);
+        return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+      })
+    : baseOrder;
+
+  const index = currentOrder.indexOf(category);
+  if (index === -1) return;
+
+  const targetIndex = direction === "up" ? index - 1 : index + 1;
+  if (targetIndex < 0 || targetIndex >= currentOrder.length) return;
+
+  const nextOrder = [...currentOrder];
+  [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+
+  setCategoryOrder(nextOrder);
+
+  const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+  await setDoc(
+    prefRef,
+    {
+      categoryOrder: nextOrder,
+      updatedAt: Date.now(),
+    },
+    { merge: true }
+  );
+};
+
+
 const saveItemCategory = async () => {
   if (!list?.id || !categorySheetItem) return;
 
@@ -3416,13 +3577,13 @@ const clearItemLongPress = () => {
 };
 
 
-
 useEffect(() => {
-  if (!user?.uid) {
-    setUserCategoryMap({});
-    setUserCustomCategories([]);
-    return;
-  }
+if (!user?.uid) {
+  setUserCategoryMap({});
+  setUserCustomCategories([]);
+  setCategoryOrder([]);
+  return;
+}
 
   const prefRef = doc(db, "users", user.uid, "preferences", "categories");
 
@@ -3441,6 +3602,14 @@ useEffect(() => {
       : [];
 
     setUserCustomCategories(custom as string[]);
+
+    setUserCustomCategories(custom as string[]);
+
+const savedOrder = Array.isArray(data?.categoryOrder)
+  ? data.categoryOrder.filter((x: unknown) => typeof x === "string")
+  : [];
+
+setCategoryOrder(savedOrder);
   });
 
   return () => unsub();
@@ -4502,7 +4671,22 @@ const applySuggestion = async (s: SuggestView) => {
 
   // אם כבר ברשימה - תציג שקיים
   if (s.isInList && s.itemId) {
-  const pickKey = s.key || normalizeItemName(s.name);
+  const existing = items.find((it) => it.id === s.itemId);
+
+  if (existing?.isPurchased) {
+    await updateDoc(doc(db, "lists", list.id, "items", existing.id), {
+      isPurchased: false,
+      quantity: 1,
+      purchasedAt: null,
+      purchasedByUid: "",
+      purchasedByName: "",
+      purchasedByInitial: "",
+      updatedAt: Date.now(),
+    });
+
+    setToast(t("הפריט הוחזר לרשימה"));
+  }
+
   if (pickKey) {
     unhideSuggestionKey(pickKey);
     hiddenSuggestRef.current.delete(pickKey);
@@ -4623,18 +4807,36 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
     const normalized = normalizeItemName(name);
     const existing = items.find((it) => normalizeItemName(it.name) === normalized);
 
-            if (existing) {
-      if (normalized) {
-        unhideSuggestionKey(normalized);
-        hiddenSuggestRef.current.delete(normalized);
-      }
-      recordHistory(existing.name);
-      setToast(t("הפריט כבר קיים ברשימה"));
-      setInputValue("");
-      setIsSuggestOpen(false);
-      setActiveSuggestIndex(-1);
-      return;
-    }
+      if (existing) {
+  if (normalized) {
+    unhideSuggestionKey(normalized);
+    hiddenSuggestRef.current.delete(normalized);
+  }
+
+  recordHistory(existing.name);
+
+  // אם הפריט נמצא ב"נקנו" - מחזירים אותו לרשימה הפעילה
+  if (existing.isPurchased) {
+    await updateDoc(doc(db, "lists", list.id, "items", existing.id), {
+      isPurchased: false,
+      quantity: 1,
+      purchasedAt: null,
+      purchasedByUid: "",
+      purchasedByName: "",
+      purchasedByInitial: "",
+      updatedAt: Date.now(),
+    });
+
+    setToast(t("הפריט הוחזר לרשימה"));
+  } else {
+    setToast(t("הפריט כבר קיים ברשימה"));
+  }
+
+  setInputValue("");
+  setIsSuggestOpen(false);
+  setActiveSuggestIndex(-1);
+  return;
+}
 
     const itemId = crypto.randomUUID();
     const newItem: ShoppingItem = {
@@ -5232,7 +5434,11 @@ const categoryNameForShare = (category: string) => {
 
 const lines =
   active.length > 0
-    ? allCategoryOptions
+    ? [...allCategoryOptions].sort((a, b) => {
+    const ai = categoryOrder.indexOf(a);
+    const bi = categoryOrder.indexOf(b);
+    return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
+  })
         .map((category) => {
           const categoryItems = active.filter(
             (i) =>
@@ -5285,26 +5491,40 @@ ${footer}`;
 
     const favKey = normalizeItemName(stripWrappingBrackets(fav.name));
 
-    const existing = items.find((i) => !i.isPurchased && normalizeItemName(i.name) === favKey);
+    const existing = items.find((i) => normalizeItemName(i.name) === favKey);
 
-    if (existing) {
-      // Visual cue on the existing row in the main list (no text)
-      setListFlashIds((prev) => {
-        const next = new Set(prev);
-        next.add(existing.id);
-        return next;
-      });
-      window.setTimeout(() => {
-        setListFlashIds((prev) => {
-          const next = new Set(prev);
-          next.delete(existing.id);
-          return next;
-        });
-      }, 260);
+if (existing) {
+  if (existing.isPurchased) {
+    await updateDoc(doc(db, "lists", list.id, "items", existing.id), {
+      isPurchased: false,
+      quantity: 1,
+      purchasedAt: null,
+      purchasedByUid: "",
+      purchasedByName: "",
+      purchasedByInitial: "",
+      updatedAt: Date.now(),
+    });
 
-      return { targetId: existing.id, created: false };
-    }
+    setToast(t("הפריט הוחזר לרשימה"));
+    return { targetId: existing.id, created: false };
+  }
 
+  setListFlashIds((prev) => {
+    const next = new Set(prev);
+    next.add(existing.id);
+    return next;
+  });
+
+  window.setTimeout(() => {
+    setListFlashIds((prev) => {
+      const next = new Set(prev);
+      next.delete(existing.id);
+      return next;
+    });
+  }, 260);
+
+  return { targetId: existing.id, created: false };
+}
     // Visual cue on the favorites card: item was moved to the main list (no text)
     setFavToListFlashIds((prev) => {
       const next = new Set(prev);
@@ -5458,11 +5678,29 @@ ${footer}`;
     const name = stripWrappingBrackets(nameRaw.trim());
     if (!name) return;
 
-    const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+    const existing = itemsNow.find((i) => normalize(i.name) === normalize(name));
     if (existing) {
-      await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: qty });
-      return;
-    }
+  if (existing.isPurchased) {
+    await updateDoc(doc(db, "lists", listId, "items", existing.id), {
+      isPurchased: false,
+      quantity: 1,
+      purchasedAt: null,
+      purchasedByUid: "",
+      purchasedByName: "",
+      purchasedByInitial: "",
+      updatedAt: Date.now(),
+    });
+
+    setToast(t("הפריט הוחזר לרשימה"));
+    return;
+  }
+
+  await updateDoc(doc(db, "lists", listId, "items", existing.id), {
+    quantity: qty,
+    updatedAt: Date.now(),
+  });
+  return;
+}
 
     const itemId = crypto.randomUUID();
    const newItem: ShoppingItem = {
@@ -5839,12 +6077,32 @@ const parsed = collapseParsedItemsForExecution(
       if (lower === "list" || lower === "the list") continue;
       if (!name) continue;
 
-      const existing = itemsNow.find((i) => !i.isPurchased && normalize(i.name) === normalize(name));
+      const existing = itemsNow.find((i) => normalize(i.name) === normalize(name));
       if (existing) {
-        const prevQty = existing.quantity;
-        await updateDoc(doc(db, "lists", listId, "items", existing.id), { quantity: p.qty });
-        actions.push({ type: "restore_qty", id: existing.id, prevQty });
-      } else {
+  if (existing.isPurchased) {
+    await updateDoc(doc(db, "lists", listId, "items", existing.id), {
+      isPurchased: false,
+      quantity: 1,
+      purchasedAt: null,
+      purchasedByUid: "",
+      purchasedByName: "",
+      purchasedByInitial: "",
+      updatedAt: Date.now(),
+    });
+
+    setToast(t("הפריט הוחזר לרשימה"));
+    continue;
+  }
+
+  const prevQty = existing.quantity;
+
+  await updateDoc(doc(db, "lists", listId, "items", existing.id), {
+    quantity: p.qty,
+    updatedAt: Date.now(),
+  });
+
+  actions.push({ type: "restore_qty", id: existing.id, prevQty });
+} else {
         const itemId = crypto.randomUUID();
        const newItem: ShoppingItem = {
   id: itemId,
@@ -7065,7 +7323,10 @@ style={{
   ref={appRootRef}
 className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow-2xl overflow-hidden"
   dir={isRTL ? "rtl" : "ltr"}
-  style={{ fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif' }}
+  style={{
+  fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
+  zoom: appZoom,
+}}
 >
     <style>{`
         @keyframes floatY {
@@ -7241,6 +7502,27 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
     >
       {moreMenuView === "main" ? (
         <>
+
+        <button
+  type="button"
+  onClick={() => setKeepAwakeEnabled((v) => !v)}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center justify-between text-slate-700 ${
+  isRTL
+    ? "flex-row-reverse pr-2 pl-4"
+    : "flex-row pl-2 pr-4"
+}`}
+>
+  <span>{keepAwakeEnabled
+  ? `🔆 ${t("המסך נשאר דולק")}`
+  : `🌙 ${t("השאר מסך דולק")}`}</span>
+
+  <span
+    className={`w-3 h-3 rounded-full ${
+      keepAwakeEnabled ? "bg-emerald-500" : "bg-slate-300"
+    }`}
+  />
+</button>
+
           <button
   type="button"
   onClick={() => setMoreMenuView("language")}
@@ -7256,6 +7538,33 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
   </span>
 </button>
 
+<button
+  type="button"
+  onClick={() => {
+    setAppZoom((current) => {
+      const currentIndex = APP_ZOOM_OPTIONS.findIndex((x) => x === current);
+      const nextIndex =
+        currentIndex >= 0 ? (currentIndex + 1) % APP_ZOOM_OPTIONS.length : 1;
+
+      return APP_ZOOM_OPTIONS[nextIndex];
+    });
+  }}
+  className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
+    isRTL
+      ? "flex-row-reverse justify-start pr-2 pl-4"
+      : "flex-row justify-start pl-2 pr-4"
+  }`}
+>
+  <Monitor className="w-4 h-4 text-indigo-500 shrink-0" />
+
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {t("רזולוציה")}
+  </span>
+
+  <span className="text-xs font-black text-indigo-600">
+    {Math.round(appZoom * 100)}%
+  </span>
+</button>
 
 
 
@@ -7652,7 +7961,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
     ) : (
       <div className="space-y-4">
         <div className="space-y-3">
-          {allCategoryOptions.map((categoryKey) => {
+          {orderedCategoryOptions.map((categoryKey) => {
             const categoryItems = groupedActiveItems[categoryKey];
             if (!categoryItems?.length) return null;
 
@@ -7966,13 +8275,41 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                           onClick={(e) => e.stopPropagation()}
                         >
   
-                          <div className={`text-sm font-black text-slate-700 mb-3 ${isRTL ? "text-right" : "text-left"}`}>
-                            {t("העבר לקטגוריה")}
-                          </div>
+                          <div className={`px-4 pt-3 mb-3 flex items-center justify-between ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
+  <div className={`text-sm font-black text-slate-700 ${isRTL ? "text-right" : "text-left"}`}>
+    {t("העבר לקטגוריה")}
+  </div>
+
+  <div className="flex items-center gap-1" data-noswipe="true">
+    <button
+      type="button"
+      data-noswipe="true"
+      onClick={(e) => {
+        e.stopPropagation();
+        moveCategory(categorySheetValue, "up");
+      }}
+      className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-500 font-black shadow-sm active:scale-95"
+    >
+      ↑
+    </button>
+
+    <button
+      type="button"
+      data-noswipe="true"
+      onClick={(e) => {
+        e.stopPropagation();
+        moveCategory(categorySheetValue, "down");
+      }}
+      className="w-8 h-8 rounded-full bg-white border border-slate-200 text-slate-500 font-black shadow-sm active:scale-95"
+    >
+      ↓
+    </button>
+  </div>
+</div>
 
                           <div className="px-4 pb-2">
                             <div className="space-y-2">
-                              {allCategoryOptions.map((cat) => {
+                              {orderedCategoryOptions.map((cat) => {
                                 const isBuiltInCategory = CATEGORY_ORDER.includes(cat as CategoryKey);
                                 const isCustomCategory = !isBuiltInCategory;
                                 const isEditingThisCategory = editingCustomCategory === cat;
