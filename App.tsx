@@ -65,6 +65,7 @@ import {
   deleteField,
   doc,
   getDoc,
+  getDocFromServer,
   getDocs,
   onSnapshot,
   query,
@@ -259,22 +260,16 @@ function HeaderUsersPreview({
 }
 
 type CalendarPluginType = {
-  openCalendar: (options?: { title?: string; description?: string }) => Promise<void>;
+  openCalendar: (options?: {
+    title?: string;
+    description?: string;
+    startTime?: number;
+    endTime?: number;
+  }) => Promise<void>;
 };
 
 const CalendarPlugin = registerPlugin<CalendarPluginType>("CalendarPlugin");
 
-/**
- * Force Firebase auth persistence to LOCAL (so you won't need to login every time).
- * Runs once on module load.
- */
-(async () => {
-  try {
-    await setPersistence(auth, browserLocalPersistence);
-  } catch (e) {
-    // ignore
-  }
-})();
 
 // ---------------------------
 // Helpers
@@ -566,7 +561,16 @@ function isGoogleSignInUserCancelError(e: any) {
   );
 }
 
+let signInInProgress = false;
+
 async function signInSmart() {
+    if (signInInProgress) {
+    return false;
+  }
+
+  signInInProgress = true;
+
+  try {
   const platform = (() => {
     try {
       return String(Capacitor.getPlatform?.() || "web").toLowerCase();
@@ -581,15 +585,31 @@ async function signInSmart() {
     platform === "native" ||
     Capacitor.isNativePlatform();
 
+ 
   if (isNative) {
   try {
     const result = await FirebaseAuthentication.signInWithGoogle();
-    const idToken = result.credential?.idToken;
-    if (!idToken) {
-      throw new Error("Google native sign-in returned without idToken");
+
+    console.log("NATIVE_GOOGLE_RESULT", {
+  hasIdToken: !!result.credential?.idToken,
+  hasAccessToken: !!result.credential?.accessToken,
+  hasUser: !!result.user,
+});
+
+    const idToken = result.credential?.idToken || undefined;
+    const accessToken = result.credential?.accessToken || undefined;
+
+    if (!idToken && !accessToken) {
+      throw new Error("Google native sign-in returned without idToken/accessToken");
     }
-    const credential = GoogleAuthProvider.credential(idToken);
+
+    const credential = GoogleAuthProvider.credential(idToken, accessToken);
+    console.log("WEB_FIREBASE_SIGNIN_BEFORE");
     await signInWithCredential(auth, credential);
+    console.log("WEB_FIREBASE_SIGNIN_AFTER", {
+  uid: auth.currentUser?.uid || null,
+});
+
     return true;
   } catch (e: any) {
     if (isGoogleSignInUserCancelError(e)) {
@@ -621,7 +641,62 @@ async function signInSmart() {
 }
     throw e;
   }
+  } finally {
+    signInInProgress = false;
+  }
 }
+
+async function signInWithAppleSmart() {
+  if (!Capacitor.isNativePlatform() || Capacitor.getPlatform() !== "ios") {
+    return false;
+  }
+
+  try {
+    const result = await FirebaseAuthentication.signInWithApple();
+
+    console.log("NATIVE_APPLE_RESULT", {
+      hasIdToken: !!result.credential?.idToken,
+      hasAccessToken: !!result.credential?.accessToken,
+      hasUser: !!result.user,
+    });
+
+    const idToken = result.credential?.idToken || undefined;
+    const accessToken = result.credential?.accessToken || undefined;
+
+    if (!idToken && !accessToken) {
+      throw new Error("Apple native sign-in returned without idToken/accessToken");
+    }
+
+   const nonce =
+  (result as any)?.credential?.nonce ||
+  (result as any)?.credential?.rawNonce ||
+  (result as any)?.nonce ||
+  (result as any)?.rawNonce ||
+  undefined;
+
+const provider = new OAuthProvider("apple.com");
+const credential = provider.credential({
+  idToken,
+  accessToken,
+  rawNonce: nonce,
+});
+
+await signInWithCredential(auth, credential);
+
+    return true;
+  } catch (e: any) {
+    console.error("APPLE_SIGNIN_ERROR_FULL", {
+      message: e?.message,
+      code: e?.code,
+      stack: e?.stack,
+      raw: JSON.stringify(e, null, 2),
+      full: e,
+    });
+
+    throw new Error(e?.message || "Apple sign-in failed");
+  }
+}
+
 
 async function waitForFirebaseUser(timeoutMs = 4000): Promise<FirebaseUser | null> {
   if (auth.currentUser) return auth.currentUser;
@@ -708,10 +783,45 @@ const lang = (() => {
   const token = searchParams.get("token");
 
   const [user, setUser] = useState<FirebaseUser | null>(auth.currentUser);
-  const [authLoading, setAuthLoading] = useState(true);
+const [authLoading, setAuthLoading] = useState(true);
+const [authInitialized, setAuthInitialized] = useState(false);
 
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+useEffect(() => {
+  const onError = (e: ErrorEvent) => {
+    console.error("WINDOW_ERROR_FULL", {
+      message: e.message,
+      filename: e.filename,
+      lineno: e.lineno,
+      colno: e.colno,
+      stack:
+        (e.error as any)?.stack ||
+        (e.error as any)?.message ||
+        JSON.stringify(e.error, null, 2),
+      raw: e.error,
+    });
+  };
+
+  const onUnhandledRejection = (e: PromiseRejectionEvent) => {
+    console.error("UNHANDLED_REJECTION_FULL", {
+      reason: e.reason,
+      stack:
+        (e.reason as any)?.stack ||
+        (e.reason as any)?.message ||
+        JSON.stringify(e.reason, null, 2),
+    });
+  };
+
+  window.addEventListener("error", onError);
+  window.addEventListener("unhandledrejection", onUnhandledRejection);
+
+  return () => {
+    window.removeEventListener("error", onError);
+    window.removeEventListener("unhandledrejection", onUnhandledRejection);
+  };
+}, []);
+
+const [loading, setLoading] = useState(false);
+const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     return onAuthStateChanged(auth, (u) => {
@@ -757,6 +867,7 @@ const handleJoin = async () => {
       if (!listSnap.exists()) throw new Error("הרשימה לא קיימת");
 
       const data = listSnap.data() as ShoppingList;
+      if ((data as any).deletedAt) throw new Error("הרשימה לא קיימת");
       const invite = (data as any).pendingInvites?.[token];
 
       if (!invite) throw new Error("הזמנה לא בתוקף");
@@ -777,9 +888,64 @@ const handleJoin = async () => {
   }
 };
 
-    
+const handleJoinApple = async () => {
+  if (!listId || !token) {
+    setError("קישור ההזמנה חסר נתונים");
+    return;
+  }
 
-  return (
+  setLoading(true);
+  setError(null);
+
+  try {
+    let currentUser = user;
+
+    if (!currentUser) {
+      await signInWithAppleSmart();
+      currentUser = await waitForFirebaseUser();
+    }
+
+    if (!currentUser) {
+      throw new Error("שגיאת התחברות");
+    }
+
+    await runTransaction(db, async (transaction) => {
+      const listDocRef = doc(db, "lists", listId);
+      const listSnap = await transaction.get(listDocRef);
+
+      if (!listSnap.exists()) throw new Error("הרשימה לא קיימת");
+
+      const data = listSnap.data() as ShoppingList;
+      const invite = (data as any).pendingInvites?.[token];
+
+      if (!invite) throw new Error("הזמנה לא בתוקף");
+      if (invite.expiresAt < Date.now()) throw new Error("פג תוקף ההזמנה");
+
+      transaction.update(listDocRef, {
+        sharedWith: arrayUnion(currentUser.uid),
+        [`pendingInvites.${token}`]: deleteField(),
+      });
+    });
+
+    localStorage.setItem("activeListId", listId);
+    navigate("/");
+  } catch (e: any) {
+    setError(e?.message || "שגיאה בהתחברות עם Apple");
+  } finally {
+    setLoading(false);
+  }
+};
+const inviteProvider = user?.providerData?.[0]?.providerId || "";
+
+const showGoogleJoin =
+  !user || inviteProvider === "google.com";
+
+const showAppleJoin =
+  Capacitor.isNativePlatform() &&
+  Capacitor.getPlatform() === "ios" &&
+  (!user || inviteProvider === "apple.com");
+
+return (
     <div className="min-h-screen bg-slate-50 flex flex-col items-center justify-center p-6 text-center" dir="rtl">
       <div className="bg-white p-8 rounded-3xl shadow-xl max-w-sm w-full space-y-6">
         <div className="flex justify-center">
@@ -793,13 +959,28 @@ const handleJoin = async () => {
 
         {!listId || !token ? <p className="text-rose-500 font-bold">{t("קישור ההזמנה לא תקין")}</p> : null}
 
-        <button
-          onClick={handleJoin}
-          disabled={loading}
-          className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
-        >
-          {loading ? <Loader2 className="w-6 h-6 animate-spin mx-auto" /> : t("הצטרף עם גוגל")}
-        </button>
+        <div className="space-y-3">
+  {showGoogleJoin ? (
+    <button
+      onClick={handleJoin}
+      disabled={loading}
+      className="w-full bg-emerald-500 text-white py-4 rounded-2xl font-black shadow-lg shadow-emerald-100 disabled:opacity-50"
+    >
+      {t("הצטרף עם גוגל")}
+    </button>
+  ) : null}
+
+  {showAppleJoin ? (
+    <button
+      type="button"
+      onClick={handleJoinApple}
+      disabled={loading}
+      className="w-full bg-black text-white py-4 rounded-2xl font-black shadow-lg disabled:opacity-50"
+    >
+      {t("הצטרף עם אפל")}
+    </button>
+  ) : null}
+</div>
 
         <LegalFooter lang={lang} className="pt-1" />
       </div>
@@ -1882,16 +2063,24 @@ function normalizeItemName(s: string) {
 }
 
 function getUserDisplayName(user?: FirebaseUser | null) {
-  return (
-    String(user?.displayName || "").trim() ||
-    String(user?.email || "").trim() ||
-    ""
-  );
+  const displayName = String(user?.displayName || "").trim();
+  if (displayName) return displayName;
+
+  const email = String(user?.email || "").trim();
+  if (email) return email;
+
+  const providerId = String(user?.providerData?.[0]?.providerId || "").trim();
+
+  if (providerId === "apple.com") {
+    return "Apple User";
+  }
+
+  return "User";
 }
 
 function getUserInitial(user?: FirebaseUser | null) {
   const name = getUserDisplayName(user);
-  return name ? name.charAt(0).toUpperCase() : "";
+  return name ? name.charAt(0).toUpperCase() : "U";
 }
 
 function buildParticipantProfile(user?: FirebaseUser | null) {
@@ -2132,6 +2321,8 @@ function getAutocompleteSuggestions(opts: {
     });
 }
 
+type AppLang = "he" | "en" | "ru" | "ar";
+
 const APP_LANG_STORAGE_KEY = "shoppingListLang";
 const APP_VERSION = "1.4.3";
 
@@ -2140,6 +2331,10 @@ type AppThemeMode = "light" | "dark" | "night" | "system";
 const APP_THEME_STORAGE_KEY = "shoppingListThemeMode";
 
 const LAST_UI_CACHE_KEY = "my_easy_list_last_ui_cache_v1";
+const PENDING_FAVORITES_CACHE_KEY = "my_easy_list_pending_favorites_v1";
+const PENDING_DELETED_ITEMS_CACHE_KEY = "my_easy_list_pending_deleted_items_v1";
+const PENDING_DELETED_FAVORITES_CACHE_KEY = "my_easy_list_pending_deleted_favorites_v1";
+const PENDING_ADDED_ITEMS_CACHE_KEY = "my_easy_list_pending_added_items_v2";
 
 type LastUiCache = {
   list: ShoppingList | null;
@@ -2182,6 +2377,147 @@ function clearLastUiCache() {
     // ignore
   }
 }
+
+function scopedPendingCacheKey(base: string, listId?: string): string {
+  const uid = auth.currentUser?.uid || "signed-out";
+  const id = listId || localStorage.getItem("activeListId") || "no-list";
+  const scoped = `${base}:${uid}:${id}`;
+  // Move the legacy queue only to the list/account that owned the last cached screen.
+  const cached = loadLastUiCache();
+  if (cached?.list?.id === id && (cached.list.ownerUid === uid || cached.list.sharedWith?.includes(uid))) {
+    const legacy = localStorage.getItem(base);
+    if (legacy !== null && localStorage.getItem(scoped) === null) {
+      localStorage.setItem(scoped, legacy); localStorage.removeItem(base);
+    }
+  }
+  return scoped;
+}
+
+function loadPendingFavoritesCache(listId?: string): FavoriteDoc[] {
+  try {
+    const raw = localStorage.getItem(scopedPendingCacheKey(PENDING_FAVORITES_CACHE_KEY, listId));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingFavoritesCache(favorites: FavoriteDoc[], listId?: string) {
+  try {
+    localStorage.setItem(scopedPendingCacheKey(PENDING_FAVORITES_CACHE_KEY, listId), JSON.stringify(favorites));
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingFavoritesCache(listId?: string) {
+  try {
+    localStorage.removeItem(scopedPendingCacheKey(PENDING_FAVORITES_CACHE_KEY, listId));
+  } catch {
+    // ignore
+  }
+}
+
+function loadPendingDeletedItemsCache(listId?: string): string[] {
+  try {
+    const raw = localStorage.getItem(scopedPendingCacheKey(PENDING_DELETED_ITEMS_CACHE_KEY, listId));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+
+    return Array.isArray(parsed)
+      ? parsed.filter((x) => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingDeletedItemsCache(ids: string[], listId?: string) {
+  try {
+    localStorage.setItem(
+      scopedPendingCacheKey(PENDING_DELETED_ITEMS_CACHE_KEY, listId),
+      JSON.stringify(Array.from(new Set(ids)))
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingDeletedItemsCache(listId?: string) {
+  try {
+    localStorage.removeItem(scopedPendingCacheKey(PENDING_DELETED_ITEMS_CACHE_KEY, listId));
+  } catch {
+    // ignore
+  }
+}
+
+function loadPendingAddedItemsCache(listId?: string): ShoppingItem[] {
+  try {
+    const raw = localStorage.getItem(scopedPendingCacheKey(PENDING_ADDED_ITEMS_CACHE_KEY, listId));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingAddedItemsCache(items: ShoppingItem[], listId?: string) {
+  try {
+    localStorage.setItem(scopedPendingCacheKey(PENDING_ADDED_ITEMS_CACHE_KEY, listId), JSON.stringify(items));
+ } catch {
+  // ignore
+}
+}
+
+function clearPendingAddedItemsCache(listId?: string) {
+  try {
+    localStorage.removeItem(scopedPendingCacheKey(PENDING_ADDED_ITEMS_CACHE_KEY, listId));
+  } catch {
+    // ignore
+  }
+}
+
+
+function loadPendingDeletedFavoritesCache(listId?: string): string[] {
+  try {
+    const raw = localStorage.getItem(scopedPendingCacheKey(PENDING_DELETED_FAVORITES_CACHE_KEY, listId));
+    if (!raw) return [];
+
+    const parsed = JSON.parse(raw);
+
+    return Array.isArray(parsed)
+      ? parsed.filter((x) => typeof x === "string")
+      : [];
+  } catch {
+    return [];
+  }
+}
+
+function savePendingDeletedFavoritesCache(ids: string[], listId?: string) {
+  try {
+    localStorage.setItem(
+      scopedPendingCacheKey(PENDING_DELETED_FAVORITES_CACHE_KEY, listId),
+      JSON.stringify(Array.from(new Set(ids)))
+    );
+  } catch {
+    // ignore
+  }
+}
+
+function clearPendingDeletedFavoritesCache(listId?: string) {
+  try {
+    localStorage.removeItem(scopedPendingCacheKey(PENDING_DELETED_FAVORITES_CACHE_KEY, listId));
+  } catch {
+    // ignore
+  }
+}
+
 
 type CategoryKey =
   | "vegetables_fruits"
@@ -2481,7 +2817,6 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "וואטסאפ": "וואטסאפ",
     "הזמנה לא בתוקף": "הזמנה לא בתוקף",
     "שפה": "שפה",
-    "רזולוציה": "רזולוציה",
     "Privacy Policy": "מדיניות פרטיות",
     "Terms & Conditions": "תנאים והגבלות",
     "יציאה": "התנתק",
@@ -2494,6 +2829,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "קישור ההזמנה לא תקין": "קישור ההזמנה לא תקין",
     "התחבר עם גוגל להצטרפות": "התחבר עם גוגל להצטרפות",
     "הצטרף עם גוגל": "הצטרף עם גוגל",
+    "הצטרף עם אפל": "הצטרף עם Apple",
+    "שגיאה בהתחברות עם Apple": "שגיאה בהתחברות עם Apple",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "התקן את האפליקציה כדי לפתוח את הרשימה",
     "התקן את My Easy List": "התקן את My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "רשימות משותפות נפתחות רק באפליקציה",
@@ -2568,9 +2905,11 @@ const I18N: Record<AppLang, Record<string, string>> = {
       "מחק חשבון": "מחק חשבון",
       "החשבון נמחק": "החשבון נמחק",
       "צריך להתחבר מחדש": "צריך להתחבר מחדש",
+      "רזולוציה": "רזולוציה",
       "המסך נשאר דולק": "המסך נשאר דולק",
       "השאר מסך דולק": "השאר מסך דולק",
       "הפריט הוחזר לרשימה": "הפריט הוחזר לרשימה",
+      
 },
   en: {
     "__toast_no_internet__": "No internet connection",
@@ -2589,7 +2928,6 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "התנתק מרשימת קניות משותפת": "Leave shared list",
     "וואטסאפ": "WhatsApp",
     "שפה": "Language",
-    "רזולוציה": "Resolution",
     "Privacy Policy": "Privacy Policy",
     "Terms & Conditions": "Terms & Conditions",
     "יציאה": "Log out",
@@ -2617,6 +2955,8 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "קישור ההזמנה לא תקין": "Invite link is invalid",
     "התחבר עם גוגל להצטרפות": "Sign in with Google to join",
     "הצטרף עם גוגל": "Join with Google",
+    "הצטרף עם אפל": "Join with Apple",
+    "שגיאה בהתחברות עם Apple": "Apple sign-in failed",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "Install the app to open this list",
     "התקן את My Easy List": "Install My Easy List",
     "רשימות משותפות נפתחות רק באפליקציה": "Shared lists open only inside the app",
@@ -2691,6 +3031,7 @@ const I18N: Record<AppLang, Record<string, string>> = {
     "מחק חשבון": "Delete account",
     "החשבון נמחק": "Account deleted",
     "צריך להתחבר מחדש": "Please sign in again",
+    "רזולוציה": "Resolution",
     "המסך נשאר דולק": "Screen stays awake",
     "השאר מסך דולק": "Keep screen awake",
     "הפריט הוחזר לרשימה": "Item restored to the list",
@@ -2713,7 +3054,6 @@ ru: {
     "התנתק מרשימת קניות משותפת": "Выйти из общего списка",
     "וואטסאפ": "WhatsApp",
     "שפה": "Язык",
-    "רזולוציה": "Разрешение",
     "Privacy Policy": "Политика конфиденциальности",
     "Terms & Conditions": "Условия использования",
     "יציאה": "Выйти",
@@ -2735,6 +3075,8 @@ ru: {
     "My Easy List זמין דרך האפליקציה": "My Easy List доступен через приложение",
     "גוגל פליי - בקרוב": "Google Play - скоро",
     "אפ סטור - בקרוב": "App Store - скоро",
+    "הצטרף עם אפל": "Войти через Apple",
+    "שגיאה בהתחברות עם Apple": "Ошибка входа через Apple",
     "אחרי התקנת האפליקציה פתח שוב את הקישור": "После установки приложения откройте ссылку снова",
     "התקן את האפליקציה כדי ליצור לשתף ולנהל רשימות קניות": "Установите приложение чтобы создавать, делиться и управлять списками покупок",
     "דבר עכשיו - שחרר כדי לבצע": "Говорите - отпустите чтобы выполнить",
@@ -2816,6 +3158,7 @@ ru: {
     "מחק חשבון": "Удалить аккаунт",
     "החשבון נמחק": "Аккаунт удалён",
     "צריך להתחבר מחדש": "Пожалуйста, войдите снова",
+    "רזולוציה": "Разрешение",
     "המסך נשאר דולק": "Экран не выключается",
     "השאר מסך דולק": "Не выключать экран",
     "הפריט הוחזר לרשימה": "Товар возвращён в список",
@@ -2838,7 +3181,6 @@ ru: {
     "התנתק מרשימת קניות משותפת": "مغادرة القائمة المشتركة",
     "וואטסאפ": "واتساب",
     "שפה": "اللغة",
-    "רזולוציה": "الدقة",
     "Privacy Policy": "سياسة الخصوصية",
     "Terms & Conditions": "الشروط والأحكام",
     "יציאה": "تسجيل الخروج",
@@ -2864,6 +3206,8 @@ ru: {
     "הוזמנת לרשימה": "تمت دعوتك إلى القائمة",
     "קישור ההזמנה לא תקין": "رابط الدعوة غير صالح",
     "התחבר עם גוגל להצטרפות": "تسجيل الدخول عبر Google",
+    "הצטרף עם אפל": "الانضمام باستخدام Apple",
+    "שגיאה בהתחברות עם Apple": "فشل تسجيل الدخول باستخدام Apple",
     "הצטרף עם גוגל": "الانضمام باستخدام Google",
     "התקן את האפליקציה כדי לפתוח את הרשימה": "قم بتثبيت التطبيق لفتح هذه القائمة",
     "התקן את My Easy List": "قم بتثبيت My Easy List",
@@ -2941,6 +3285,7 @@ ru: {
     "מחק חשבון": "حذف الحساب",
     "החשבון נמחק": "تم حذف الحساب",
     "צריך להתחבר מחדש": "يرجى تسجيل الدخول مرة أخرى",
+    "רזולוציה": "الدقة",
     "המסך נשאר דולק": "تبقى الشاشة قيد التشغيل",
     "השאר מסך דולק": "إبقاء الشاشة قيد التشغيل",
     "הפריט הוחזר לרשימה": "تمت إعادة العنصر إلى القائمة",
@@ -2951,7 +3296,7 @@ ru: {
 function translate(lang: AppLang, key: string) {
   const dict = I18N[lang] || I18N.he;
   const k = String(key ?? "").trim();
-  return dict[k] ?? I18N.he[k] ?? k;
+  return MULTI_LIST_I18N[lang]?.[k] ?? dict[k] ?? I18N.he[k] ?? k;
 }
 
 const getVoiceExamplesText = (lang: AppLang) => {
@@ -3009,7 +3354,384 @@ function getStableSharedUserColorMap(
 }
 
 
+const MULTI_LIST_I18N: Record<"he" | "en" | "ru" | "ar", Record<string, string>> = {
+  "he": {
+    "רשימה חדשה": "רשימה חדשה",
+    "שם הרשימה": "שם הרשימה",
+    "שינוי שם הרשימה": "שינוי שם הרשימה",
+    "מחיקת רשימה": "מחיקת רשימה",
+    "ביטול": "ביטול",
+    "שמירה": "שמירה",
+    "יצירה": "יצירה",
+    "שם הרשימה נדרש": "שם הרשימה נדרש",
+    "מחיקת הרשימה תסיר אותה ואת המוצרים והמועדפים שלה לכל המשתתפים. להמשיך?": "הרשימה תוסר לכל המשתתפים והשיתוף וההזמנות יבוטלו. המוצרים והמועדפים יישמרו בנתונים, ללא מחיקה פיזית. להמשיך?",
+    "הרשימה נמחקה": "הרשימה נמחקה",
+    "הרשימה לא קיימת": "הרשימה לא קיימת",
+    "מועדפים": "מועדפים",
+    "ניהול רשימה": "ניהול רשימה",
+    "יש לסיים את הפעולה לפני החלפת רשימה": "יש לסיים את הפעולה לפני החלפת רשימה",
+    "פעולת הרשימה נכשלה": "פעולת הרשימה נכשלה"
+  },
+  "en": {
+    "רשימה חדשה": "New list",
+    "שם הרשימה": "List name",
+    "שינוי שם הרשימה": "Rename list",
+    "מחיקת רשימה": "Delete list",
+    "ביטול": "Cancel",
+    "שמירה": "Save",
+    "יצירה": "Create",
+    "שם הרשימה נדרש": "Enter a list name",
+    "מחיקת הרשימה תסיר אותה ואת המוצרים והמועדפים שלה לכל המשתתפים. להמשיך?": "The list will be removed for all participants. Sharing and invitations will be revoked. Items and favorites remain stored, without permanent deletion. Continue?",
+    "הרשימה נמחקה": "List deleted",
+    "הרשימה לא קיימת": "List does not exist",
+    "מועדפים": "Favorites",
+    "ניהול רשימה": "Manage list",
+    "יש לסיים את הפעולה לפני החלפת רשימה": "Finish the current action before switching lists",
+    "פעולת הרשימה נכשלה": "List operation failed"
+  },
+  "ru": {
+    "רשימה חדשה": "Новый список",
+    "שם הרשימה": "Название списка",
+    "שינוי שם הרשימה": "Переименовать список",
+    "מחיקת רשימה": "Удалить список",
+    "ביטול": "Отмена",
+    "שמירה": "Сохранить",
+    "יצירה": "Создать",
+    "שם הרשימה נדרש": "Введите название списка",
+    "מחיקת הרשימה תסיר אותה ואת המוצרים והמועדפים שלה לכל המשתתפים. להמשיך?": "Список будет удалён из интерфейса всех участников. Общий доступ и приглашения будут отменены. Товары и избранное останутся в хранилище. Продолжить?",
+    "הרשימה נמחקה": "Список удалён",
+    "הרשימה לא קיימת": "Список не существует",
+    "מועדפים": "Избранное",
+    "ניהול רשימה": "Управление списком",
+    "יש לסיים את הפעולה לפני החלפת רשימה": "Завершите действие перед сменой списка",
+    "פעולת הרשימה נכשלה": "Не удалось выполнить действие"
+  },
+  "ar": {
+    "רשימה חדשה": "قائمة جديدة",
+    "שם הרשימה": "اسم القائمة",
+    "שינוי שם הרשימה": "تغيير اسم القائمة",
+    "מחיקת רשימה": "حذف القائمة",
+    "ביטול": "إلغاء",
+    "שמירה": "حفظ",
+    "יצירה": "إنشاء",
+    "שם הרשימה נדרש": "أدخل اسم القائمة",
+    "מחיקת הרשימה תסיר אותה ואת המוצרים והמועדפים שלה לכל המשתתפים. להמשיך?": "ستتم إزالة القائمة لجميع المشاركين وإلغاء المشاركة والدعوات. ستبقى المنتجات والمفضلة محفوظة دون حذف نهائي. هل تريد المتابعة؟",
+    "הרשימה נמחקה": "تم حذف القائمة",
+    "הרשימה לא קיימת": "القائمة غير موجودة",
+    "מועדפים": "المفضلة",
+    "ניהול רשימה": "إدارة القائمة",
+    "יש לסיים את הפעולה לפני החלפת רשימה": "أكمل العملية الحالية قبل تبديل القائمة",
+    "פעולת הרשימה נכשלה": "تعذرت العملية"
+  }
+};
+
+// Share one initialization across repeated auth callbacks and React remounts.
+const initialListLoads = new Map<string, Promise<ShoppingList>>();
+function loadInitialShoppingList(uid: string): Promise<ShoppingList> {
+  const pending = initialListLoads.get(uid);
+  if (pending) return pending;
+  const operation = (async () => {
+    const savedId = localStorage.getItem("activeListId");
+    if (savedId) {
+      try {
+        const saved = await getDoc(doc(db, "lists", savedId));
+        if (saved.exists() && !saved.data().deletedAt && Array.isArray(saved.data().sharedWith) && saved.data().sharedWith.includes(uid)) {
+          return { ...saved.data(), id: saved.id } as ShoppingList;
+        }
+      } catch (error) { console.warn("Failed to load saved activeListId", error); }
+    }
+    const snapshot = await getDocs(query(collection(db, "lists"), where("sharedWith", "array-contains", uid)));
+    const available = snapshot.docs.filter((entry) => !entry.data().deletedAt);
+    if (available.length) {
+      const savedId = localStorage.getItem("activeListId");
+      const selected = available.find((entry) => entry.id === savedId) || available[0];
+      return { ...selected.data(), id: selected.id } as ShoppingList;
+    }
+    if (typeof navigator !== "undefined" && !navigator.onLine) {
+      const cached = loadLastUiCache();
+      if (cached?.list && (cached.list.ownerUid === uid || cached.list.sharedWith?.includes(uid))) return cached.list;
+      throw new Error("Cannot create an initial list while offline");
+    }
+    const ref = doc(collection(db, "lists"));
+    const next: ShoppingList = { id: ref.id, title: "My Easy List", ownerUid: uid,
+      sharedWith: [uid], userColorMap: {}, createdAt: Date.now(), updatedAt: Date.now() };
+    // Do not publish a nonexistent list to the live recovery subscription.
+    await setDoc(ref, next);
+    return next;
+  })();
+  initialListLoads.set(uid, operation);
+  void operation.finally(() => { if (initialListLoads.get(uid) === operation) initialListLoads.delete(uid); }).catch(() => {});
+  return operation;
+}
+
+const DEFAULT_LIST_NAMES: Record<AppLang, string> = {
+  he: "הרשימה שלי", en: "My list", ru: "Мой список", ar: "قائمتي",
+};
+const LEGACY_DEFAULT_LIST_NAMES = new Set([
+  ...Object.values(DEFAULT_LIST_NAMES), "My Easy List", "shopping-list", "shopping list",
+].flatMap((name) => [name.toLowerCase(), `${name.toLowerCase()}:`]));
+function getLocalizedListTitle(entry: ShoppingList | null, language: AppLang): string {
+  const title = String(entry?.title || "").trim();
+  if ((entry as (ShoppingList & { titleIsCustom?: boolean }) | null)?.titleIsCustom === true) return title;
+  return !title || LEGACY_DEFAULT_LIST_NAMES.has(title.toLowerCase()) ? DEFAULT_LIST_NAMES[language] : title;
+}
+
+function isPrivateDefaultList(entry: ShoppingList, uid: string): boolean {
+  const metadata = entry as ShoppingList & { titleIsCustom?: boolean; pendingInvites?: Record<string, unknown> };
+  return entry.ownerUid === uid && metadata.titleIsCustom !== true &&
+    LEGACY_DEFAULT_LIST_NAMES.has(String(entry.title || "").trim().toLowerCase()) &&
+    Array.isArray(entry.sharedWith) && entry.sharedWith.every((member) => member === uid) &&
+    !Object.keys(metadata.pendingInvites || {}).length;
+}
+function hasPendingListData(listId: string): boolean {
+  const deletedItems = new Set(loadPendingDeletedItemsCache(listId));
+  const deletedFavorites = new Set(loadPendingDeletedFavoritesCache(listId));
+  return loadPendingAddedItemsCache(listId).some((entry) => !deletedItems.has(entry.id)) ||
+    loadPendingFavoritesCache(listId).some((entry) => !deletedFavorites.has(entry.id));
+}
+function selectVisibleListTabs(entries: ShoppingList[], activeId: string | undefined, uid: string,
+  content: Record<string, {items?: boolean; favorites?: boolean}>): ShoppingList[] {
+  const protectedLists = entries.filter((entry) => !isPrivateDefaultList(entry, uid));
+  const defaults = entries.filter((entry) => isPrivateDefaultList(entry, uid));
+  const canonical = protectedLists.find((entry) => entry.id === activeId) ||
+    protectedLists.find((entry) => entry.ownerUid !== uid || entry.sharedWith.some((member) => member !== uid)) ||
+    protectedLists[0] || defaults.find((entry) => entry.id === activeId) ||
+    defaults.find((entry) => content[entry.id]?.items || content[entry.id]?.favorites) || defaults[0];
+  return entries.filter((entry) => !isPrivateDefaultList(entry, uid) || entry.id === canonical?.id ||
+    content[entry.id]?.items || content[entry.id]?.favorites || hasPendingListData(entry.id));
+}
+
+type ListTabsContent = Record<string, {items?: boolean; favorites?: boolean}>;
+type ListTabsCache = { uid: string; lists: ShoppingList[]; content: ListTabsContent };
+const LIST_TABS_CACHE_KEY = "my_easy_list_tabs_cache_v1";
+function loadListTabsCache(uid?: string): ListTabsCache | null {
+  try {
+    const owner = uid || localStorage.getItem(`${LIST_TABS_CACHE_KEY}:last-user`);
+    if (!owner) return null;
+    const value = JSON.parse(localStorage.getItem(`${LIST_TABS_CACHE_KEY}:${owner}`) || "null");
+    if (value?.uid !== owner || !Array.isArray(value.lists)) return null;
+    return { uid: owner, lists: value.lists.filter((entry: ShoppingList) => entry?.id &&
+      Array.isArray(entry.sharedWith) && entry.sharedWith.includes(owner) && !(entry as any).deletedAt),
+      content: value.content && typeof value.content === "object" ? value.content : {} };
+  } catch { return null; }
+}
+function saveListTabsCache(cache: ListTabsCache) {
+  try {
+    localStorage.setItem(`${LIST_TABS_CACHE_KEY}:${cache.uid}`, JSON.stringify(cache));
+    localStorage.setItem(`${LIST_TABS_CACHE_KEY}:last-user`, cache.uid);
+  } catch { /* Storage is optional; live updates still work. */ }
+}
+function clearListTabsCachePointer() {
+  try { localStorage.removeItem(`${LIST_TABS_CACHE_KEY}:last-user`); } catch {}
+}
+
+// The introduction is presentation-only: it never calls shopping or sharing operations.
+type IntroductionLanguage = "he" | "en" | "ru" | "ar";
+const INTRO_COPY: Record<IntroductionLanguage, {menu: string; next: string; back: string; skip: string; done: string; steps: string[][]}> = {
+  "he": {
+    "menu": "הדרכה ראשונית",
+    "next": "הבא",
+    "back": "הקודם",
+    "skip": "דלג",
+    "done": "הבנתי, מתחילים",
+    "steps": [
+      [
+        "כל רשימה, עם האנשים שלה",
+        "שתפו כל רשימת קניות בנפרד עם משפחה או חברים. לכל רשימה משתתפים משלה, והשינויים מתעדכנים אצל כולם בזמן אמת.",
+        "בחרו לשונית, לחצו על סמל השיתוף ואז על ״הזמן חברים לרשימה״."
+      ],
+      [
+        "שיתוף ב־WhatsApp",
+        "שלחו את תוכן רשימת הקניות למשפחה ולחברים, גם למי שאין את האפליקציה. זו הודעה עם תוכן הרשימה, שאינה מצרפת משתתפים לעריכה משותפת.",
+        "בחרו רשימה, לחצו על סמל השיתוף ואז על ״וואטסאפ״."
+      ],
+      [
+        "הכול מסודר בקטגוריות",
+        "שייכו מוצרים לקטגוריות לקנייה נוחה ומסודרת. בחירת קטגוריה נשמרת מיד, ללא כפתור אישור.",
+        "לחצו לחיצה ממושכת על מוצר ואז בחרו קטגוריה."
+      ],
+      [
+        "מוסיפים פריטים בקול",
+        "לחצו על המיקרופון ואמרו אילו מוצרים להוסיף לרשימת הקניות הפעילה.",
+        "אשרו גישה למיקרופון אם תתבקשו, ודברו בשפה המוגדרת באפליקציה."
+      ]
+    ]
+  },
+  "en": {
+    "menu": "Getting started",
+    "next": "Next",
+    "back": "Back",
+    "skip": "Skip",
+    "done": "Got it, let’s start",
+    "steps": [
+      [
+        "Each list, its own people",
+        "Share each shopping list separately with family or friends. Each list has its own participants, and changes appear for everyone in real time.",
+        "Select a list tab, tap the share icon, then Invite friends to the list."
+      ],
+      [
+        "Share on WhatsApp",
+        "Send your shopping list contents to family and friends, even if they do not have the app. This sends a message; it does not invite people to edit the list.",
+        "Select a list, tap the share icon, then WhatsApp."
+      ],
+      [
+        "Organize by category",
+        "Assign products to categories for easier shopping. Your category selection is saved immediately, with no confirmation button.",
+        "Press and hold a product, then select a category."
+      ],
+      [
+        "Add items by voice",
+        "Tap the microphone and say which products to add to the active shopping list.",
+        "Allow microphone access if asked, and speak in the language selected in the app."
+      ]
+    ]
+  },
+  "ru": {
+    "menu": "Знакомство с приложением",
+    "next": "Далее",
+    "back": "Назад",
+    "skip": "Пропустить",
+    "done": "Понятно, начнём",
+    "steps": [
+      [
+        "У каждого списка свои участники",
+        "Делитесь каждым списком покупок отдельно с семьёй или друзьями. У каждого списка свои участники, а изменения видны всем в реальном времени.",
+        "Выберите вкладку списка, нажмите значок «Поделиться», затем приглашение друзей в список."
+      ],
+      [
+        "Отправка в WhatsApp",
+        "Отправляйте содержимое списка семье и друзьям, даже если у них нет приложения. Это сообщение, а не приглашение к совместному редактированию.",
+        "Выберите список, нажмите значок «Поделиться», затем WhatsApp."
+      ],
+      [
+        "Порядок по категориям",
+        "Распределяйте товары по категориям для удобных покупок. Выбранная категория сохраняется сразу, без кнопки подтверждения.",
+        "Нажмите и удерживайте товар, затем выберите категорию."
+      ],
+      [
+        "Добавление товаров голосом",
+        "Нажмите на микрофон и назовите товары, которые нужно добавить в текущий список покупок.",
+        "Разрешите доступ к микрофону, если появится запрос, и говорите на языке приложения."
+      ]
+    ]
+  },
+  "ar": {
+    "menu": "دليل البدء",
+    "next": "التالي",
+    "back": "السابق",
+    "skip": "تخطي",
+    "done": "فهمت، لنبدأ",
+    "steps": [
+      [
+        "لكل قائمة مشاركون مختلفون",
+        "شارك كل قائمة تسوق بشكل منفصل مع العائلة أو الأصدقاء. لكل قائمة مشاركون خاصون بها، وتظهر التغييرات للجميع فورًا.",
+        "اختر تبويب القائمة، ثم اضغط على رمز المشاركة واختر دعوة الأصدقاء إلى القائمة."
+      ],
+      [
+        "المشاركة عبر WhatsApp",
+        "أرسل محتوى قائمة التسوق إلى العائلة والأصدقاء، حتى لمن ليس لديهم التطبيق. تُرسل رسالة بالمحتوى دون دعوتهم لتعديل القائمة.",
+        "اختر قائمة، ثم اضغط على رمز المشاركة واختر WhatsApp."
+      ],
+      [
+        "تنظيم المنتجات حسب الفئات",
+        "وزّع المنتجات على الفئات لتسهيل التسوق. يُحفظ اختيار الفئة فورًا دون زر تأكيد.",
+        "اضغط مطولًا على منتج، ثم اختر الفئة."
+      ],
+      [
+        "إضافة المنتجات بالصوت",
+        "اضغط على الميكروفون واذكر المنتجات التي تريد إضافتها إلى قائمة التسوق الحالية.",
+        "اسمح بالوصول إلى الميكروفون إذا طُلب منك ذلك، وتحدث باللغة المحددة في التطبيق."
+      ]
+    ]
+  }
+};
+const INTRO_ILLUSTRATION_SPRITE = "data:image/webp;base64,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";
+const INTRO_STORAGE_PREFIX = "my_easy_list_intro_v1:";
+function ShoppingIntroduction({ uid, lang, request, ready }: {key?: string; uid: string; lang: IntroductionLanguage; request: number; ready: boolean}) {
+  const [open, setOpen] = useState(false);
+  const [step, setStep] = useState(0);
+  const handled = useRef(0);
+  const attempted = useRef(false);
+  const dialog = useRef<HTMLDivElement>(null);
+  const primary = useRef<HTMLButtonElement>(null);
+  const labels = INTRO_COPY[lang];
+  const rtl = lang === "he" || lang === "ar";
+  const finish = useCallback(() => {
+    try { localStorage.setItem(INTRO_STORAGE_PREFIX + uid, "done"); } catch { /* Optional device storage. */ }
+    setOpen(false);
+  }, [uid]);
+  useEffect(() => {
+    if (!ready) return;
+    if (request > handled.current) {
+      handled.current = request; attempted.current = true; setStep(0); setOpen(true); return;
+    }
+    if (attempted.current) return;
+    const timer = window.setTimeout(() => {
+      attempted.current = true;
+      let completed = false;
+      try { completed = localStorage.getItem(INTRO_STORAGE_PREFIX + uid) === "done"; } catch {}
+      if (!completed) { setStep(0); setOpen(true); }
+    }, 450);
+    return () => window.clearTimeout(timer);
+  }, [uid, request, ready]);
+  useEffect(() => {
+    if (!open) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const host = dialog.current?.parentElement;
+    const siblings = Array.from(document.body.children).filter((node) => node !== host) as HTMLElement[];
+    const previousInert = siblings.map((node) => node.inert);
+    siblings.forEach((node) => { node.inert = true; });
+    primary.current?.focus();
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === "Escape") { event.preventDefault(); event.stopPropagation(); finish(); }
+      if (event.key !== "Tab") return;
+      const buttons = Array.from(dialog.current?.querySelectorAll("button:not(:disabled)") || []) as HTMLButtonElement[];
+      const first = buttons[0], last = buttons[buttons.length - 1];
+      if (event.shiftKey && document.activeElement === first) { event.preventDefault(); last?.focus(); }
+      else if (!event.shiftKey && document.activeElement === last) { event.preventDefault(); first?.focus(); }
+    };
+    document.addEventListener("keydown", onKey, true);
+    return () => {
+      document.removeEventListener("keydown", onKey, true);
+      siblings.forEach((node, index) => { node.inert = previousInert[index]; });
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
+  }, [open, finish]);
+  useEffect(() => { if (open) primary.current?.focus(); }, [open, step]);
+  if (!open) return null;
+  return createPortal(
+    <div className="fixed inset-0 z-[300] bg-black/45 flex items-center justify-center overflow-y-auto p-5" dir={rtl ? "rtl" : "ltr"} lang={lang} data-noswipe="true"
+      style={{paddingTop: "max(20px, env(safe-area-inset-top))", paddingBottom: "max(20px, env(safe-area-inset-bottom))"}}
+      onTouchStart={(event) => event.stopPropagation()} onTouchEnd={(event) => event.stopPropagation()}>
+      <div ref={dialog} role="dialog" aria-modal="true" aria-labelledby="shopping-intro-title" aria-describedby="shopping-intro-body"
+        className="w-full max-w-sm rounded-3xl bg-white p-6 shadow-2xl overflow-y-auto text-center text-slate-800"
+        style={{maxHeight: "calc(100dvh - 80px)", fontFamily: 'Segoe UI, system-ui, sans-serif'}}>
+        <div className="flex justify-center gap-2 mb-5" aria-label={`${step + 1} / 4`}>
+          {labels.steps.map((_, index) => <span key={index} aria-hidden="true" className={`h-2 w-2 rounded-full ${index === step ? "bg-indigo-600" : "bg-slate-200"}`} />)}
+        </div>
+        <div aria-hidden="true" className="mx-auto mb-4 w-full max-w-[280px] shrink-0"
+          style={{aspectRatio: "3 / 2", backgroundImage: `url(${INTRO_ILLUSTRATION_SPRITE})`, backgroundSize: "200% 200%",
+            backgroundPosition: ["0% 0%", "100% 0%", "0% 100%", "100% 100%"][step], backgroundRepeat: "no-repeat"}} />
+        <div aria-live="polite" aria-atomic="true">
+          <h2 id="shopping-intro-title" className="text-xl font-extrabold mb-3">{labels.steps[step][0]}</h2>
+          <p id="shopping-intro-body" className="text-base leading-relaxed text-slate-600">{labels.steps[step][1]}</p>
+          <p className="mt-4 rounded-2xl bg-slate-50 p-3 text-sm leading-relaxed text-slate-600">{labels.steps[step][2]}</p>
+        </div>
+        <button ref={primary} type="button" onClick={() => step === 3 ? finish() : setStep((value) => Math.min(3, value + 1))}
+          className="mt-5 w-full rounded-2xl bg-indigo-600 px-4 py-3 text-base font-bold text-white">{step === 3 ? labels.done : labels.next}</button>
+        <div className="mt-2 flex justify-center gap-4">
+          {step > 0 && <button type="button" onClick={() => setStep((value) => Math.max(0, value - 1))} className="px-4 py-3 text-sm font-bold text-slate-500">{labels.back}</button>}
+          {step < 3 && <button type="button" onClick={finish} className="px-4 py-3 text-sm font-bold text-slate-500">{labels.skip}</button>}
+        </div>
+      </div>
+    </div>, document.body);
+}
+
 const MainList: React.FC = () => {
+  const [introRequest, setIntroRequest] = useState({uid: "", count: 0});
+  const [initialTabsCache] = useState(() => loadListTabsCache(auth.currentUser?.uid));
+  const directoryOwnerRef = useRef<string | null>(initialTabsCache?.uid || null);
+
   const [user, setUser] = useState<FirebaseUser | null>(null);
 
 const [lang, setLang] = useState<AppLang>(() => {
@@ -3039,11 +3761,12 @@ useEffect(() => {
   }
 }, [lang]);
 
+const purchasedDeleteLabels: Record<AppLang, Record<string, string>> = {"he": {"מחק את כל המוצרים שנקנו": "מחק את כל המוצרים שנקנו", "למחוק את כל המוצרים שנקנו ברשימה זו?": "למחוק את כל המוצרים שנקנו ברשימה זו?", "מחיקת המוצרים נכשלה": "מחיקת המוצרים נכשלה"}, "en": {"מחק את כל המוצרים שנקנו": "Delete all bought items", "למחוק את כל המוצרים שנקנו ברשימה זו?": "Delete all bought items in this list?", "מחיקת המוצרים נכשלה": "Could not delete items"}, "ru": {"מחק את כל המוצרים שנקנו": "Удалить все купленные товары", "למחוק את כל המוצרים שנקנו ברשימה זו?": "Удалить все купленные товары в этом списке?", "מחיקת המוצרים נכשלה": "Не удалось удалить товары"}, "ar": {"מחק את כל המוצרים שנקנו": "حذف جميع المنتجات المشتراة", "למחוק את כל המוצרים שנקנו ברשימה זו?": "هل تريد حذف جميع المنتجات المشتراة في هذه القائمة؟", "מחיקת המוצרים נכשלה": "تعذر حذف المنتجات"}};
 const t = useMemo(() => {
   const dict = I18N[lang] || I18N.he;
   return (key: string) => {
     const k = String(key ?? "").trim();
-    return dict[k] ?? I18N.he[k] ?? k;
+    return purchasedDeleteLabels[lang]?.[k] ?? MULTI_LIST_I18N[lang]?.[k] ?? dict[k] ?? I18N.he[k] ?? k;
   };
 }, [lang]);
 
@@ -3102,8 +3825,8 @@ useEffect(() => {
     }
   })();
 }, [keepAwakeEnabled]);
-
   const [moreMenuView, setMoreMenuView] = useState<"main" | "language">("main");
+
   const APP_ZOOM_STORAGE_KEY = "myEasyListAppZoom";
 const APP_ZOOM_OPTIONS = [0.9, 1, 1.1] as const;
 
@@ -3123,6 +3846,14 @@ useEffect(() => {
     // ignore
   }
 }, [appZoom]);
+
+const appScaleStyle =
+  appZoom === 0.9
+    ? { fontSize: "14px" }
+    : appZoom === 1.1
+      ? { fontSize: "17px" }
+      : { fontSize: "16px" };
+
   const appRootRef = useRef<HTMLDivElement | null>(null);
   const moreBtnRef = useRef<HTMLButtonElement | null>(null);
   const moreMenuElRef = useRef<HTMLDivElement | null>(null);
@@ -3131,10 +3862,66 @@ useEffect(() => {
  const [list, setList] = useState<ShoppingList | null>(() => {
   return loadLastUiCache()?.list || null;
 });
+  const [disconnectConfirm, setDisconnectConfirm] = useState<{title: string; message: string; label: string} | null>(null);
+  const disconnectConfirmResolver = useRef<((accepted: boolean) => void) | null>(null);
+  const askDisconnectConfirm = (title: string, message: string, label: string) => new Promise<boolean>((resolve) => {
+    disconnectConfirmResolver.current?.(false);
+    disconnectConfirmResolver.current = resolve;
+    setDisconnectConfirm({ title, message, label });
+  });
+  const finishDisconnectConfirm = (accepted: boolean) => {
+    const resolve = disconnectConfirmResolver.current;
+    disconnectConfirmResolver.current = null; setDisconnectConfirm(null); resolve?.(accepted);
+  };
+  useEffect(() => { finishDisconnectConfirm(false); }, [list?.id, user?.uid]);
+  useEffect(() => () => { disconnectConfirmResolver.current?.(false); }, []);
+  const [listActionsPos, setListActionsPos] = useState<{top: number; left: number} | null>(null);
+  const [purchasedConfirmListId, setPurchasedConfirmListId] = useState<string | null>(null);
+  useEffect(() => { setPurchasedConfirmListId(null); }, [list?.id]);
+  const [clearingPurchased, setClearingPurchased] = useState(false);
+  const purchasedDeleteLock = useRef(false);
+  useEffect(() => { setListActionsPos(null); }, [list?.id]);
+  const [availableLists, setAvailableLists] = useState<ShoppingList[]>(() => initialTabsCache?.lists || []);
+  const [defaultListContent, setDefaultListContent] = useState<ListTabsContent>(() => initialTabsCache?.content || {});
+  const duplicateDefaultIds = availableLists.filter((entry) => user?.uid && isPrivateDefaultList(entry, user.uid)).map((entry) => entry.id).sort().join("|");
+  useEffect(() => {
+    const ids = duplicateDefaultIds ? duplicateDefaultIds.split("|") : [];
+    // Retain the last known content flags until live snapshots update them.
+    if (!ids.length) return;
+    let active = true;
+    const unsubscribe = ids.flatMap((id) => (["items", "favorites"] as const).map((kind) =>
+      onSnapshot(collection(db, "lists", id, kind), (snapshot) => {
+        if (!active) return;
+        // A cached empty result cannot prove absence of server data.
+        if (snapshot.empty && snapshot.metadata.fromCache) return;
+        const containsData = !snapshot.empty;
+        setDefaultListContent((previous) => ({ ...previous, [id]: { ...previous[id], [kind]: containsData } }));
+      }, () => {
+        if (active) setDefaultListContent((previous) => ({ ...previous, [id]: { ...previous[id], [kind]: true } }));
+      })
+    ));
+    return () => { active = false; unsubscribe.forEach((stop) => stop()); };
+  }, [duplicateDefaultIds, user?.uid]);
+  const visibleListTabs = selectVisibleListTabs(
+    list && !availableLists.some((entry) => entry.id === list.id) ? [...availableLists, list] : availableLists,
+    list?.id, user?.uid || (!auth.currentUser && initialTabsCache?.uid) || auth.currentUser?.uid || "", defaultListContent
+  );
+  const [listEditor, setListEditor] = useState<"create" | "rename" | "delete" | null>(null);
+  const [listNameDraft, setListNameDraft] = useState("");
+  const [listOperationBusy, setListOperationBusy] = useState(false);
+  const listOperationLockRef = useRef(false);
+  const listRecoveryRef = useRef<string | null>(null);
+  const listDirectorySeenRef = useRef<Set<string>>(new Set());
+  const listEditorIdRef = useRef<string | null>(null);
+  const activeListButtonRef = useRef<HTMLButtonElement | null>(null);
+  const listUiIdRef = useRef<string | null>(list?.id || null);
+  const listCacheReadyRef = useRef({ items: true, favorites: true });
+
 
 const [items, setItems] = useState<ShoppingItem[]>(() => {
   return loadLastUiCache()?.items || [];
 });
+
   const [leavingIds, setLeavingIds] = useState<Set<string>>(() => new Set());
   // UI-only cues
   const [favLeavingIds, setFavLeavingIds] = useState<Set<string>>(() => new Set()); // kept for backward compatibility (not used for delete flash)
@@ -3150,10 +3937,10 @@ const [items, setItems] = useState<ShoppingItem[]>(() => {
   return loadLastUiCache()?.favorites || [];
 });
   const [activeTab, setActiveTab] = useState<Tab>("list");
-
   const [themeMode, setThemeMode] = useState<AppThemeMode>(() => {
   try {
     const saved = localStorage.getItem(APP_THEME_STORAGE_KEY) as AppThemeMode | null;
+
     if (saved === "light" || saved === "dark" || saved === "night" || saved === "system") {
       return saved;
     }
@@ -3163,28 +3950,10 @@ const [items, setItems] = useState<ShoppingItem[]>(() => {
 });
 
 useEffect(() => {
+  // Dark mode temporarily disabled
   try {
     localStorage.setItem(APP_THEME_STORAGE_KEY, themeMode);
   } catch {}
-
-  const media = window.matchMedia("(prefers-color-scheme: dark)");
-
-  const applyTheme = () => {
-    const systemIsDark = media.matches;
-    const effectiveTheme = themeMode === "system"
-      ? systemIsDark ? "dark" : "light"
-      : themeMode;
-
-    // Dark mode temporarily disabled
-  };
-
-  applyTheme();
-
-  media.addEventListener("change", applyTheme);
-
-  return () => {
-    media.removeEventListener("change", applyTheme);
-  };
 }, [themeMode]);
 
   const [inputValue, setInputValue] = useState("");
@@ -3203,6 +3972,8 @@ const [userCategoryMap, setUserCategoryMap] = useState<UserCategoryMap>({});
 const [showBoughtAllModal, setShowBoughtAllModal] = useState(false);
 const [categorySheetOpen, setCategorySheetOpen] = useState(false);
 const [categorySheetItem, setCategorySheetItem] = useState<ShoppingItem | null>(null);
+const [categorySaveBusy, setCategorySaveBusy] = useState(false);
+const categorySaveLock = useRef(false);
 const [categorySheetValue, setCategorySheetValue] = useState<string>("other");
 const [categorySheetPos, setCategorySheetPos] = useState<{ x: number; y: number } | null>(null);
 const [customCategoryInput, setCustomCategoryInput] = useState("");
@@ -3254,7 +4025,22 @@ useEffect(() => {
 
 
 useEffect(() => {
-  if (!list?.id) return;
+  if (!list?.id || listUiIdRef.current !== list.id ||
+      !listCacheReadyRef.current.items || !listCacheReadyRef.current.favorites) return;
+
+  const existingCache = loadLastUiCache();
+
+  // הגנה לאופליין באייפון:
+  // אם אנחנו בלי אינטרנט וה-state כרגע ריק,
+  // לא דורסים Cache קודם שהיה בו פריטים.
+  if (
+    !isOnline &&
+    items.length === 0 &&
+    existingCache?.items &&
+    existingCache.items.length > 0
+  ) {
+    return;
+  }
 
   saveLastUiCache({
     list,
@@ -3262,7 +4048,7 @@ useEffect(() => {
     favorites,
     savedAt: Date.now(),
   });
-}, [list, items, favorites]);
+}, [list, items, favorites, isOnline]);
 
 const voiceExtraTerms = useMemo(() => {
   return getUserVoiceExtraTerms({
@@ -3485,6 +4271,7 @@ const moveCategory = async (category: string, direction: "up" | "down") => {
   if (!user?.uid) return;
 
   const baseOrder = [...allCategoryOptions];
+
   const currentOrder = categoryOrder.length
     ? baseOrder.sort((a, b) => {
         const ai = categoryOrder.indexOf(a);
@@ -3500,11 +4287,15 @@ const moveCategory = async (category: string, direction: "up" | "down") => {
   if (targetIndex < 0 || targetIndex >= currentOrder.length) return;
 
   const nextOrder = [...currentOrder];
-  [nextOrder[index], nextOrder[targetIndex]] = [nextOrder[targetIndex], nextOrder[index]];
+  [nextOrder[index], nextOrder[targetIndex]] = [
+    nextOrder[targetIndex],
+    nextOrder[index],
+  ];
 
   setCategoryOrder(nextOrder);
 
   const prefRef = doc(db, "users", user.uid, "preferences", "categories");
+
   await setDoc(
     prefRef,
     {
@@ -3516,14 +4307,26 @@ const moveCategory = async (category: string, direction: "up" | "down") => {
 };
 
 
-const saveItemCategory = async () => {
-  if (!list?.id || !categorySheetItem) return;
+const saveItemCategory = async (selectedCategory: string = categorySheetValue) => {
+  if (!list?.id || !categorySheetItem || categorySaveLock.current) return;
+  categorySaveLock.current = true; setCategorySaveBusy(true);
+  try {
 
-  const itemRef = doc(db, "lists", list.id, "items", categorySheetItem.id);
+ const itemRef = doc(db, "lists", list.id, "items", categorySheetItem.id);
 
-  await updateDoc(itemRef, {
-    category: categorySheetValue,
-  });
+setItems((prev) =>
+  prev.map((item) =>
+    item.id === categorySheetItem.id
+      ? { ...item, category: selectedCategory }
+      : item
+  )
+);
+
+const itemWrite = updateDoc(itemRef, {
+  category: selectedCategory,
+});
+if (isOnline) await itemWrite;
+else void itemWrite.catch((err) => console.error("saveItemCategory failed", err));
 
 
 
@@ -3531,21 +4334,27 @@ const saveItemCategory = async () => {
   const prefKey = normalizeCategoryPreferenceKey(categorySheetItem.name);
   if (prefKey) {
     const prefRef = doc(db, "users", user.uid, "preferences", "categories");
-    await setDoc(
+    const preferenceWrite = setDoc(
       prefRef,
       {
         itemCategoryMap: {
-          [prefKey]: categorySheetValue,
+          [prefKey]: selectedCategory,
         },
         updatedAt: Date.now(),
       },
       { merge: true }
     );
+    if (isOnline) await preferenceWrite;
+    else void preferenceWrite.catch((err) => console.error("Category preference update failed", err));
   }
 }
 
   setToast(t("הקטגוריה עודכנה"));
   closeCategorySheet();
+  } catch (error) {
+    console.error("Category update failed", error);
+    setToast(t("שגיאה"));
+  } finally { categorySaveLock.current = false; setCategorySaveBusy(false); }
 };
 
 const startItemLongPress = (item: ShoppingItem, e?: any) => () => {
@@ -3602,10 +4411,7 @@ if (!user?.uid) {
       : [];
 
     setUserCustomCategories(custom as string[]);
-
-    setUserCustomCategories(custom as string[]);
-
-const savedOrder = Array.isArray(data?.categoryOrder)
+    const savedOrder = Array.isArray(data?.categoryOrder)
   ? data.categoryOrder.filter((x: unknown) => typeof x === "string")
   : [];
 
@@ -3749,7 +4555,7 @@ const deleteAccountPermanently = async () => {
 
   try {
     const currentUser = auth.currentUser;
-
+   
     if (!currentUser) {
       alert(t("צריך להתחבר מחדש"));
       return;
@@ -3974,21 +4780,27 @@ useEffect(() => {
   // Swipe gestures (active items): swipe left = delete, swipe right = favorite
   // Works on desktop (mouse drag) and mobile (touch).
   const swipeStartRef = useRef<{ x: number; y: number; id: string; pointerId: number } | null>(null);
-  const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
-  const swipeConsumedRef = useRef(false);
-  const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
-  const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
-  const swipeVibratedRef = useRef<Record<string, boolean>>({});
+const swipeLastRef = useRef<{ x: number; y: number } | null>(null);
+const swipeConsumedRef = useRef(false);
+const swipeCaptureRef = useRef<{ el: HTMLElement; pointerId: number } | null>(null);
+const [swipeUi, setSwipeUi] = useState<{ id: string | null; dx: number }>({ id: null, dx: 0 });
+const swipeVibratedRef = useRef<Record<string, boolean>>({});
+const cardTapHandledRef = useRef(false);
+  
 
   const SWIPE_THRESHOLD_PX = 70;
   const SWIPE_MAX_SHIFT_PX = 110;
 
   const isNoSwipeTarget = (t: EventTarget | null) => {
-    const el = t as HTMLElement | null;
-    if (!el) return false;
-    // Don't start swipe from buttons/inputs (qty buttons etc.)
-    return Boolean(el.closest("button, input, textarea, select, a, [data-noswipe='true']"));
-  };
+  const el = t as HTMLElement | null;
+  if (!el) return false;
+
+  return Boolean(
+    el.closest(
+      "button, input, textarea, select, a, [data-noswipe='true'], [data-no-card-tap='true']"
+    )
+  );
+};
 
   const onSwipePointerDown = (id: string) => (e: React.PointerEvent) => {
     if (isNoSwipeTarget(e.target)) return;
@@ -3996,7 +4808,7 @@ useEffect(() => {
         swipeConsumedRef.current = false;
     swipeStartRef.current = { x: e.clientX, y: e.clientY, id, pointerId: e.pointerId };
     swipeLastRef.current = { x: e.clientX, y: e.clientY };
-    setSwipeUi({ id, dx: 0 });
+    setSwipeUi({ id: null, dx: 0 });
     swipeVibratedRef.current[id] = false;
   };
 
@@ -4028,7 +4840,9 @@ useEffect(() => {
         swipeCaptureRef.current = { el: e.currentTarget as HTMLElement, pointerId: e.pointerId };
       } catch (e) {}
     }
-    setSwipeUi({ id, dx });
+    if (Math.abs(dxRaw) > 6 && Math.abs(dxRaw) >= Math.abs(e.clientY - s.y)) {
+  setSwipeUi({ id, dx });
+}
   };
 
   const onSwipePointerUp = (id: string) => (e: React.PointerEvent) => {
@@ -4187,13 +5001,54 @@ const getLastPurchasedItem = (itemsToCheck: ShoppingItem[]) => {
     .sort((a, b) => Number(b.purchasedAt || 0) - Number(a.purchasedAt || 0))[0];
 };
 
-  useEffect(() => {
+  React.useLayoutEffect(() => {
     latestListIdRef.current = list?.id ?? null;
   }, [list?.id]);
 
   useEffect(() => {
     latestItemsRef.current = items;
   }, [items]);
+
+  useEffect(() => {
+  if (!isOnline || !list?.id) return;
+
+  const pending = loadPendingAddedItemsCache(list?.id);
+
+
+  if (!pending.length) return;
+
+  void (async () => {
+    try {
+      const flushedIds = new Set<string>();
+
+for (const item of pending) {
+ const itemRef = doc(db, "lists", list.id, "items", item.id);
+
+await setDoc(itemRef, item, {
+  merge: true,
+});
+
+const serverSnap = await getDocFromServer(itemRef);
+
+if (serverSnap.exists()) {
+  flushedIds.add(item.id);
+}
+}
+
+const remaining = loadPendingAddedItemsCache(list?.id).filter(
+  (item) => !flushedIds.has(item.id)
+);
+
+if (remaining.length === 0) {
+  clearPendingAddedItemsCache(list?.id);
+} else {
+  savePendingAddedItemsCache(remaining, list?.id);
+}
+    } catch (err) {
+      console.error("flush pending added items v2 failed", err);
+    }
+  })();
+}, [isOnline, list?.id]);
 
     useEffect(() => {
   if (!items || items.length === 0) {
@@ -4238,9 +5093,11 @@ const getLastPurchasedItem = (itemsToCheck: ShoppingItem[]) => {
   });
 
   // 🔥 פתיחת החלון רק לו
-  setTimeout(() => {
-  setShowBoughtAllModal(true);
-}, 900);
+  const completionListId = list?.id;
+  const completionTimer = window.setTimeout(() => {
+    if (latestListIdRef.current === completionListId) setShowBoughtAllModal(true);
+  }, 900);
+  return () => window.clearTimeout(completionTimer);
 
 }, [items, user?.uid]);
 
@@ -4251,56 +5108,110 @@ const getLastPurchasedItem = (itemsToCheck: ShoppingItem[]) => {
   }, [toast]);
 
   useEffect(() => {
-    return onAuthStateChanged(auth, async (u) => {
-          try {
+    if (!user?.uid || directoryOwnerRef.current !== user.uid) return;
+    saveListTabsCache({ uid: user.uid, lists: availableLists, content: defaultListContent });
+  }, [user?.uid, availableLists, defaultListContent]);
 
-          setUser(u);
-          setAuthLoading(false);
-
-          if (!u) {
-  clearLastUiCache();
-  setList(null);
-  setItems([]);
-  setFavorites([]);
-  return;
-}
-
-          setListLoading(true);
-
-          const q = query(collection(db, "lists"), where("sharedWith", "array-contains", u.uid));
-          const snap = await getDocs(q);
-
-          if (snap.empty) {
-            const newListRef = doc(collection(db, "lists"));
-            const newList: ShoppingList = {
-              id: newListRef.id,
-              title: "My Easy List",
-              ownerUid: u.uid,
-              sharedWith: [u.uid],
-              userColorMap: {},
-              createdAt: Date.now(),
-              updatedAt: Date.now(),
-            };
-    // Non-blocking write (important offline)
-    void setDoc(newListRef, newList).catch((err) => console.error("setDoc failed", err));
-setList(newList);
-            localStorage.setItem("activeListId", newListRef.id);
-          } else {
-            const savedId = localStorage.getItem("activeListId");
-            const docToUse = savedId ? snap.docs.find((d) => d.id === savedId) ?? snap.docs[0] : snap.docs[0];
-            const data = docToUse.data() as ShoppingList;
-            setList({ ...data, id: docToUse.id });
-            localStorage.setItem("activeListId", docToUse.id);
-          }
-
-          setListLoading(false);
-          } finally {
-            setAuthInitialized(true);
-          }
-    });
-  }, []);
   useEffect(() => {
-    if (!list?.id) return;
+    if (!user?.uid || !list || !isPrivateDefaultList(list, user.uid) || listOperationLockRef.current || isListening || categorySaveBusy) return;
+    const currentContent = defaultListContent[list.id];
+    // Switch away only after both server subscriptions confirm that this automatic list is empty.
+    if (currentContent?.items !== false || currentContent?.favorites !== false || hasPendingListData(list.id)) return;
+    const target = visibleListTabs.find((entry) => !isPrivateDefaultList(entry, user.uid));
+    if (!target) return;
+    latestListIdRef.current = target.id; latestItemsRef.current = [];
+    setItems([]); setFavorites([]); setList(target);
+    localStorage.setItem("activeListId", target.id);
+  }, [user?.uid, list?.id, availableLists, defaultListContent, isListening, categorySaveBusy, listOperationBusy]);
+
+  useEffect(() => {
+    let active = true;
+    let generation = 0;
+    const unsubscribe = onAuthStateChanged(auth, async (u) => {
+      const request = ++generation;
+      setUser(u); setAuthLoading(false);
+      if (!u) {
+        clearListTabsCachePointer(); directoryOwnerRef.current = null;
+        setAvailableLists([]); setDefaultListContent({});
+        clearLastUiCache(); setList(null); setItems([]); setFavorites([]);
+        setListLoading(false); setAuthInitialized(true); return;
+      }
+      if (directoryOwnerRef.current !== u.uid) {
+        const cachedTabs = loadListTabsCache(u.uid);
+        if (directoryOwnerRef.current) { setList(null); setItems([]); setFavorites([]); }
+        directoryOwnerRef.current = u.uid;
+        setAvailableLists(cachedTabs?.lists || []);
+        setDefaultListContent(cachedTabs?.content || {});
+      }
+      setListLoading(true);
+      try {
+        const next = await loadInitialShoppingList(u.uid);
+        if (!active || generation !== request || auth.currentUser?.uid !== u.uid) return;
+        latestListIdRef.current = next.id;
+        setList(next); localStorage.setItem("activeListId", next.id);
+      } catch (error) {
+        console.error("Initial list load failed", error);
+        if (active && generation === request) setToast(t("פעולת הרשימה נכשלה"));
+      } finally {
+        if (active && generation === request) { setListLoading(false); setAuthInitialized(true); }
+      }
+    });
+    return () => { active = false; ++generation; unsubscribe(); };
+  }, []);
+  const recoverUnavailableList = async (unavailableId: string) => {
+    const uid = user?.uid;
+    if (!uid || latestListIdRef.current !== unavailableId || listOperationLockRef.current || listRecoveryRef.current) return;
+    listRecoveryRef.current = unavailableId;
+    setItems([]); setFavorites([]); latestItemsRef.current = [];
+    setShareMenuOpen(false); setMoreMenuOpen(false);
+    try {
+      const remaining = await getDocs(query(collection(db, "lists"), where("sharedWith", "array-contains", uid)));
+      if (auth.currentUser?.uid !== uid || latestListIdRef.current !== unavailableId) return;
+      const nextDoc = remaining.docs.find((d) => d.id !== unavailableId && !d.data().deletedAt);
+      let next: ShoppingList;
+      if (nextDoc) next = { ...nextDoc.data(), id: nextDoc.id } as ShoppingList;
+      else {
+        if (!navigator.onLine || remaining.metadata.fromCache) return;
+        const ref = doc(collection(db, "lists"));
+        next = { id: ref.id, title: "My Easy List", ownerUid: uid, sharedWith: [uid], createdAt: Date.now(), updatedAt: Date.now() };
+        await setDoc(ref, next);
+        if (auth.currentUser?.uid !== uid || latestListIdRef.current !== unavailableId) return;
+      }
+      latestListIdRef.current = next.id;
+      setList(next); localStorage.setItem("activeListId", next.id);
+      setToast(t("הוסרת מהרשימה"));
+    } catch (error) { console.error("List recovery failed", error); setToast(t("פעולת הרשימה נכשלה")); }
+    finally { if (listRecoveryRef.current === unavailableId) listRecoveryRef.current = null; }
+  };
+
+  useEffect(() => {
+    if (!user?.uid) {
+      if (authInitialized) setAvailableLists([]);
+      listDirectorySeenRef.current.clear(); return;
+    }
+    return onSnapshot(
+      query(collection(db, "lists"), where("sharedWith", "array-contains", user.uid)),
+      (snapshot) => {
+        if (auth.currentUser?.uid !== user.uid) return;
+        // An empty local Firestore cache is not a server-side removal of the saved tabs.
+        if (snapshot.metadata.fromCache && snapshot.empty) return;
+        const directory = snapshot.docs.map((d) => ({ ...d.data(), id: d.id } as ShoppingList))
+          .filter((entry) => !(entry as any).deletedAt)
+          .sort((a, b) => Number(a.createdAt || 0) - Number(b.createdAt || 0) || a.id.localeCompare(b.id));
+        const selectedId = latestListIdRef.current;
+        const previouslyVisible = selectedId && listDirectorySeenRef.current.has(selectedId);
+        listDirectorySeenRef.current = new Set(directory.map((entry) => entry.id));
+        setAvailableLists(directory);
+        if (!snapshot.metadata.fromCache && previouslyVisible && selectedId && !directory.some((entry) => entry.id === selectedId)) {
+          void recoverUnavailableList(selectedId);
+        }
+      },
+      (error) => { console.error("List subscription failed", error); setToast(t("פעולת הרשימה נכשלה")); }
+    );
+  }, [user?.uid, t, authInitialized]);
+
+  useEffect(() => {
+    if (!list?.id || !user?.uid) return;
   
   void (async () => {
   const currentMap = (list as any)?.userColorMap;
@@ -4326,81 +5237,157 @@ setList(newList);
     const itemsCol = collection(listRef, "items");
     const favsCol = collection(listRef, "favorites");
 
+    let subscriptionActive = true;
     const unsubList = onSnapshot(listRef, async (snap) => {
-  if (!snap.exists()) return;
-
-  const nextList = { ...(snap.data() as ShoppingList), id: snap.id };
+  if (!subscriptionActive || latestListIdRef.current !== listRef.id) return;
+  if (!user?.uid || (snap.metadata.fromCache && !snap.exists())) return;
+  const nextList = { ...(snap.exists() ? snap.data() as ShoppingList : { sharedWith: [] }), id: snap.id } as ShoppingList;
   const sharedWith = Array.isArray(nextList.sharedWith) ? nextList.sharedWith : [];
   const stillHasAccess = !!user?.uid && sharedWith.includes(user.uid);
 
-  if (!stillHasAccess) {
-    if (localStorage.getItem("activeListId") === listRef.id) {
-      localStorage.removeItem("activeListId");
-    }
-
-    setList(null);
-    setItems([]);
-    setFavorites([]);
-    setShareMenuOpen(false);
-    setMoreMenuOpen(false);
-
-    const q = query(collection(db, "lists"), where("sharedWith", "array-contains", user!.uid));
-    const listsSnap = await getDocs(q);
-
-    if (listsSnap.empty) {
-      const newListRef = doc(collection(db, "lists"));
-      const newList: ShoppingList = {
-        id: newListRef.id,
-        title: "My Easy List",
-        ownerUid: user!.uid,
-        sharedWith: [user!.uid],
-        createdAt: Date.now(),
-        updatedAt: Date.now(),
-      };
-
-      await setDoc(newListRef, newList);
-      setList(newList);
-      localStorage.setItem("activeListId", newListRef.id);
-    } else {
-      const nextDoc = listsSnap.docs[0];
-      const fallbackList = { ...(nextDoc.data() as ShoppingList), id: nextDoc.id };
-      setList(fallbackList);
-      localStorage.setItem("activeListId", nextDoc.id);
-    }
-
-    setToast(t("הוסרת מהרשימה"));
+  if (!stillHasAccess || (nextList as any).deletedAt) {
+    await recoverUnavailableList(listRef.id);
     return;
   }
 
   setList(nextList);
+}, (error) => {
+  if (!subscriptionActive || latestListIdRef.current !== listRef.id) return;
+  if (error.code === "permission-denied" || error.code === "not-found") void recoverUnavailableList(listRef.id);
+  else { console.error("Active list subscription failed", error); setToast(t("פעולת הרשימה נכשלה")); }
 });
 
-    const unsubItems = onSnapshot(itemsCol, (snap) => {
-      const docs = snap.docs.map((d) => d.data() as ShoppingItem);
-      setItems(docs);
-    });
+ const unsubItems = onSnapshot(itemsCol, (snap) => {
+  if (!subscriptionActive || latestListIdRef.current !== listRef.id || listRecoveryRef.current === listRef.id) return;
+  listCacheReadyRef.current.items = true;
+  const pendingDeletedIds = new Set(loadPendingDeletedItemsCache(list?.id));
+  const pendingAddedItems = loadPendingAddedItemsCache(list?.id).filter(
+  (item) => !pendingDeletedIds.has(item.id)
+);
 
-    const unsubFavs = onSnapshot(favsCol, (snap) => {
-      const favDocs: FavoriteDoc[] = snap.docs.map((d) => {
-  const data = d.data() as any;
-  return {
-    id: d.id,
-    name: String(data?.name || ""),
-    createdAt: Number(data?.createdAt || 0),
-    updatedAt: Number(data?.updatedAt || 0),
-    category: data?.category as CategoryKey | undefined,
-  };
+const docs = snap.docs
+  .map((d) => d.data() as ShoppingItem)
+  .filter((item) => !pendingDeletedIds.has(item.id));
+
+
+  setItems((prev) => {
+  // חשוב לאייפון/אופליין:
+  // Firestore עלול להחזיר snapshot חלקי מה-cache.
+  // אם הגיעו פחות פריטים ממה שכבר מוצג - ממזגים ולא דורסים.
+  if (!isOnline && snap.metadata.fromCache && docs.length < prev.length) {
+    const merged = new Map<string, ShoppingItem>();
+
+    for (const item of prev) {
+      merged.set(item.id, item);
+    }
+
+    for (const item of docs) {
+      merged.set(item.id, item);
+    }
+
+    return Array.from(merged.values());
+  }
+
+  const serverIds = new Set(snap.docs.map((d) => d.id));
+
+if (!snap.metadata.fromCache && pendingAddedItems.length > 0) {
+  const stillPendingAdded = pendingAddedItems.filter(
+    (item) => !serverIds.has(item.id)
+  );
+
+  if (stillPendingAdded.length === 0) {
+    clearPendingAddedItemsCache(list?.id);
+  } else {
+    savePendingAddedItemsCache(stillPendingAdded, list?.id);
+  }
+}
+
+if (!snap.metadata.fromCache && pendingDeletedIds.size > 0) {
+    const stillPending = Array.from(pendingDeletedIds).filter((id) =>
+      serverIds.has(id)
+    );
+
+    if (stillPending.length === 0) {
+      clearPendingDeletedItemsCache(list?.id);
+    } else {
+      savePendingDeletedItemsCache(stillPending, list?.id);
+    }
+  }
+ 
+
+  const merged = new Map<string, ShoppingItem>();
+
+for (const item of docs) {
+  merged.set(item.id, item);
+}
+
+for (const item of pendingAddedItems) {
+  merged.set(item.id, item);
+}
+
+return Array.from(merged.values());
 });
-favDocs.sort((a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt));
-      setFavorites(favDocs);
-    });
+});
+
+   const unsubFavs = onSnapshot(favsCol, (snap) => {
+  if (!subscriptionActive || latestListIdRef.current !== listRef.id || listRecoveryRef.current === listRef.id) return;
+  listCacheReadyRef.current.favorites = true;
+  const pendingDeletedFavoriteIds = new Set(loadPendingDeletedFavoritesCache(list?.id));
+
+  const favDocs: FavoriteDoc[] = snap.docs
+    .map((d) => {
+      const data = d.data() as any;
+
+      return {
+        id: d.id,
+        name: String(data?.name || ""),
+        createdAt: Number(data?.createdAt || 0),
+        updatedAt: Number(data?.updatedAt || 0),
+        category: data?.category as CategoryKey | undefined,
+      };
+    })
+    .filter((fav) => !pendingDeletedFavoriteIds.has(fav.id));
+
+  const pendingFavs = loadPendingFavoritesCache(list?.id).filter(
+    (fav) => !pendingDeletedFavoriteIds.has(fav.id)
+  );
+
+  setFavorites(() => {
+    const merged = new Map<string, FavoriteDoc>();
+
+    for (const fav of favDocs) {
+      merged.set(fav.id, fav);
+    }
+
+    for (const fav of pendingFavs) {
+      merged.set(fav.id, fav);
+    }
+
+    return Array.from(merged.values()).sort(
+      (a, b) => (b.updatedAt || b.createdAt) - (a.updatedAt || a.createdAt)
+    );
+  });
+
+  if (!snap.metadata.fromCache && pendingFavs.length > 0) {
+    const serverIds = new Set(favDocs.map((f) => f.id));
+
+    const stillPending = pendingFavs.filter((fav) => !serverIds.has(fav.id));
+
+    if (stillPending.length === 0) {
+      clearPendingFavoritesCache(list?.id);
+    } else {
+      savePendingFavoritesCache(stillPending, list?.id);
+    }
+  }
+});
 
     return () => {
+      subscriptionActive = false;
       unsubList();
       unsubItems();
       unsubFavs();
     };
-  }, [list?.id, user?.uid, t]);
+ }, [list?.id, user?.uid, authInitialized, t]);
 
 useEffect(() => {
   if (!list?.id || !user?.uid) return;
@@ -4624,6 +5611,7 @@ const recordHistory = (rawName: string) => {
 };
 
 const hiddenSuggestRef = useRef<Set<string>>(new Set());
+const pendingFavoriteAddIdsRef = useRef<Set<string>>(new Set());
 
 useEffect(() => {
   hiddenSuggestRef.current = new Set(loadHiddenSuggestions());
@@ -4670,7 +5658,7 @@ const applySuggestion = async (s: SuggestView) => {
   const pickKey = s.key || normalizeItemName(s.name);
 
   // אם כבר ברשימה - תציג שקיים
-  if (s.isInList && s.itemId) {
+ if (s.isInList && s.itemId) {
   const existing = items.find((it) => it.id === s.itemId);
 
   if (existing?.isPurchased) {
@@ -4736,7 +5724,10 @@ const applySuggestion = async (s: SuggestView) => {
   category: userCategoryMap[normalizeCategoryPreferenceKey(cleanName)] || detectCategory(cleanName),
 };
 
-  await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+
+  void setDoc(doc(db, "lists", list.id, "items", itemId), newItem).catch((err) =>
+  console.error("addItem failed", err)
+);
 
   if (pickKey) {
     unhideSuggestionKey(pickKey);
@@ -4807,7 +5798,7 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
     const normalized = normalizeItemName(name);
     const existing = items.find((it) => normalizeItemName(it.name) === normalized);
 
-      if (existing) {
+       if (existing) {
   if (normalized) {
     unhideSuggestionKey(normalized);
     hiddenSuggestRef.current.delete(normalized);
@@ -4852,12 +5843,27 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
   category: userCategoryMap[normalizeCategoryPreferenceKey(name)] || detectCategory(name),
 };
 
-    // Clear the add box immediately (especially important offline where Firestore writes may not resolve quickly)
-    setInputValue("");
-    setIsSuggestOpen(false);
-    setActiveSuggestIndex(-1);
 
-    await setDoc(doc(db, "lists", list.id, "items", itemId), newItem);
+// Clear the add box immediately (especially important offline where Firestore writes may not resolve quickly)
+setInputValue("");
+setIsSuggestOpen(false);
+setActiveSuggestIndex(-1);
+
+savePendingAddedItemsCache(
+  Array.from(
+    new Map(
+      [...loadPendingAddedItemsCache(list?.id), newItem].map((item) => [item.id, item])
+    ).values()
+  ), list?.id
+);
+
+
+setItems((prev) => [newItem, ...prev]);
+
+void setDoc(doc(db, "lists", list.id, "items", itemId), newItem).catch((err) =>
+  console.error("addItem failed", err)
+);
+
     if (normalized) {
       unhideSuggestionKey(normalized);
       hiddenSuggestRef.current.delete(normalized);
@@ -4868,21 +5874,32 @@ const hideItemFromSuggestionsByName = (rawName: string) => {
       setActiveSuggestIndex(-1);
   };
 
-  const togglePurchased = async (id: string) => {
-    if (!list?.id) return;
-    const item = items.find((i) => i.id === id);
-    if (!item) return;
+ const togglePurchased = async (id: string) => {
+  if (!list?.id) return;
 
-    const isNowPurchased = !item.isPurchased;
-    await ensureUserColorAssigned(user?.uid);
-   await updateDoc(doc(db, "lists", list.id, "items", id), {
-  isPurchased: isNowPurchased,
-  purchasedAt: isNowPurchased ? Date.now() : null,
-  purchasedByUid: isNowPurchased ? user?.uid || "" : "",
-  purchasedByName: isNowPurchased ? getUserDisplayName(user) : "",
-  purchasedByInitial: isNowPurchased ? getUserInitial(user) : "",
-});
+  const item = items.find((i) => i.id === id);
+  if (!item) return;
+
+  const isNowPurchased = !item.isPurchased;
+
+  const patch = {
+    isPurchased: isNowPurchased,
+    purchasedAt: isNowPurchased ? Date.now() : null,
+    purchasedByUid: isNowPurchased ? user?.uid || "" : "",
+    purchasedByName: isNowPurchased ? getUserDisplayName(user) : "",
+    purchasedByInitial: isNowPurchased ? getUserInitial(user) : "",
   };
+
+  setItems((prev) =>
+    prev.map((i) => (i.id === id ? { ...i, ...patch } : i))
+  );
+
+  void ensureUserColorAssigned(user?.uid);
+
+  void updateDoc(doc(db, "lists", list.id, "items", id), patch).catch((err) =>
+    console.error("togglePurchased failed", err)
+  );
+};
 
 const saveCategoryItemName = async (id: string) => {
   const newName = editingCategoryText.trim();
@@ -4896,17 +5913,19 @@ const saveCategoryItemName = async (id: string) => {
   const oldKey = normalizeItemName(oldName);
   const newKey = normalizeItemName(newName);
 
-  await updateDoc(doc(db, "lists", list.id, "items", id), {
-    name: newName,
-  });
-
   setItems((prev) =>
-    prev.map((item) =>
-      item.id === id
-        ? { ...item, name: newName }
-        : item
-    )
-  );
+  prev.map((item) =>
+    item.id === id
+      ? { ...item, name: newName }
+      : item
+  )
+);
+
+void updateDoc(doc(db, "lists", list.id, "items", id), {
+  name: newName,
+}).catch((err) =>
+  console.error("saveCategoryItemName failed", err)
+);
 
   const nextHistory = { ...historyRef.current };
 
@@ -5010,10 +6029,16 @@ const saveCategoryItemName = async (id: string) => {
   }).catch((err) => console.error("updateDoc failed", err));
 };
 
-  const deleteItem = async (id: string) => {
-    if (!list?.id) return;
-    await deleteDoc(doc(db, "lists", list.id, "items", id));
-  };
+ const deleteItem = async (id: string) => {
+  if (!list?.id) return;
+
+  savePendingDeletedItemsCache([
+    ...loadPendingDeletedItemsCache(list?.id),
+    id,
+  ], list?.id);
+
+  await deleteDoc(doc(db, "lists", list.id, "items", id));
+};
 
   const deleteItemWithFlash = (id: string) => {
   if (!list?.id) return;
@@ -5047,10 +6072,32 @@ const saveCategoryItemName = async (id: string) => {
 
     // Remove favorite (optimistic)
     if (favoritesById.has(itemId)) {
-      setFavorites((prev) => prev.filter((f) => f.id !== itemId));
-      void deleteDoc(favRef).catch((e) => console.warn("favorite remove failed", e));
-      return;
-    }
+  setFavoriteFlashIds((prev) => {
+    const next = new Set(prev);
+    next.add(itemId);
+    return next;
+  });
+
+  window.setTimeout(() => {
+    setSwipeUi({ id: null, dx: 0, height: 0 });
+
+    setFavorites((prev) => prev.filter((f) => f.id !== itemId));
+  }, 80);
+
+  void deleteDoc(favRef).catch((e) =>
+    console.warn("favorite remove failed", e)
+  );
+
+  window.setTimeout(() => {
+    setFavoriteFlashIds((prev) => {
+      const next = new Set(prev);
+      next.delete(itemId);
+      return next;
+    });
+  }, 260);
+
+  return;
+}
 
     const item = items.find((i) => i.id === itemId);
     const itemName = String(item?.name || "");
@@ -5063,13 +6110,36 @@ const saveCategoryItemName = async (id: string) => {
     }
 
     const createdAt = Date.now();
+    const updatedAt = createdAt;
+    savePendingDeletedFavoritesCache(
+  loadPendingDeletedFavoritesCache(list?.id).filter((id) => id !== itemId), list?.id
+);
+    pendingFavoriteAddIdsRef.current.add(itemId);
 
     // Add favorite (optimistic)
     setFavorites((prev) => {
-      // Avoid duplicate id if it already exists
-      if (prev.some((f) => f.id === itemId)) return prev;
-      return [{ id: itemId, name: itemName, createdAt }, ...prev];
-    });
+  if (prev.some((f) => f.id === itemId)) return prev;
+
+  const nextFav: FavoriteDoc = {
+    id: itemId,
+    name: itemName,
+    createdAt,
+    updatedAt,
+    category: item?.category || resolveItemCategory(item as ShoppingItem, userCategoryMap),
+  };
+
+  const next = [nextFav, ...prev];
+
+  savePendingFavoritesCache(
+    Array.from(
+      new Map(
+        [...loadPendingFavoritesCache(list?.id), nextFav].map((f) => [f.id, f])
+      ).values()
+    ), list?.id
+  );
+
+  return next;
+});
 
     // Visual cue: item was added to favorites (no text)
     setFavoriteFlashIds((prev) => {
@@ -5088,41 +6158,62 @@ const saveCategoryItemName = async (id: string) => {
     // Write in background (offline-friendly)
 void setDoc(
   favRef,
-  {
-    name: itemName,
-    createdAt,
-    category: item?.category || resolveItemCategory(item as ShoppingItem, userCategoryMap),
-  },
+ {
+  name: itemName,
+  createdAt,
+  updatedAt,
+  category: item?.category || resolveItemCategory(item as ShoppingItem, userCategoryMap),
+},
   { merge: true }
 ).catch((e) =>      console.warn("favorite add failed", e)
     );
   };
 
-  const removeFavorite = async (favId: string) => {
-    if (!list?.id) return;
-    await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
-  };
+const removeFavorite = async (favId: string) => {
+  if (!list?.id) return;
 
-  const removeFavoriteWithFlash = (favId: string) => {
-    if (!list?.id) return;
-    if (favDeleteFlashIds.has(favId)) return;
+  savePendingDeletedFavoritesCache([
+    ...loadPendingDeletedFavoritesCache(list?.id),
+    favId,
+  ], list?.id);
 
+  savePendingFavoritesCache(
+    loadPendingFavoritesCache(list?.id).filter((f) => f.id !== favId), list?.id
+  );
+
+  await deleteDoc(doc(db, "lists", list.id, "favorites", favId));
+};
+
+const removeFavoriteWithFlash = (favId: string) => {
+  if (!list?.id) return;
+  if (favDeleteFlashIds.has(favId)) return;
+
+  setSwipeUi({ id: null, dx: 0 });
+
+  setFavDeleteFlashIds((prev) => {
+    const next = new Set(prev);
+    next.add(favId);
+    return next;
+  });
+
+  window.setTimeout(() => {
+    setSwipeUi({ id: null, dx: 0 });
+
+    setFavorites((prev) => prev.filter((f) => f.id !== favId));
+
+    void removeFavorite(favId).catch((e) =>
+      console.warn("favorite delete failed", e)
+    );
+  }, 80);
+
+  window.setTimeout(() => {
     setFavDeleteFlashIds((prev) => {
       const next = new Set(prev);
-      next.add(favId);
+      next.delete(favId);
       return next;
     });
-
-    window.setTimeout(() => {
-      void removeFavorite(favId).finally(() => {
-        setFavDeleteFlashIds((prev) => {
-          const next = new Set(prev);
-          next.delete(favId);
-          return next;
-        });
-      });
-    }, 240);
-  };
+  }, 260);
+};
 
   const clearListServer = async () => {
     const listId = latestListIdRef.current || list?.id;
@@ -5259,7 +6350,7 @@ const openNativeCalendar = async () => {
     ].map((s) => String(s || "").trim().toLowerCase())
   );
 
-  const titleIsDefault = !rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm);
+  const titleIsDefault = (list as (ShoppingList & { titleIsCustom?: boolean }) | null)?.titleIsCustom !== true && (!rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm));
   const shareLikeTitle = titleIsDefault
     ? `${myListNameByLang[calendarLang] || myListNameByLang.he}:`
     : rawTitle;
@@ -5282,17 +6373,27 @@ const openNativeCalendar = async () => {
 const calendarTitle = `${t("תזכורת לקניות")} - My Easy List`;
 const calendarDescription = `${shareLikeTitle}\n\n${itemsBlock}\n\n${footerByLang[calendarLang] || footerByLang.he}`;
 
-  const isNative = Capacitor.isNativePlatform();
+const isNative = Capacitor.isNativePlatform();
+
 if (isNative) {
   try {
+    const start = Date.now() + 60 * 60 * 1000;
+    const end = start + 30 * 60 * 1000;
+
     await CalendarPlugin.openCalendar({
       title: calendarTitle,
       description: calendarDescription,
+      startTime: start,
+      endTime: end,
     });
+
     return;
   } catch (e) {
     console.error("CalendarPlugin failed", e);
-    setToast("CalendarPlugin נכשל באנדרואיד");
+
+    alert("CalendarPlugin failed: " + JSON.stringify(e));
+
+    setToast(t("שגיאה"));
     return;
   }
 }
@@ -5401,7 +6502,7 @@ const knownDefaultTitlesNorm = new Set(
   ].map((s) => String(s || "").trim().toLowerCase())
 );
 
-const titleIsDefault = !rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm);
+const titleIsDefault = (list as (ShoppingList & { titleIsCustom?: boolean }) | null)?.titleIsCustom !== true && (!rawTitleNorm || knownDefaultTitlesNorm.has(rawTitleNorm));
 
 const appName = myListNameByLang[shareLang] || myListNameByLang.he;
 
@@ -5437,6 +6538,7 @@ const lines =
     ? [...allCategoryOptions].sort((a, b) => {
     const ai = categoryOrder.indexOf(a);
     const bi = categoryOrder.indexOf(b);
+
     return (ai === -1 ? 999 : ai) - (bi === -1 ? 999 : bi);
   })
         .map((category) => {
@@ -5491,7 +6593,7 @@ ${footer}`;
 
     const favKey = normalizeItemName(stripWrappingBrackets(fav.name));
 
-    const existing = items.find((i) => normalizeItemName(i.name) === favKey);
+ const existing = items.find((i) => normalizeItemName(i.name) === favKey);
 
 if (existing) {
   if (existing.isPurchased) {
@@ -5525,6 +6627,7 @@ if (existing) {
 
   return { targetId: existing.id, created: false };
 }
+
     // Visual cue on the favorites card: item was moved to the main list (no text)
     setFavToListFlashIds((prev) => {
       const next = new Set(prev);
@@ -6078,7 +7181,7 @@ const parsed = collapseParsedItemsForExecution(
       if (!name) continue;
 
       const existing = itemsNow.find((i) => normalize(i.name) === normalize(name));
-      if (existing) {
+     if (existing) {
   if (existing.isPurchased) {
     await updateDoc(doc(db, "lists", listId, "items", existing.id), {
       isPurchased: false,
@@ -6291,7 +7394,6 @@ const openVoiceCoachIfNeeded = () => {
 
     if (!user) {
       setToast(t("צריך להתחבר לפני פקודות קוליות"));
-      signInSmart();
       return;
     }
 
@@ -6828,7 +7930,6 @@ setVoiceUi("review");
 
     if (!user) {
       setToast(t("צריך להתחבר לפני פקודות קוליות"));
-      signInSmart();
       return;
     }
 
@@ -7118,7 +8219,7 @@ async function removeSharedUser(targetUid: string) {
     if (!targetUid) return;
     if (targetUid === list.ownerUid) return;
 
-    const ok = window.confirm(t("האם לנתק משתמש מהרשימה?"));
+    const ok = await askDisconnectConfirm(t("שיתוף"), t("האם לנתק משתמש מהרשימה?"), t("יציאה"));
     if (!ok) return;
 
     const ref = doc(db, "lists", list.id);
@@ -7189,6 +8290,45 @@ async function removeSharedUser(targetUid: string) {
     return () => document.removeEventListener("pointerdown", onDocPointerDown_moreMenu);
   }, [moreMenuOpen]);
 
+  React.useLayoutEffect(() => {
+    const nextId = list?.id || null;
+    if (listUiIdRef.current === nextId) return;
+    listUiIdRef.current = nextId;
+    listCacheReadyRef.current = { items: false, favorites: false };
+    const cached = loadLastUiCache();
+    const canRestore = nextId && cached?.list?.id === nextId;
+    const deletedItems = new Set(nextId ? loadPendingDeletedItemsCache(nextId) : []);
+    const deletedFavorites = new Set(nextId ? loadPendingDeletedFavoritesCache(nextId) : []);
+    const nextItems = Array.from(new Map([
+      ...(canRestore ? cached.items : []), ...(nextId ? loadPendingAddedItemsCache(nextId) : []),
+    ].filter((entry) => !deletedItems.has(entry.id)).map((entry) => [entry.id, entry])).values());
+    const nextFavorites = Array.from(new Map([
+      ...(canRestore ? cached.favorites : []), ...(nextId ? loadPendingFavoritesCache(nextId) : []),
+    ].filter((entry) => !deletedFavorites.has(entry.id)).map((entry) => [entry.id, entry])).values());
+    setItems(nextItems); setFavorites(nextFavorites);
+    latestItemsRef.current = nextItems;
+    setInputValue(""); setIsSuggestOpen(false); setActiveSuggestIndex(-1);
+    setShareMenuOpen(false); setMoreMenuOpen(false);
+    setCategorySheetOpen(false); setCategorySheetItem(null); setEditingCategoryItemId(null);
+    setShowBoughtAllModal(false); confettiFiredRef.current = false;
+    completionHandledByUserRef.current = null;
+    setUndoToast(null);
+    if (undoToastTimerRef.current !== null) window.clearTimeout(undoToastTimerRef.current);
+    undoToastTimerRef.current = null;
+    clearItemLongPress();
+    swipeStartRef.current = null; favSwipeStartRef.current = null;
+    setSwipeUi({ id: null, dx: 0 }); setFavSwipeUi({ id: null, dx: 0, rawDx: 0 });
+    setLeavingIds(new Set()); setFavoriteFlashIds(new Set()); setListFlashIds(new Set());
+    setFavToListFlashIds(new Set()); setDeleteFlashIds(new Set()); setFavDeleteFlashIds(new Set());
+    pendingEnterIdsRef.current.clear(); setEnterAnim({});
+    setListEditor(null); setShowClearConfirm(false); setDeleteCategoryConfirm(null);
+    setEditingCustomCategory(null); setCustomCategoryInput("");
+    setCreatorHintOpenId(null);
+    activeListButtonRef.current?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }, [list?.id]);
+
+
+
   // לא חוסמים את ה-UI בזמן בדיקת התחברות
 
   if (!user && authInitialized) {
@@ -7211,11 +8351,18 @@ async function removeSharedUser(targetUid: string) {
     if (!ok) {
       return;
     }
-  } catch (e) {
-    console.error(e);
-  }
+  } catch (e: any) {
+  console.error("GOOGLE_SIGNIN_ERROR_FULL", {
+    message: e?.message,
+    code: e?.code,
+    stack: e?.stack,
+    raw: JSON.stringify(e, null, 2),
+    full: e,
+  });
+}
 }}
-            className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 text-slate-800 py-4 rounded-2xl font-black shadow-sm"
+
+className="w-full flex items-center justify-center gap-3 bg-white border border-slate-300 text-slate-800 py-4 rounded-2xl font-black shadow-sm"
 >
   <svg width="20" height="20" viewBox="0 0 48 48">
     <path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.3 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3 0 5.7 1.1 7.8 3l5.7-5.7C34.1 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.7-.4-3.5z"/>
@@ -7226,11 +8373,47 @@ async function removeSharedUser(targetUid: string) {
 
   <span>Continue with Google</span>
 </button>
-          <LegalFooter lang={lang} className="pt-1" />
-        </div>
-      </div>
-    );
-  }
+
+{Capacitor.getPlatform() === "ios" && (
+  <button
+    type="button"
+    onClick={async () => {
+      try {
+        const ok = await signInWithAppleSmart();
+        if (!ok) return;
+      } catch (e: any) {
+        console.error("APPLE_BUTTON_ERROR_FULL", {
+          message: e?.message,
+          code: e?.code,
+          stack: e?.stack,
+          raw: JSON.stringify(e, null, 2),
+          full: e,
+        });
+        alert(e?.message || "Apple sign-in failed");
+      }
+    }}
+    className="w-full flex items-center justify-center gap-3 bg-black text-white py-4 rounded-2xl font-black shadow-sm"
+  >
+    <svg
+      xmlns="http://www.w3.org/2000/svg"
+      width="20"
+      height="20"
+      viewBox="0 0 24 24"
+      fill="currentColor"
+    >
+      <path d="M16.365 1.43c0 1.14-.42 2.24-1.16 3.05-.83.9-2.19 1.6-3.39 1.5-.15-1.12.45-2.32 1.16-3.05.78-.82 2.13-1.42 3.39-1.5zM20.54 17.09c-.58 1.3-.85 1.88-1.6 3.02-1.04 1.58-2.5 3.55-4.31 3.57-1.61.02-2.03-1.05-4.22-1.04-2.19.01-2.66 1.06-4.27 1.04-1.81-.02-3.19-1.8-4.23-3.38-2.9-4.4-3.2-9.56-1.42-12.3 1.27-1.96 3.28-3.1 5.17-3.1 1.93 0 3.15 1.06 4.75 1.06 1.56 0 2.5-1.06 4.73-1.06 1.68 0 3.46.91 4.73 2.47-4.16 2.28-3.49 8.24.67 9.72z"/>
+    </svg>
+
+    <span>Continue with Apple</span>
+  </button>
+)}
+
+<LegalFooter lang={lang} className="pt-1" />
+
+</div>
+</div>
+);
+}
 
 
 
@@ -7318,14 +8501,126 @@ style={{
   );
 };
   
+  const multiListInteractionBusy = !!listRecoveryRef.current || isListening || voiceUi !== "idle" || !!undoToast ||
+    swipeUi.id !== null || favSwipeUi.id !== null || isDeletingAccount ||
+    categorySaveBusy || !!disconnectConfirm || !!purchasedConfirmListId || clearingPurchased || leavingIds.size > 0 || favoriteFlashIds.size > 0 || listFlashIds.size > 0 ||
+    favToListFlashIds.size > 0 || deleteFlashIds.size > 0 || favDeleteFlashIds.size > 0;
+
+  const clearPurchasedItems = async () => {
+    const targetId = list?.id;
+    if (!targetId || targetId !== purchasedConfirmListId || !user || !isOnline || (multiListInteractionBusy && !purchasedConfirmListId) || purchasedDeleteLock.current || listOperationLockRef.current) return;
+    purchasedDeleteLock.current = true;
+    listOperationLockRef.current = true;
+    setClearingPurchased(true);
+    try {
+      const snapshot = await getDocs(query(collection(db, "lists", targetId, "items"), where("isPurchased", "==", true)));
+      // Recheck server state in each transaction so restored items are preserved.
+      for (let offset = 0; offset < snapshot.docs.length; offset += 100) {
+        const group = snapshot.docs.slice(offset, offset + 100);
+        await runTransaction(db, async (tx) => {
+          const current = await Promise.all(group.map((entry) => tx.get(entry.ref)));
+          current.forEach((entry, index) => {
+            if (entry.exists() && entry.data().isPurchased === true) tx.delete(group[index].ref);
+          });
+        });
+      }
+    } catch (error) {
+      console.error("Purchased items deletion failed", error);
+      setToast(t("מחיקת המוצרים נכשלה"));
+    } finally {
+      purchasedDeleteLock.current = false;
+      listOperationLockRef.current = false;
+      setClearingPurchased(false);
+      setPurchasedConfirmListId(null);
+    }
+  };
+
+  const switchShoppingList = (next: ShoppingList) => {
+    if (next.id === list?.id || listOperationLockRef.current) return;
+    if (multiListInteractionBusy) { setToast(t("יש לסיים את הפעולה לפני החלפת רשימה")); return; }
+    latestListIdRef.current = next.id;
+    latestItemsRef.current = [];
+    setList(next);
+    localStorage.setItem("activeListId", next.id);
+    // Keep favorites/list mode when changing the selected list.
+  };
+
+  const openListEditor = (mode: "create" | "rename" | "delete") => {
+    if (multiListInteractionBusy || listOperationLockRef.current) {
+      setToast(t("יש לסיים את הפעולה לפני החלפת רשימה")); return;
+    }
+    listEditorIdRef.current = list?.id || null;
+    setListNameDraft(mode === "create" ? "" : getLocalizedListTitle(list, lang));
+    setListEditor(mode);
+  };
+
+  const saveListOperation = async () => {
+    if (!user || !listEditor || listOperationLockRef.current || !isOnline) return;
+    const mode = listEditor;
+    const targetId = listEditorIdRef.current;
+    const title = listNameDraft.trim();
+    if (mode !== "delete" && !title) { setToast(t("שם הרשימה נדרש")); return; }
+    listOperationLockRef.current = true;
+    setListOperationBusy(true);
+    try {
+      if (mode === "create") {
+        const ref = doc(collection(db, "lists"));
+        const next: ShoppingList = {
+          id: ref.id, title, ...{ titleIsCustom: true }, ownerUid: user.uid, sharedWith: [user.uid],
+          createdAt: Date.now(), updatedAt: Date.now(),
+        };
+        await setDoc(ref, next);
+        latestListIdRef.current = next.id;
+        setList(next); localStorage.setItem("activeListId", next.id);
+      } else {
+        if (!targetId || targetId !== list?.id) throw new Error(t("הרשימה לא קיימת"));
+        if (mode === "rename") {
+          await runTransaction(db, async (tx) => {
+            const ref = doc(db, "lists", targetId);
+            const snap = await tx.get(ref);
+            if (!snap.exists() || snap.data().ownerUid !== user.uid) throw new Error(t("פעולת הרשימה נכשלה"));
+            tx.update(ref, { title, titleIsCustom: true, updatedAt: Date.now() });
+          });
+        } else {
+          // Logical deletion works with existing member-update rules and revokes
+          // outstanding invitations. Retain data rather than partially purge it.
+          const visible = await getDocs(query(collection(db, "lists"), where("sharedWith", "array-contains", user.uid)));
+          let next = visible.docs.filter((d) => d.id !== targetId)
+            .map((d) => ({ ...d.data(), id: d.id } as ShoppingList))[0];
+          const replacementRef = next ? null : doc(collection(db, "lists"));
+          if (!next && replacementRef) next = {
+            id: replacementRef.id, title: "My Easy List", ownerUid: user.uid,
+            sharedWith: [user.uid], createdAt: Date.now(), updatedAt: Date.now(),
+          };
+          await runTransaction(db, async (tx) => {
+            const ref = doc(db, "lists", targetId);
+            const current = await tx.get(ref);
+            if (!current.exists() || current.data().ownerUid !== user.uid) throw new Error(t("פעולת הרשימה נכשלה"));
+            tx.update(ref, { deletedAt: Date.now(), sharedWith: [], pendingInvites: {}, updatedAt: Date.now() });
+            if (replacementRef && next) tx.set(replacementRef, next);
+          });
+          if (!next) throw new Error(t("פעולת הרשימה נכשלה"));
+          latestListIdRef.current = next.id;
+          setItems([]); setFavorites([]); latestItemsRef.current = [];
+          setList(next); localStorage.setItem("activeListId", next.id);
+          setToast(t("הרשימה נמחקה"));
+        }
+      }
+      setListEditor(null);
+    } catch (error: any) {
+      console.error("List operation failed", error);
+      setToast(`${t("פעולת הרשימה נכשלה")}: ${error?.message || ""}`);
+    } finally { listOperationLockRef.current = false; setListOperationBusy(false); }
+  };
+
   return (
     <div
   ref={appRootRef}
-className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow-2xl overflow-hidden"
+ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow-2xl overflow-hidden"
   dir={isRTL ? "rtl" : "ltr"}
-  style={{
+style={{
   fontFamily: 'Segoe UI, system-ui, -apple-system, "Helvetica Neue", Arial, sans-serif',
-  zoom: appZoom,
+  ...appScaleStyle,
 }}
 >
     <style>{`
@@ -7334,13 +8629,60 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
           50% { transform: translateY(-8px); }
         }
       `}</style>
+      {user?.uid && list?.id ? <ShoppingIntroduction key={user.uid} uid={user.uid} lang={lang} request={introRequest.uid === user.uid ? introRequest.count : 0}
+        ready={authInitialized && !listLoading && !moreMenuOpen && !shareMenuOpen && !listEditor && !purchasedConfirmListId && !disconnectConfirm && !categorySheetOpen && !showClearConfirm && !showDeleteAccountConfirm && !showBoughtAllModal && !showVoiceCoach && !isListening} /> : null}
+      {listEditor ? createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/40 flex items-center justify-center p-5" dir={isRTL ? "rtl" : "ltr"} data-noswipe="true">
+          <form role="dialog" aria-modal="true" aria-labelledby="list-editor-title" className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-xl" onSubmit={(event) => { event.preventDefault(); void saveListOperation(); }}>
+            <h2 id="list-editor-title" className="text-lg font-bold text-slate-800 mb-4">{t(listEditor === "create" ? "רשימה חדשה" : listEditor === "rename" ? "שינוי שם הרשימה" : "מחיקת רשימה")}</h2>
+            {listEditor === "delete" ? <p className="text-sm text-slate-600 mb-4">{getLocalizedListTitle(list, lang)}<br />{t("מחיקת הרשימה תסיר אותה ואת המוצרים והמועדפים שלה לכל המשתתפים. להמשיך?")}</p> :
+              <label className="block text-sm text-slate-600">{t("שם הרשימה")}<input autoFocus required maxLength={60} value={listNameDraft} style={{ fontSize: "16px" }} disabled={listOperationBusy} onChange={(event) => setListNameDraft(event.target.value)} className="block w-full mt-2 mb-4 rounded-xl border border-slate-200 px-3 py-3 text-slate-800" /></label>}
+            <div className="flex gap-2">
+              <button type="submit" disabled={listOperationBusy || !isOnline} className={`flex-1 rounded-xl py-3 text-white font-bold disabled:opacity-50 ${listEditor === "delete" ? "bg-rose-600" : "bg-indigo-600"}`}>{listOperationBusy ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : t(listEditor === "delete" ? "מחיקת רשימה" : listEditor === "create" ? "יצירה" : "שמירה")}</button>
+              <button type="button" disabled={listOperationBusy} onClick={() => setListEditor(null)} className="flex-1 rounded-xl py-3 bg-slate-100 text-slate-600 font-bold">{t("ביטול")}</button>
+            </div>
+          </form>
+        </div>, document.body
+      ) : null}
+
+      {purchasedConfirmListId ? createPortal(
+        <div className="fixed inset-0 z-[200] bg-black/40 flex items-center justify-center p-5" dir={isRTL ? "rtl" : "ltr"} data-noswipe="true">
+          <form role="dialog" aria-modal="true" aria-labelledby="purchased-delete-title" aria-describedby="purchased-delete-description" className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-xl"
+            onSubmit={(event) => { event.preventDefault(); void clearPurchasedItems(); }}
+            onKeyDown={(event) => { if (event.key === "Escape" && !clearingPurchased) setPurchasedConfirmListId(null); }}>
+            <h2 id="purchased-delete-title" className="text-lg font-bold text-slate-800 mb-4">{t("מחק את כל המוצרים שנקנו")}</h2>
+            <p id="purchased-delete-description" className="text-sm text-slate-600 mb-4">{getLocalizedListTitle(list, lang)}<br />{t("למחוק את כל המוצרים שנקנו ברשימה זו?")}</p>
+            <div className="flex gap-2">
+              <button type="submit" disabled={clearingPurchased || !isOnline} className="flex-1 rounded-xl py-3 text-white font-bold disabled:opacity-50 bg-rose-600">
+                {clearingPurchased ? <Loader2 className="w-5 h-5 animate-spin mx-auto" /> : t("מחק")}
+              </button>
+              <button autoFocus type="button" disabled={clearingPurchased} onClick={() => setPurchasedConfirmListId(null)} className="flex-1 rounded-xl py-3 bg-slate-100 text-slate-600 font-bold">{t("ביטול")}</button>
+            </div>
+          </form>
+        </div>, document.body
+      ) : null}
+
+      {disconnectConfirm ? createPortal(
+        <div className="fixed inset-0 z-[210] bg-black/40 flex items-center justify-center p-5" dir={isRTL ? "rtl" : "ltr"} data-noswipe="true">
+          <div role="dialog" aria-modal="true" aria-labelledby="disconnect-title" aria-describedby="disconnect-description" className="w-full max-w-sm rounded-3xl bg-white p-5 shadow-xl"
+            onKeyDown={(event) => { if (event.key === "Escape") finishDisconnectConfirm(false); }}>
+            <h2 id="disconnect-title" className="text-lg font-bold text-slate-800 mb-4">{disconnectConfirm.title}</h2>
+            <p id="disconnect-description" className="text-sm text-slate-600 mb-4">{disconnectConfirm.message}</p>
+            <div className="flex gap-2">
+              <button type="button" onClick={() => finishDisconnectConfirm(true)} className="flex-1 rounded-xl py-3 text-white font-bold bg-rose-600">{disconnectConfirm.label}</button>
+              <button autoFocus type="button" onClick={() => finishDisconnectConfirm(false)} className="flex-1 rounded-xl py-3 bg-slate-100 text-slate-600 font-bold">{t("ביטול")}</button>
+            </div>
+          </div>
+        </div>, document.body
+      ) : null}
+
       {/* Sticky top chrome */}
       <div
         className="sticky top-0 z-40 bg-slate-50"
-        style={{ paddingTop: "max(env(safe-area-inset-top), 8px)" }}
+        style={{ paddingTop: "calc(env(safe-area-inset-top) + 34px)" }}
       >
   {/* Header */}
-<header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 py-3 border-b border-slate-100">
+<header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md px-4 pt-3 pb-1">
   <div className="relative flex items-center justify-between gap-2 min-h-[44px]">
     {/* Left: More */}
     <div className="flex items-center gap-2 shrink-0">
@@ -7371,25 +8713,6 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
   </div>
 </div>
 
-{/* Avatars (separate layer) */}
-{headerSharedUsersPreview.length > 0 ? (
-  <div
-    onClick={toggleShareMenu}
-    className="absolute left-1/2 top-[calc(50%+18px)] -translate-x-1/2 flex items-center justify-center cursor-pointer"
-    title={t("שיתוף")}
-    aria-label={t("שיתוף")}
-  >
-    <HeaderUsersPreview
-      users={headerSharedUsersPreview}
-      isOwner={user?.uid === list?.ownerUid}
-      ownerUid={list?.ownerUid}
-      currentUid={user?.uid}
-      onRemoveUser={removeSharedUser}
-      t={t}
-    />
-  </div>
-) : null}
-
     {/* Right: Share */}
     <div className="flex items-center gap-2 shrink-0">
       <button
@@ -7409,6 +8732,34 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
       </button>
     </div>
   </div>
+
+  {(user || !authInitialized) && list ? (
+    <div className="mt-3" data-noswipe="true">
+      <div role="tablist" aria-label={t("ניהול רשימה")} className="flex items-center gap-2 overflow-x-auto pb-1" style={{ touchAction: "pan-x" }}>
+        {visibleListTabs.map((entry) => (
+          <div key={entry.id} className={`shrink-0 flex items-center rounded-2xl max-w-[220px] ${entry.id === list.id ? "bg-indigo-600 text-white shadow-sm" : "bg-white border border-slate-200 text-slate-600"}`}>
+            <button ref={entry.id === list.id ? activeListButtonRef : undefined} role="tab" aria-selected={entry.id === list.id} type="button"
+              disabled={!user || listOperationBusy || multiListInteractionBusy} onClick={() => switchShoppingList(entry)}
+              className="min-w-0 px-4 py-2 min-h-[44px] text-sm font-bold truncate disabled:opacity-60">{getLocalizedListTitle(entry, lang)}</button>
+            {entry.id === list.id && entry.ownerUid === user?.uid ? <button type="button"
+              disabled={!user || listOperationBusy || multiListInteractionBusy} aria-label={t("ניהול רשימה")} aria-haspopup="menu" aria-expanded={!!listActionsPos}
+              onClick={(event) => {
+                const rect = event.currentTarget.getBoundingClientRect();
+                setListActionsPos(listActionsPos ? null : { top: Math.min(rect.bottom + 6, window.innerHeight - 120), left: Math.max(8, Math.min(isRTL ? rect.right - 220 : rect.left, window.innerWidth - 228)) });
+              }} className="shrink-0 w-11 h-11 flex items-center justify-center rounded-2xl disabled:opacity-60">
+              <MoreVertical className="w-5 h-5" />
+            </button> : null}
+          </div>
+        ))}
+        <button type="button" disabled={!user || listOperationBusy || multiListInteractionBusy} onClick={() => openListEditor("create")}
+          className="shrink-0 flex items-center gap-1 rounded-2xl px-3 py-2 border border-indigo-500 text-indigo-600 text-sm font-bold disabled:opacity-60">
+          <Plus className="w-4 h-4" />{t("רשימה חדשה")}
+        </button>
+      </div>
+
+    </div>
+  ) : null}
+
 
   {/* Share menu */}
   {shareMenuOpen && shareMenuPos ? createPortal(
@@ -7463,7 +8814,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
       setToast(t("אפשר להתנתק רק מרשימה משותפת שאינך הבעלים שלה"));
       return;
     }
-    const ok = window.confirm(`${t("התנתק מרשימת קניות משותפת")} ?`);
+    const ok = await askDisconnectConfirm(t("התנתק מרשימת קניות משותפת"), `${t("התנתק מרשימת קניות משותפת")} ?`, t("יציאה"));
     if (!ok) return;
     await leaveSharedList();
   }}
@@ -7502,19 +8853,30 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
     >
       {moreMenuView === "main" ? (
         <>
+          <button type="button" onClick={() => { setMoreMenuOpen(false); setMoreMenuView("main"); setIntroRequest((value) => ({uid: user?.uid || "", count: value.count + 1})); }}
+            className="w-full px-4 py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700">
+            <ListChecks className="w-4 h-4 text-indigo-500 shrink-0" />
+            <span className="font-semibold text-[15px]">{INTRO_COPY[lang].menu}</span>
+          </button>
 
-        <button
+
+
+
+
+<button
   type="button"
   onClick={() => setKeepAwakeEnabled((v) => !v)}
   className={`w-full py-3 hover:bg-slate-50 flex items-center justify-between text-slate-700 ${
-  isRTL
-    ? "flex-row-reverse pr-2 pl-4"
-    : "flex-row pl-2 pr-4"
-}`}
+    isRTL
+      ? "flex-row-reverse pr-2 pl-4"
+      : "flex-row pl-2 pr-4"
+  }`}
 >
-  <span>{keepAwakeEnabled
-  ? `🔆 ${t("המסך נשאר דולק")}`
-  : `🌙 ${t("השאר מסך דולק")}`}</span>
+  <span className="font-semibold text-[15px] leading-none whitespace-nowrap">
+    {keepAwakeEnabled
+      ? `🔆 ${t("המסך נשאר דולק")}`
+      : `🌙 ${t("השאר מסך דולק")}`}
+  </span>
 
   <span
     className={`w-3 h-3 rounded-full ${
@@ -7543,8 +8905,11 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
   onClick={() => {
     setAppZoom((current) => {
       const currentIndex = APP_ZOOM_OPTIONS.findIndex((x) => x === current);
+
       const nextIndex =
-        currentIndex >= 0 ? (currentIndex + 1) % APP_ZOOM_OPTIONS.length : 1;
+        currentIndex >= 0
+          ? (currentIndex + 1) % APP_ZOOM_OPTIONS.length
+          : 1;
 
       return APP_ZOOM_OPTIONS[nextIndex];
     });
@@ -7565,6 +8930,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
     {Math.round(appZoom * 100)}%
   </span>
 </button>
+
 
 
 
@@ -7673,7 +9039,9 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
   onClick={() => {
     setMoreMenuOpen(false);
     setMoreMenuView("main");
-    void signOutSmart();
+    void (async () => {
+      if (await askDisconnectConfirm(t("יציאה"), `${t("יציאה")} ?`, t("יציאה"))) await signOutSmart();
+    })();
   }}
   className={`w-full py-3 hover:bg-slate-50 flex items-center gap-3 text-slate-700 ${
     isRTL
@@ -7718,6 +9086,34 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
     document.body
   ) : null}
 </header>
+{/* Avatars (separate layer) */}
+{headerSharedUsersPreview.length > 0 ? (
+  <div
+    onClick={toggleShareMenu}
+    className="flex items-center justify-center cursor-pointer pt-1 pb-1 bg-slate-50"
+    title={t("שיתוף")}
+    aria-label={t("שיתוף")}
+  >
+    <HeaderUsersPreview
+      users={headerSharedUsersPreview}
+      isOwner={user?.uid === list?.ownerUid}
+      ownerUid={list?.ownerUid}
+      currentUid={user?.uid}
+      onRemoveUser={removeSharedUser}
+      t={t}
+    />
+  </div>
+) : null}
+
+{listActionsPos && user?.uid === list?.ownerUid ? createPortal(
+  <div className="fixed inset-0 z-[130]" onClick={() => setListActionsPos(null)} onKeyDown={(event) => { if (event.key === "Escape") setListActionsPos(null); }}>
+    <div role="menu" dir={isRTL ? "rtl" : "ltr"} className="fixed w-[220px] rounded-2xl bg-white border border-slate-200 shadow-xl overflow-hidden" style={listActionsPos}>
+      <button role="menuitem" type="button" autoFocus onClick={() => { setListActionsPos(null); openListEditor("rename"); }} className="w-full px-4 py-3 flex items-center gap-3 text-slate-700 hover:bg-slate-50"><Pencil className="w-5 h-5" />{t("שינוי שם הרשימה")}</button>
+      <button role="menuitem" type="button" onClick={() => { setListActionsPos(null); openListEditor("delete"); }} className="w-full px-4 py-3 flex items-center gap-3 border-t border-slate-100 text-rose-600 hover:bg-rose-50"><Trash2 className="w-5 h-5" />{t("מחיקת רשימה")}</button>
+    </div>
+  </div>, document.body
+) : null}
+
 
 {deleteCategoryConfirm ? createPortal(
   (
@@ -7797,10 +9193,11 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
       </div>
 
       {/* Content */}
-      <main className="flex-1 min-h-0 flex flex-col p-5 overflow-hidden">
+    <div className="flex-1 min-h-0 flex flex-col p-5 overflow-hidden">
 {activeTab === "list" ? (
+  <>
     <>
-<form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
+ <form onSubmit={addItem} className="relative shrink-0 z-30 mb-6">
       <input
         ref={inputRef}
         value={inputValue}
@@ -7931,10 +9328,9 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
         </div>
       ) : null}
           </form>
-
-      
+          
   
-<div className="flex-1 min-h-0 overflow-y-auto no-scrollbar -mx-5 px-5 pb-36">
+</>
 
      {showSyncHint && (listLoading || !list?.id) ? (
   <div className="flex items-center justify-center py-10 text-sm font-bold text-slate-400">
@@ -7959,7 +9355,9 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
         </div>
       </div>
     ) : (
-      <div className="space-y-4">
+     <div
+ className="overflow-y-auto no-scrollbar -mx-5 px-5">
+        <div className="space-y-4 pb-36">
         <div className="space-y-3">
           {orderedCategoryOptions.map((categoryKey) => {
             const categoryItems = groupedActiveItems[categoryKey];
@@ -7991,14 +9389,27 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                         : 0
                     : 0;
 
-                  const effectiveDx = isCategoryOpen
+                  const isAnySwipeActive = swipeUi.id !== null;
+const isInitialHintActive = !isAnySwipeActive && isHintItem && hintDx !== 0;
+
+const effectiveDx = isCategoryOpen
   ? 0
   : swipeUi.id === item.id
     ? swipeUi.dx
-    : hintDx;
+    : isAnySwipeActive
+      ? 0
+      : hintDx;
 
-                  const revealDelete = isRTL ? effectiveDx > 0 : effectiveDx < 0;
-                  const revealFavorite = isRTL ? effectiveDx < 0 : effectiveDx > 0;
+const revealDelete =
+  !isCategoryOpen &&
+  (isInitialHintActive || swipeUi.id === item.id) &&
+  (isRTL ? effectiveDx > 0 : effectiveDx < 0);
+
+const revealFavorite =
+  !isCategoryOpen &&
+  (isInitialHintActive || swipeUi.id === item.id) &&
+  (isRTL ? effectiveDx < 0 : effectiveDx > 0);
+
 
                   return (
                     <div
@@ -8012,10 +9423,12 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                       }`}
                       dir="rtl"
                       onPointerDown={(e) => {
-                      pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
-                      onSwipePointerDown(item.id)(e);
-                      startItemLongPress(item, e)();
-                    }}
+  if (isNoSwipeTarget(e.target)) return;
+
+  pointerLongPressStartRef.current = { x: e.clientX, y: e.clientY };
+  onSwipePointerDown(item.id)(e);
+  startItemLongPress(item, e)();
+}}
                       onPointerMove={(e) => {
                         
 
@@ -8031,11 +9444,47 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
 
                         onSwipePointerMove(item.id)(e);
                       }}
-                      onPointerUp={(e) => {
-                        pointerLongPressStartRef.current = null;
-                        onSwipePointerUp(item.id)(e);
-                        clearItemLongPress();
-                      }}
+                    onPointerUp={(e) => {
+  const s = pointerLongPressStartRef.current;
+
+  if (isNoSwipeTarget(e.target)) {
+    pointerLongPressStartRef.current = null;
+    clearItemLongPress();
+    return;
+  }
+
+  pointerLongPressStartRef.current = null;
+
+  onSwipePointerUp(item.id)(e);
+  clearItemLongPress();
+
+  if (swipeConsumedRef.current) return;
+  if (deleteFlashIds.has(item.id)) return;
+
+  if (longPressTriggeredRef.current) {
+    longPressTriggeredRef.current = false;
+    return;
+  }
+
+  if (s) {
+    const dx = Math.abs(e.clientX - s.x);
+    const dy = Math.abs(e.clientY - s.y);
+
+    if (dx <= 6 && dy <= 6) {
+      cardTapHandledRef.current = true;
+
+      if (categorySheetOpen && categorySheetItem?.id === item.id) {
+        closeCategorySheet();
+      } else {
+        markPurchasedWithAnimation(item.id);
+      }
+
+      window.setTimeout(() => {
+        cardTapHandledRef.current = false;
+      }, 0);
+    }
+  }
+}}
                       onPointerCancel={() => {
                         pointerLongPressStartRef.current = null;
                         onSwipePointerCancel();
@@ -8045,42 +9494,48 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                         pointerLongPressStartRef.current = null;
                         clearItemLongPress();
                       }}
-                      onTouchStart={(e) => {
-                        
+                     onTouchStart={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+  if (isNoSwipeTarget(e.target)) return;
 
-                        const t0 = e.touches[0];
-                        touchLongPressStartRef.current = t0 ? { x: t0.clientX, y: t0.clientY } : null;
+  const t0 = e.touches[0];
+  touchLongPressStartRef.current = t0 ? { x: t0.clientX, y: t0.clientY } : null;
 
-                        onSwipeTouchStart(item.id)(e);
-                        startItemLongPress(item, e)();
-                      }}
-                      onTouchMove={(e) => {
-                        
+  onSwipeTouchStart(item.id)(e);
+  startItemLongPress(item, e)();
+}}
+onTouchMove={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
 
-                        const t0 = e.touches[0];
-                        const s = touchLongPressStartRef.current;
+  const t0 = e.touches[0];
+  const s = touchLongPressStartRef.current;
 
-                        if (t0 && s) {
-                          const dx = Math.abs(t0.clientX - s.x);
-                          const dy = Math.abs(t0.clientY - s.y);
+  if (t0 && s) {
+    const dx = Math.abs(t0.clientX - s.x);
+    const dy = Math.abs(t0.clientY - s.y);
 
-                          if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
-                            clearItemLongPress();
-                          }
-                        }
+    if (dx > TOUCH_LONG_PRESS_MOVE_TOLERANCE || dy > TOUCH_LONG_PRESS_MOVE_TOLERANCE) {
+      clearItemLongPress();
+    }
+  }
 
-                        onSwipeTouchMove(item.id)(e);
-                      }}
-                      onTouchEnd={(e) => {
-                        touchLongPressStartRef.current = null;
-                        onSwipeTouchEnd(item.id)(e);
-                        clearItemLongPress();
-                      }}
-                      onTouchCancel={() => {
-                        touchLongPressStartRef.current = null;
-                        clearItemLongPress();
-                      }}
-                      style={{ touchAction: "pan-y" }}
+  onSwipeTouchMove(item.id)(e);
+}}
+onTouchEnd={(e) => {
+  if (typeof window !== "undefined" && "PointerEvent" in window) return;
+
+  touchLongPressStartRef.current = null;
+  onSwipeTouchEnd(item.id)(e);
+  clearItemLongPress();
+}}
+onTouchCancel={() => {
+  touchLongPressStartRef.current = null;
+  clearItemLongPress();
+}}
+style={{
+  touchAction: "pan-y",
+  contain: "paint",
+}}
                     >
                       <div className="absolute inset-0 pointer-events-none overflow-hidden rounded-2xl">
                         <div
@@ -8158,20 +9613,29 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                         dir={isRTL ? "rtl" : "ltr"}
                         style={{
                           transform: `translateX(${effectiveDx}px)`,
-                          transition: swipeUi.id === item.id ? "none" : "transform 260ms ease",
+                         transition:
+  swipeUi.id === item.id || swipeUi.id !== null
+    ? "none"
+    : "transform 260ms ease",
+
                         }}
                       >
                         <div
   className={`flex-1 min-w-0 ${isRTL ? "text-right" : "text-left"} font-bold text-slate-700 cursor-pointer px-3`}
   style={{ direction: isRTL ? "rtl" : "ltr", unicodeBidi: "plaintext" }}
  onClick={() => {
+if (cardTapHandledRef.current) return;
   if (swipeConsumedRef.current) return;
+  
   if (deleteFlashIds.has(item.id)) return;
 
-  if (longPressTriggeredRef.current) {
-    longPressTriggeredRef.current = false;
+ if (longPressTriggeredRef.current) {
+  longPressTriggeredRef.current = false;
+
+  if (categorySheetOpen && categorySheetItem?.id === item.id) {
     return;
   }
+}
 
   if (categorySheetOpen && categorySheetItem?.id === item.id) {
     closeCategorySheet();
@@ -8192,7 +9656,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
           saveCategoryItemName(item.id);
         }
       }}
-      className={`w-full text-sm font-bold outline-none bg-white border border-indigo-200 rounded-xl px-2 py-1 ${isRTL ? "text-right" : "text-left"}`}
+      className={`w-full text-base font-bold outline-none bg-white border border-indigo-200 rounded-xl px-2 py-1 ${isRTL ? "text-right" : "text-left"}`}
       dir={isRTL ? "rtl" : "ltr"}
       onClick={(e) => e.stopPropagation()}
     />
@@ -8271,11 +9735,11 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
 
                       {isCategoryOpen ? (
                         <div
-                          className="border-t-2 border-indigo-200 bg-indigo-50/60 rounded-b-2xl shadow-inner ring-1 ring-indigo-200 flex flex-col"
+                          className="border-t-2 border-indigo-200 bg-indigo-50/60 rounded-b-2xl overflow-hidden shadow-inner ring-1 ring-indigo-200 flex flex-col"
                           onClick={(e) => e.stopPropagation()}
                         >
   
-                          <div className={`px-4 pt-3 mb-3 flex items-center justify-between ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
+                         <div className={`px-4 pt-3 mb-3 flex items-center justify-between ${isRTL ? "flex-row" : "flex-row-reverse"}`}>
   <div className={`text-sm font-black text-slate-700 ${isRTL ? "text-right" : "text-left"}`}>
     {t("העבר לקטגוריה")}
   </div>
@@ -8307,7 +9771,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
   </div>
 </div>
 
-                          <div className="px-4 pb-2">
+                          <div className="px-4 pb-4">
                             <div className="space-y-2">
                               {orderedCategoryOptions.map((cat) => {
                                 const isBuiltInCategory = CATEGORY_ORDER.includes(cat as CategoryKey);
@@ -8374,7 +9838,8 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                                         <button
                                           type="button"
                                           data-noswipe="true"
-                                          onClick={() => setCategorySheetValue(cat)}
+                                          disabled={categorySaveBusy}
+                                          onClick={() => { setCategorySheetValue(cat); void saveItemCategory(cat); }}
                                           className={`flex-1 flex items-center ${
                                             isRTL
                                               ? "flex-row justify-between text-right"
@@ -8425,13 +9890,17 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                             </div>
 
                             <button
-                              type="button"
-                              data-noswipe="true"
-                              onClick={() => setIsAddingCategory(true)}
-                              className="w-full text-sm font-bold text-indigo-600 py-2"
-                            >
-                              {t("➕ הוסף קטגוריה")}
-                            </button>
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={(e) => {
+    e.stopPropagation();
+    setIsAddingCategory(true);
+  }}
+  className="w-full text-sm font-bold text-indigo-600 py-2"
+>
+  {t("➕ הוסף קטגוריה")}
+</button>
 
                             {isAddingCategory && (
                               <div className="px-2 py-2 space-y-2" data-noswipe="true">
@@ -8440,50 +9909,39 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                                   value={customCategoryInput}
                                   onChange={(e) => setCustomCategoryInput(e.target.value)}
                                   placeholder={t("שם קטגוריה")}
-                                  className={`w-full border rounded-xl px-3 py-3 text-sm ${
-                                    isRTL ? "text-right" : "text-left"
+                                  className={`w-full border rounded-xl px-3 py-3 text-[16px] ${
+                                  isRTL ? "text-right" : "text-left"
                                   }`}
                                   dir={isRTL ? "rtl" : "ltr"}
                                 />
 
                                 <button
-                                  type="button"
-                                  data-noswipe="true"
-                                  onClick={async () => {
-                                    const name = customCategoryInput.trim();
-                                    if (!name) return;
+  type="button"
+  data-noswipe="true"
+  onPointerDown={(e) => e.stopPropagation()}
+  onClick={async (e) => {
+    e.stopPropagation();
 
-                                    await saveCustomCategory(name);
-                                    setCategorySheetValue(name);
-                                    setCustomCategoryInput("");
-                                    setIsAddingCategory(false);
-                                  }}
-                                  className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
-                                >
-                                  {t("שמור")}
-                                </button>
+    const name = customCategoryInput.trim();
+    if (!name) return;
+
+    await saveCustomCategory(name);
+    setCategorySheetValue(name);
+    setCustomCategoryInput("");
+    setIsAddingCategory(false);
+    await saveItemCategory(name);
+  }}
+  className="w-full py-3 rounded-2xl font-black bg-emerald-500 text-white"
+>
+  {t("שמור")}
+</button>
                               </div>
                             )}
 
                             
                           </div>
 
-                          <div className={`flex gap-3 p-3 border-t bg-white ${isRTL ? "flex-row-reverse" : "flex-row"}`}>
-                            <button
-                              type="button"
-                              onClick={saveItemCategory}
-                              className="flex-1 py-3 rounded-2xl font-black bg-indigo-600 text-white"
-                            >
-                              {t("שמור")}
-                            </button>
-                            <button
-                              type="button"
-                              onClick={closeCategorySheet}
-                              className="flex-1 py-3 rounded-2xl font-black bg-white text-slate-700 border-2 border-slate-300"
-                            >
-                              {t("נסגר")}
-                            </button>
-                          </div>
+
                         </div>
                       ) : null}
                     </div>
@@ -8496,9 +9954,14 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
 
         {purchasedItems.length > 0 ? (
           <div className="space-y-2 pt-4 border-t border-slate-200">
-            <h3 className={`text-lg font-bold text-slate-700 ${rtlClasses.text} mb-2`}>
-              {t("נקנו")} ({purchasedItems.length})
-            </h3>
+            <div className="flex items-center gap-2 mb-2">
+              <h3 className={`text-lg font-bold text-slate-700 ${rtlClasses.text}`}>{t("נקנו")} ({purchasedItems.length})</h3>
+              <button type="button" disabled={clearingPurchased || !isOnline || multiListInteractionBusy || listOperationBusy} onClick={() => { if (list?.id) setPurchasedConfirmListId(list.id); }}
+                aria-label={t("מחק את כל המוצרים שנקנו")} title={t("מחק את כל המוצרים שנקנו")}
+                className="w-11 h-11 flex items-center justify-center rounded-xl text-rose-500 hover:bg-rose-50 disabled:opacity-50">
+                {clearingPurchased ? <Loader2 className="w-5 h-5 animate-spin" /> : <Trash2 className="w-5 h-5" />}
+              </button>
+            </div>
 
             {purchasedItems.map((item) => (
               <div
@@ -8537,7 +10000,7 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
                   </button>
                 </div>
 
-                <DogEarBadge
+                  <DogEarBadge
                   itemId={item.id}
                   mode="purchased"
                   name={item.purchasedByName}
@@ -8547,13 +10010,14 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
             ))}
           </div>
         ) : null}
+        </div>
       </div>
     )}
-    </div>
   </>
 ) : (
-<div className="flex-1 min-h-0 overflow-y-auto no-scrollbar space-y-6 pb-36">
-      <div className={rtlClasses.text}>
+  <div className="flex-1 min-h-0 overflow-y-auto no-scrollbar -mx-5 px-5 pb-36">
+  <div className="space-y-6">
+    <div className={rtlClasses.text}>
       <h2 className="text-2xl font-black text-slate-800 tracking-tight">{t("מועדפים")}</h2>
       <p className="text-sm text-slate-400 font-bold">
         <span className="font-semibold text-[15px] leading-none">{t("פריטים שחוזרים לסל")}</span>
@@ -8673,14 +10137,17 @@ className="flex flex-col h-[100dvh] max-w-md mx-auto bg-slate-50 relative shadow
 
                 <Star className="w-5 h-5 text-amber-500 fill-amber-500" />
               </div>
+              
             </div>
           );
-        })}
+            })}
       </div>
     )}
+    </div>
   </div>
 )}
-</main>
+ 
+</div>
       {/* Bottom nav */}
 <div
   className="fixed bottom-0 left-0 right-0 z-50"
